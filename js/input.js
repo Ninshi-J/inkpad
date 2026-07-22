@@ -9,6 +9,17 @@ function evtWorld(e) {
 }
 
 cv.addEventListener("pointerdown", e => {
+  if (e.pointerType === "pen") {
+    // The pencil touching down means any currently-tracked touch-type pointers are the palm
+    // resting on the glass, not a deliberate gesture — drop them instead of letting them pair up
+    // with the pen as a "pinch" (which used to cancel the stroke the instant a palm landed).
+    for (const id of [...pointers.keys()]) {
+      if (pointers.get(id).pointerType === "touch") { try { cv.releasePointerCapture(id); } catch (_) {} pointers.delete(id); }
+    }
+    if (pinch) pinch = null;
+  } else if (e.pointerType === "touch" && [...pointers.values()].some(p => p.pointerType === "pen")) {
+    return; // palm resting while the pencil is already down — ignore it entirely
+  }
   cv.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, e);
   if (pointers.size === 2) { startPinch(); return; }
@@ -95,12 +106,17 @@ cv.addEventListener("pointerdown", e => {
       laser.push({ x: w.x, y: w.y, t: performance.now() });
       break;
   }
+  if (drag) drag.pointerId = e.pointerId;
   needsDraw = true;
 });
 
 cv.addEventListener("pointermove", e => {
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, e);
   if (pointers.size === 2) { doPinch(); return; }
+  // A second pointer (a resting palm, most commonly) moving around shouldn't steer a stroke or
+  // drag that a DIFFERENT pointer started — without this, an untracked palm touch could feed its
+  // own coordinates into the in-progress drag, warping the line being drawn.
+  if (drag && e.pointerId !== drag.pointerId) return;
   const { px, py } = evtPos(e);
   hover = { x: px, y: py };
   if (V.tool.startsWith("eraser") || pendingPlacement) needsDraw = true;
@@ -215,6 +231,7 @@ cv.addEventListener("pointermove", e => {
 
 function endPointer(e) {
   pointers.delete(e.pointerId);
+  if (drag && e.pointerId !== drag.pointerId) return; // a different pointer lifting shouldn't end this drag
   if (pinch) { pinch = null; return; }
   if (!drag) return;
   if (drag.pasteTimer) { clearTimeout(drag.pasteTimer); drag.pasteTimer = null; }
