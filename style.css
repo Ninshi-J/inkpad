@@ -1,0 +1,486 @@
+:root {
+  --desk: #ECE9E2;
+  --chrome: #FBFAF7;
+  --chrome-2: #F3F1EA;
+  --line: #DCD8CE;
+  --ink: #4A463E;
+  --ink-soft: #8A857A;
+  --accent: #0F766E;
+  --accent-soft: #D5E8E5;
+  --record: #C93F3F;
+  --paper-shadow: 0 2px 14px rgba(60,55,45,.14), 0 1px 3px rgba(60,55,45,.10);
+  --radius: 8px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font: 13px/1.45 -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  color: var(--ink);
+  background: var(--desk);
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+}
+
+/* ---------- layout ---------- */
+#app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+#main { display: grid; grid-template-columns: auto auto 1fr; min-height: 0; position: relative; }
+#canvasWrap { grid-column: 3; position: relative; min-width: 0; overflow: hidden; }
+canvas#board { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+
+/* ---------- toolbar ---------- */
+#toolbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 7px 10px;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+}
+#toolbar.popped { display: none; }
+.tb-group { display: flex; align-items: center; gap: 3px; }
+.tb-sep { width: 1px; align-self: stretch; margin: 3px 5px; background: var(--line); }
+button.tb {
+  appearance: none; border: 1px solid transparent; background: transparent;
+  color: var(--ink); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 12.5px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+button.tb:hover { background: var(--chrome-2); }
+button.tb.active { background: var(--accent-soft); border-color: var(--accent); color: #0B5A54; }
+button.tb:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.tb svg { width: 15px; height: 15px; display: block; }
+.swatch {
+  width: 21px; height: 21px; border-radius: 50%; border: 2px solid transparent;
+  cursor: pointer; padding: 0; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+}
+.swatch.active { border-color: var(--ink); transform: scale(1.12); }
+.swatch-cell { position: relative; }
+.swatch-remove {
+  position: absolute; top: -6px; right: -6px; width: 15px; height: 15px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--chrome); color: var(--ink-soft);
+  font-size: 10px; line-height: 1; padding: 0; cursor: pointer; display: none;
+  align-items: center; justify-content: center;
+}
+.swatch-cell:hover > .swatch-remove { display: flex; }
+.swatch-add {
+  border-radius: 50%; border: 1.5px dashed var(--ink-soft); background: var(--chrome-2);
+  color: var(--ink-soft); font-size: 14px; line-height: 1; display: flex;
+  align-items: center; justify-content: center;
+}
+#widthWrap { display: flex; align-items: center; gap: 6px; }
+#widthDot { border-radius: 50%; background: var(--ink); flex: none; }
+input[type=range] { accent-color: var(--accent); width: 84px; }
+
+/* ---------- floating tools palette ---------- */
+#palette {
+  position: fixed; left: 90px; top: 90px; z-index: 40; display: none;
+  background: var(--chrome); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(50,45,35,.22); padding: 8px 10px 10px; max-width: 560px;
+}
+#palette.open { display: block; }
+#paletteHandle {
+  height: 18px; margin: -2px -4px 6px; border-radius: 6px; cursor: grab;
+  display: flex; align-items: center; justify-content: center; color: var(--ink-soft); font-size: 11px;
+  background: var(--chrome-2);
+}
+#paletteHandle:active { cursor: grabbing; }
+#paletteBody { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* ---------- sidebar ---------- */
+#sidebar {
+  grid-column: 1;
+  width: 264px; background: var(--chrome); border-right: 1px solid var(--line);
+  overflow-y: auto; padding: 14px 14px 20px;
+}
+#sidebar.hidden { display: none; }
+
+/* ---------- minimap rail ---------- */
+#mmRail {
+  grid-column: 2;
+  width: 42px; background: var(--chrome-2); border-right: 1px solid var(--line);
+  position: relative; overflow: hidden; cursor: pointer;
+}
+#mmRail.hidden { display: none; }
+#mmRail canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#sidebar h3 {
+  font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-soft); margin: 18px 0 8px;
+}
+#sidebar h3:first-child { margin-top: 2px; }
+.side-section { margin: 0; }
+.side-section summary {
+  font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-soft); margin: 14px 0 8px; cursor: pointer;
+  list-style: none; display: flex; align-items: center; gap: 6px; user-select: none;
+}
+.side-section summary::-webkit-details-marker { display: none; }
+.side-section summary::before { content: "\25B8"; font-size: 9px; transition: transform .15s; }
+.side-section[open] summary::before { transform: rotate(90deg); }
+.side-section:first-of-type summary { margin-top: 2px; }
+.side-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; }
+.side-row label { color: var(--ink); }
+.side-row select, .side-row input[type=number] {
+  font: inherit; font-size: 12.5px; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 118px;
+}
+.side-row input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
+.keys { color: var(--ink-soft); font-size: 12px; }
+.keys div { display: flex; justify-content: space-between; padding: 2.5px 0; gap: 10px; }
+.keys kbd {
+  font: 11px ui-monospace, monospace; background: var(--chrome-2);
+  border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
+  color: var(--ink);
+}
+.side-btn {
+  width: 100%; margin-top: 6px; padding: 6px; font: inherit; font-size: 12.5px;
+  border: 1px solid var(--line); background: #fff; border-radius: 6px; cursor: pointer; color: var(--ink);
+}
+.side-btn:hover { background: var(--chrome-2); }
+.side-btn.randomise { background: var(--accent-soft); color: #0B5A54; font-weight: bold; border-color: var(--accent); margin-bottom: 4px; }
+
+/* ---------- file library (Files sidebar section) ---------- */
+.lib-tree { font-size: 12.5px; }
+.lib-storage-status {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin-bottom: 8px; font-size: 11.5px; color: var(--ink-soft);
+}
+.lib-storage-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-storage-status button {
+  flex: none; font: inherit; font-size: 11px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer;
+}
+.lib-storage-status button:hover { background: var(--chrome-2); }
+#libReconnectBtn { background: var(--accent-soft); border-color: var(--accent); color: #0B5A54; }
+.lib-toolbar { display: flex; gap: 6px; margin-bottom: 6px; }
+.lib-row { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 6px; cursor: pointer; }
+.lib-row:hover { background: var(--chrome-2); }
+.lib-row.active { background: var(--accent-soft); }
+.lib-row.active .lib-name { color: #0B5A54; font-weight: 600; }
+.lib-row.dragover { outline: 1.5px dashed var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+.lib-toggle { width: 11px; flex: none; font-size: 9px; color: var(--ink-soft); text-align: center; }
+.lib-icon { flex: none; font-size: 12px; line-height: 1; }
+.lib-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink); border-radius: 3px;
+}
+.lib-name[contenteditable=true] {
+  outline: 1px solid var(--accent); background: #fff; padding: 0 3px; white-space: normal;
+  -webkit-user-select: text; user-select: text; cursor: text;
+}
+.lib-actions { display: none; flex: none; gap: 1px; }
+.lib-row:hover .lib-actions { display: flex; }
+.lib-actions button {
+  border: none; background: transparent; cursor: pointer; font-size: 11px; color: var(--ink-soft);
+  padding: 2px 4px; line-height: 1; border-radius: 4px;
+}
+.lib-actions button:hover { background: rgba(0,0,0,.08); color: var(--ink); }
+.lib-nbgroup { color: var(--ink-soft); }
+.lib-nbgroup .lib-name { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.lib-children { display: flex; flex-direction: column; }
+.lib-empty { color: var(--ink-soft); font-size: 11.5px; padding: 5px 4px; font-style: italic; }
+#libTree.dragover { outline: 1.5px dashed var(--accent); outline-offset: -3px; border-radius: 6px; }
+
+/* ---------- status ---------- */
+#status {
+  display: flex; align-items: center; gap: 14px; padding: 4px 12px;
+  background: var(--chrome); border-top: 1px solid var(--line);
+  font-size: 12px; color: var(--ink-soft);
+}
+#status .grow { flex: 1; }
+#stPage { cursor: pointer; }
+#stPage:hover { color: var(--ink); text-decoration: underline; }
+#recDot { width: 8px; height: 8px; border-radius: 50%; background: var(--record); display: none; animation: pulse 1.1s infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+#savedDot { color: var(--accent); }
+
+/* ---------- text editing overlay ---------- */
+#textEdit {
+  position: absolute; display: none; z-index: 30;
+  color: var(--ink);
+  background: rgba(255,255,255,.92); border: 1.5px dashed var(--accent); border-radius: 4px;
+  padding: 2px 4px; outline: none; min-width: 40px; max-width: 90vw;
+  overflow: hidden; resize: none; line-height: 1.3; white-space: pre;
+}
+/* Dragging the resize handle (or re-opening a box that already has a wrap width) switches from
+   free-flowing (grows with content, never wraps) to a fixed-width box that wraps at word
+   boundaries — the same distinction as an auto-sized vs. a manually-sized text box in a slide app. */
+#textEdit.wrap { white-space: pre-wrap; overflow-wrap: break-word; }
+/* A custom handle in place of the native (tiny, corner-only) textarea resize grip — full box
+   height and a wide hit-area, so grabbing it doesn't take pixel-precise aim. */
+#textEditResizeHandle {
+  position: absolute; z-index: 32; display: none; width: 16px; cursor: ew-resize; touch-action: none;
+}
+#textEditResizeHandle.open { display: block; }
+#textEditResizeHandle::before {
+  content: ""; position: absolute; top: 6px; bottom: 6px; left: 6px; width: 4px;
+  border-radius: 3px; background: var(--accent); opacity: .32;
+}
+#textEditResizeHandle:hover::before, #textEditResizeHandle.dragging::before { opacity: .8; }
+
+/* ---------- text formatting toolbar ---------- */
+#textFmtBar {
+  position: absolute; z-index: 31; display: none;
+  background: var(--chrome); border: 1px solid var(--line); border-radius: 9px;
+  box-shadow: 0 6px 18px rgba(50,45,35,.2); padding: 6px 8px;
+  align-items: center; gap: 8px; transform: translateX(-50%);
+}
+#textFmtBar.open { display: flex; }
+#textFmtBar select {
+  font: inherit; font-size: 12.5px; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px;
+}
+#textFmtBar .tfb-size { display: flex; align-items: center; gap: 4px; }
+#textFmtBar .tfb-size input[type=range] { width: 70px; }
+#textFmtBar .tfb-size span { font-size: 11px; color: var(--ink-soft); width: 26px; text-align: right; }
+#textFmtBar .tfb-swatches { display: flex; gap: 4px; align-items: center; }
+#textFmtBar .swatch { width: 18px; height: 18px; }
+#textFmtBar .tfb-sep { width: 1px; align-self: stretch; margin: 2px 0; background: var(--line); }
+
+/* ---------- dialogs ---------- */
+dialog {
+  border: 1px solid var(--line); border-radius: 14px; background: var(--chrome);
+  color: var(--ink); box-shadow: 0 20px 60px rgba(40,35,25,.3);
+  padding: 22px 26px; max-width: 560px; width: min(560px, 92vw);
+}
+dialog::backdrop { background: rgba(50,45,35,.35); }
+#shapeImporterDlg, #stampDlg { position: fixed; top: 54px; right: 14px; left: auto; margin: 0; max-height: calc(100vh - 74px); overflow-y: auto; }
+#stampDlg { max-width: 360px; width: min(360px, 94vw); }
+dialog h2 { font-size: 16px; margin-bottom: 12px; }
+dialog .keys { columns: 2; column-gap: 26px; font-size: 12.5px; }
+dialog .keys div { break-inside: avoid; }
+dialog form { margin-top: 16px; text-align: right; }
+dialog button { font: inherit; padding: 6px 16px; border-radius: 7px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+dialog button:hover { background: var(--chrome-2); }
+#promptInput {
+  font: inherit; font-size: 13px; color: var(--ink); background: #fff; width: 100%;
+  border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px;
+}
+#promptInput:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+#dropHint {
+  position: absolute; inset: 12px; border: 2.5px dashed var(--accent); border-radius: 14px;
+  display: none; align-items: center; justify-content: center; z-index: 50;
+  background: rgba(213,232,229,.65); color: #0B5A54; font-size: 15px; pointer-events: none;
+}
+#selToolbar {
+  position: absolute; z-index: 25; display: none;
+  background: var(--chrome); border: 1px solid var(--line); border-radius: 9px;
+  box-shadow: 0 6px 18px rgba(50,45,35,.2); padding: 4px; gap: 2px;
+  align-items: center; transform: translateX(-50%);
+}
+#selToolbar.open { display: flex; }
+#selToolbar button {
+  appearance: none; border: none; background: transparent; border-radius: 6px;
+  padding: 5px 7px; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink);
+  display: flex; align-items: center; gap: 3px; white-space: nowrap;
+}
+#selToolbar button:hover { background: var(--chrome-2); }
+#selToolbar .sel-sep { width: 1px; align-self: stretch; margin: 2px 1px; background: var(--line); }
+
+/* ---------- page scrollbars ---------- */
+/* Conventional scrollbars alongside the minimap rail — shown only once content actually
+   overflows the viewport in that direction (like a native scroll container), rather than always
+   present. Horizontal panning in particular doesn't exist without this: the page is otherwise
+   always centered with no way to shift it left/right once zoomed in past the viewport width. */
+#hScrollTrack, #vScrollTrack {
+  position: absolute; z-index: 26; display: none; background: rgba(90,86,78,.06);
+}
+#hScrollTrack.show, #vScrollTrack.show { display: block; }
+#hScrollTrack { left: 0; right: 13px; bottom: 0; height: 13px; }
+#vScrollTrack { top: 0; bottom: 13px; right: 0; width: 13px; }
+#hScrollThumb, #vScrollThumb {
+  position: absolute; background: rgba(90,86,78,.38); border-radius: 7px; cursor: pointer;
+}
+#hScrollThumb:hover, #vScrollThumb:hover, #hScrollThumb.dragging, #vScrollThumb.dragging { background: rgba(90,86,78,.6); }
+#hScrollThumb { top: 2px; height: 9px; }
+#vScrollThumb { left: 2px; width: 9px; }
+/* Color ring — a radial picker centered on the cursor: swatches placed in a circle around
+   where the pointer was, each individually position:fixed (set from JS per-swatch angle) rather
+   than flex-flowed, so #colorPop itself is just a non-rendering positioning host. */
+#colorPop { display: none; }
+#colorPop.open { display: contents; }
+/* File dropdown menu — anchored under the toolbar's "File" button (see toggleFileMenu), same
+   open/close mechanics as the color ring: fixed position, click-outside to dismiss. */
+.tb-menu {
+  position: fixed; z-index: 42; display: none;
+  background: var(--chrome); border: 1px solid var(--line); border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(50,45,35,.22); padding: 4px; min-width: 150px;
+}
+.tb-menu.open { display: block; }
+.tb-menu button {
+  display: block; width: 100%; text-align: left; appearance: none; border: none; background: transparent;
+  border-radius: 6px; padding: 7px 10px; font: inherit; font-size: 12.5px; cursor: pointer; color: var(--ink);
+}
+.tb-menu button:hover { background: var(--chrome-2); }
+.tb-menu .fm-check {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 7px 10px;
+  border-radius: 6px; font-size: 12.5px; color: var(--ink); cursor: pointer;
+}
+.tb-menu .fm-check:hover { background: var(--chrome-2); }
+/* .swatch-cell (base rule elsewhere) is position:relative — .ring-cell overrides that to fixed
+   so JS can place it directly on the ring, while still anchoring its .swatch-remove child. */
+.ring-cell { position: fixed; width: 32px; height: 32px; }
+.ring-cell .swatch { width: 32px; height: 32px; }
+.ring-center {
+  position: fixed; width: 18px; height: 18px; border-radius: 50%; margin: -9px 0 0 -9px;
+  border: 2px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.35); pointer-events: none;
+}
+/* Shared "add a color" control — a native color <input> styled to look like the existing dashed
+   "+" placeholder (its own swatch preview hidden) so opening the OS picker and adding the result
+   to the palette is one click instead of picking a color, then separately clicking + to add it. */
+.add-color-wrap { position: relative; display: inline-block; }
+.add-color-input {
+  display: block; width: 100%; height: 100%; padding: 0; cursor: pointer;
+  border-radius: 50%; border: 1.5px dashed var(--ink-soft); background: var(--chrome-2);
+}
+.add-color-input::-webkit-color-swatch-wrapper { padding: 0; }
+.add-color-input::-webkit-color-swatch { border: none; border-radius: 50%; opacity: 0; }
+.add-color-label {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--ink-soft); font-size: 14px; line-height: 1; pointer-events: none;
+}
+.add-color-wrap.tb-size { width: 21px; height: 21px; }
+.add-color-wrap.tb-size .add-color-label { font-size: 12px; }
+.add-color-wrap.ring-size { position: fixed; width: 32px; height: 32px; }
+kbd.listening { background: var(--accent-soft); border-color: var(--accent); }
+.keymap-row kbd { cursor: pointer; }
+.pp-thumb {
+  border: 2px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer;
+  background: #fff; position: relative; aspect-ratio: 3/4; display: flex; flex-direction: column;
+}
+.pp-thumb.checked { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.pp-thumb img, .pp-thumb canvas { width: 100%; flex: 1; object-fit: contain; background: #f4f2ec; display: block; }
+.pp-thumb .pp-label {
+  font-size: 10.5px; text-align: center; padding: 3px 2px; color: var(--ink-soft);
+  background: var(--chrome-2); border-top: 1px solid var(--line);
+}
+.pp-thumb .pp-check {
+  position: absolute; top: 5px; left: 5px; width: 17px; height: 17px; border-radius: 50%;
+  background: #fff; border: 1.5px solid var(--line); display: flex; align-items: center; justify-content: center;
+}
+.pp-thumb.checked .pp-check { background: var(--accent); border-color: var(--accent); }
+.pp-thumb .pp-check svg { width: 11px; height: 11px; stroke: #fff; fill: none; stroke-width: 2.5; display: none; }
+.pp-thumb.checked .pp-check svg { display: block; }
+.pp-thumb.empty { opacity: .55; }
+@media (prefers-reduced-motion: reduce) { #recDot { animation: none; } }
+
+/* ---------- custom shape importer menu styling ---------- */
+.shape-form-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px;
+}
+.shape-field {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.shape-field label { font-size: 12px; font-weight: 500; }
+.shape-field input, .shape-field select {
+  font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+}
+#triRotation, #triFontSize, #planeFontSize, #circFontSize, #quadFontSize, #quadRotation, #polygonFontSize, #polygonRotation, #solid3dFontSize, #nlFontSize, #fracFontSize { width: 100%; }
+.shape-tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin-top: 4px; }
+.shape-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px 6px; border: 1.5px solid var(--line); border-radius: 10px;
+  background: var(--chrome-2); cursor: pointer; font: inherit; color: var(--ink);
+}
+.shape-tile svg { width: 28px; height: 28px; flex: none; }
+.shape-tile span { font-size: 11px; text-align: center; line-height: 1.2; }
+.shape-tile:hover { background: #fff; border-color: var(--ink-soft); }
+.shape-tile.active { border-color: var(--accent); background: var(--accent-soft); color: #0B5A54; }
+.shape-cat-tab.active { background: var(--accent-soft); border-color: var(--accent); color: #0B5A54; font-weight: bold; }
+#shapePreview {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 160px; max-height: 240px; background: #fff;
+  border: 1px dashed var(--line); border-radius: 8px; overflow: hidden; padding: 6px;
+}
+#shapePreview svg { max-width: 100%; max-height: 228px; width: auto; height: auto; display: block; }
+
+/* ---------- classroom tools: random picker, timer, stamp library ---------- */
+.rp-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.rp-pane { display: flex; flex-direction: column; }
+.rp-result {
+  font-size: 32px; font-weight: 700; text-align: center; padding: 20px 10px;
+  background: var(--chrome-2); border: 1.5px dashed var(--line); border-radius: 10px;
+  color: #0B5A54; min-height: 1.3em; display: flex; align-items: center; justify-content: center;
+  word-break: break-word; line-height: 1.15;
+}
+.rp-dice-result { flex-direction: column; padding: 16px 10px; gap: 8px; }
+.rp-dice-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.rp-die {
+  display: inline-flex; align-items: center; justify-content: center; width: 50px; height: 50px;
+  border-radius: 10px; background: #fff; border: 2px solid var(--line); font-size: 21px;
+  font-weight: 700; color: var(--ink);
+}
+.rp-die-total { font-size: 14px; color: var(--ink-soft); }
+.rp-roster {
+  width: 100%; font: inherit; font-size: 12.5px; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; resize: vertical;
+}
+.rp-status { font-size: 11.5px; color: var(--ink-soft); margin: 6px 0 4px; }
+.rp-roster-row { display: flex; gap: 6px; margin-bottom: 10px; align-items: center; }
+.rp-roster-select {
+  flex: 1; min-width: 0; font: inherit; font-size: 12.5px; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px;
+}
+.rp-roster-row button {
+  flex: none; font: inherit; font-size: 12px; padding: 5px 9px; border: 1px solid var(--line);
+  border-radius: 6px; background: #fff; cursor: pointer; color: var(--ink-soft);
+}
+.rp-roster-row button:hover { background: var(--chrome-2); color: var(--ink); }
+
+#timerWidget {
+  position: fixed; top: 70px; right: 20px; z-index: 45; display: none;
+  width: 220px; background: var(--chrome); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(50,45,35,.22); padding: 8px 10px 10px;
+}
+#timerWidget.open { display: block; }
+#timerHandle {
+  display: flex; align-items: center; justify-content: space-between; cursor: grab;
+  font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-soft);
+  padding: 2px 2px 8px; user-select: none;
+}
+#timerHandle:active { cursor: grabbing; }
+#timerHandle button {
+  border: none; background: transparent; color: var(--ink-soft); cursor: pointer;
+  font-size: 13px; padding: 2px 4px; line-height: 1;
+}
+#timerHandle button:hover { color: var(--ink); }
+#timerDisplay {
+  font: 700 40px/1 ui-monospace, "SF Mono", Consolas, monospace; text-align: center;
+  color: var(--ink); padding: 6px 0 10px; letter-spacing: .02em;
+}
+#timerWidget.done #timerDisplay { color: var(--record); animation: pulse 1s infinite; }
+.timer-modes, .timer-controls { display: flex; gap: 6px; margin-bottom: 8px; }
+.timer-presets { display: flex; gap: 5px; margin-bottom: 8px; }
+.timer-presets button {
+  flex: 1; font: inherit; font-size: 11.5px; padding: 4px 0; border: 1px solid var(--line);
+  background: #fff; border-radius: 6px; cursor: pointer; color: var(--ink);
+}
+.timer-presets button:hover { background: var(--chrome-2); }
+.timer-presets button.active { background: var(--accent-soft); border-color: var(--accent); color: #0B5A54; }
+.timer-custom { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; font-size: 12px; color: var(--ink-soft); }
+.timer-custom input {
+  width: 40px; font: inherit; font-size: 12.5px; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px; text-align: center;
+}
+.timer-custom button {
+  font: inherit; font-size: 11.5px; padding: 4px 10px; border: 1px solid var(--line);
+  border-radius: 6px; background: #fff; cursor: pointer; color: var(--ink);
+}
+.timer-custom button:hover { background: var(--chrome-2); }
+
+.stamp-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px; }
+.stamp-thumb {
+  border: 2px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer;
+  background: #fff; position: relative; aspect-ratio: 4/3; display: flex; flex-direction: column;
+}
+.stamp-thumb:hover { border-color: var(--ink-soft); }
+.stamp-thumb img { width: 100%; flex: 1; object-fit: contain; background: #fff; display: block; }
+.stamp-thumb .stamp-label {
+  font-size: 10.5px; text-align: center; padding: 3px 2px; color: var(--ink-soft);
+  background: var(--chrome-2); border-top: 1px solid var(--line);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stamp-thumb .stamp-actions { position: absolute; top: 3px; right: 3px; display: none; gap: 2px; }
+.stamp-thumb:hover .stamp-actions { display: flex; }
+.stamp-thumb .stamp-actions button {
+  border: 1px solid var(--line); background: rgba(255,255,255,.9); cursor: pointer; font-size: 10.5px;
+  color: var(--ink-soft); padding: 2px 4px; line-height: 1; border-radius: 4px;
+}
+.stamp-thumb .stamp-actions button:hover { background: #fff; color: var(--ink); }
