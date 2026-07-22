@@ -220,8 +220,10 @@ function resize() {
   clampScroll(); clampScrollX();
   needsDraw = true;
 }
-new ResizeObserver(resize).observe(wrap);
-addEventListener("resize", resize);
+// Observer registration (not just the function defs) is wired up from main.js's boot sequence,
+// not here — ResizeObserver can fire its initial callback before every later <script> tag has
+// finished executing, and resizeMinimap() below reaches into render.js's mmCache, which hasn't
+// loaded yet at this point in the file order. Registering after boot removes that race entirely.
 
 let MMW = 0, MMH = 0, MMDPR = 1;
 function resizeMinimap() {
