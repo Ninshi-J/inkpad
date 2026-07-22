@@ -23,6 +23,9 @@ cv.addEventListener("pointerdown", e => {
   cv.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, e);
   if (pointers.size === 2) { startPinch(); return; }
+  // "Only draw with a stylus" mode: a lone finger is tracked (so a second finger can still
+  // trigger the pinch/pan above) but otherwise does nothing — no drawing, erasing, or selecting.
+  if (pencilOnly && e.pointerType === "touch") return;
   if (e.button !== 0) return;
   commitTextEdit();
   const w = evtWorld(e);

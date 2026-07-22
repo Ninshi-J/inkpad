@@ -37,6 +37,13 @@ function loadKeymap() {
 function saveKeymap() { try { localStorage.setItem("inkpad.keymap", JSON.stringify(keymap)); } catch (_) {} scheduleSettingsSave(); }
 function keyFor(id) { return Object.keys(keymap).find(k => keymap[k] === id) || "—"; }
 
+// A device/user preference (like the keymap), not a per-notebook one — a stylus owner wants this
+// on for every notebook, always, not re-toggled per document. Off by default so touch-drawing
+// still works out of the box for anyone without a stylus.
+let pencilOnly = false;
+function loadPencilOnlyPref() { pencilOnly = localStorage.getItem("inkpad.pencilOnly") === "1"; }
+function savePencilOnlyPref() { try { localStorage.setItem("inkpad.pencilOnly", pencilOnly ? "1" : "0"); } catch (_) {} }
+
 function cycleColor(dir) {
   const pal = paletteFor(V.tool);
   const i = pal.indexOf(V.colorHex);
@@ -165,6 +172,11 @@ function wireFileMenu() {
   $("fmExport").onclick = () => { closeFileMenu(); openExportDialog(); };
   $("fmSave").onclick = () => { closeFileMenu(); saveFile(); };
   $("fmOpen").onclick = () => { closeFileMenu(); $("fileOpen").click(); };
+
+  loadPencilOnlyPref();
+  const pencilChk = $("fmPencilOnly");
+  pencilChk.checked = pencilOnly;
+  pencilChk.onchange = () => { pencilOnly = pencilChk.checked; savePencilOnlyPref(); };
 }
 
 let remapping = null;
