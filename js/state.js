@@ -234,7 +234,6 @@ function resizeMinimap() {
   mmCache.clear(); // cached tiles were rasterized for the old rail size
   needsDraw = true;
 }
-new ResizeObserver(resizeMinimap).observe(MM);
 
 /* ---------------- geometry ---------------- */
 const pageW = () => PAPERS[S.paper][S.landscape ? 1 : 0];
