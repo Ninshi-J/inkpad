@@ -10,11 +10,27 @@ function evtWorld(e) {
 
 cv.addEventListener("pointerdown", e => {
   if (e.pointerType === "pen") {
-    // The pencil touching down means any currently-tracked touch-type pointers are the palm
-    // resting on the glass, not a deliberate gesture — drop them instead of letting them pair up
-    // with the pen as a "pinch" (which used to cancel the stroke the instant a palm landed).
+    // Evict any OTHER tracked pointer — a resting-palm touch (see below), or a stale entry left
+    // by the previous pen session whose pointerup hasn't been processed yet. On iOS, writing at a
+    // normal pace can deliver the next stroke's pointerdown slightly before the previous stroke's
+    // pointerup — leaving that old entry in `pointers` made this new pointerdown push
+    // pointers.size to 2, which got misread as a two-finger pinch (wiping BOTH strokes: the old
+    // one's drag/curStroke were nulled by startPinch(), and the new one's moves got consumed as
+    // pinch panning instead of drawing). That's what was silently eating every other stroke.
+    // Only a stale PEN drag gets finalized — a drag still owned by a touch pointer means a
+    // finger started drawing before this pencil touched down (nothing was rejecting it yet), and
+    // that touch is retroactively the palm, same as the already-tracked case above: discarded,
+    // not committed as a real stroke.
+    const staleOwner = drag && pointers.get(drag.pointerId);
+    const staleOwnerWasPen = !!staleOwner && staleOwner.pointerType === "pen";
     for (const id of [...pointers.keys()]) {
-      if (pointers.get(id).pointerType === "touch") { try { cv.releasePointerCapture(id); } catch (_) {} pointers.delete(id); }
+      if (id === e.pointerId) continue;
+      try { cv.releasePointerCapture(id); } catch (_) {}
+      pointers.delete(id);
+    }
+    if (drag && drag.pointerId !== e.pointerId) {
+      if (staleOwnerWasPen && drag.mode === "draw") commitStroke();
+      drag = null; live = null; curStroke = null;
     }
     if (pinch) pinch = null;
   } else if (e.pointerType === "touch" && [...pointers.values()].some(p => p.pointerType === "pen")) {
@@ -22,7 +38,7 @@ cv.addEventListener("pointerdown", e => {
   }
   cv.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, e);
-  if (pointers.size === 2) { startPinch(); return; }
+  if (pointers.size === 2 && [...pointers.values()].every(p => p.pointerType === "touch")) { startPinch(); return; }
   // "Only draw with a stylus" mode: a lone finger is tracked (so a second finger can still
   // trigger the pinch/pan above) but otherwise does nothing — no drawing, erasing, or selecting.
   if (pencilOnly && e.pointerType === "touch") return;
