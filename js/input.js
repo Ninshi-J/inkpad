@@ -9,6 +9,7 @@ function evtWorld(e) {
 }
 
 cv.addEventListener("pointerdown", e => {
+  dbgLog("DOWN", e.pointerType, e.pointerId, "pointers.size(before)=" + pointers.size, "drag=" + (drag ? drag.mode + "#" + drag.pointerId : "null"));
   if (e.pointerType === "pen") {
     // Evict any OTHER tracked pointer — a resting-palm touch (see below), or a stale entry left
     // by the previous pen session whose pointerup hasn't been processed yet. On iOS, writing at a
@@ -25,25 +26,30 @@ cv.addEventListener("pointerdown", e => {
     const staleOwnerWasPen = !!staleOwner && staleOwner.pointerType === "pen";
     for (const id of [...pointers.keys()]) {
       if (id === e.pointerId) continue;
+      dbgLog("  evicting stale pointer", id, pointers.get(id).pointerType);
       try { cv.releasePointerCapture(id); } catch (_) {}
       pointers.delete(id);
     }
     if (drag && drag.pointerId !== e.pointerId) {
-      if (staleOwnerWasPen && drag.mode === "draw") commitStroke();
+      dbgLog("  stale drag found, mode=" + drag.mode, "staleOwnerWasPen=" + staleOwnerWasPen, "pts=" + (curStroke ? curStroke.pts.length : "n/a"));
+      if (staleOwnerWasPen && drag.mode === "draw") { commitStroke(); dbgLog("  -> finalized stale stroke, totalStrokes=" + doc.strokes.length); }
+      else dbgLog("  -> stale drag DISCARDED (not committed)");
       drag = null; live = null; curStroke = null;
     }
     if (pinch) pinch = null;
     touchPan = null;
   } else if (e.pointerType === "touch" && [...pointers.values()].some(p => p.pointerType === "pen")) {
+    dbgLog("  -> touch rejected: pencil already down");
     return; // palm resting while the pencil is already down — ignore it entirely
   }
-  cv.setPointerCapture(e.pointerId);
+  try { cv.setPointerCapture(e.pointerId); } catch (err) { dbgLog("  setPointerCapture THREW:", err.message); }
   pointers.set(e.pointerId, e);
-  if (pointers.size === 2 && [...pointers.values()].every(p => p.pointerType === "touch")) { touchPan = null; startPinch(); return; }
+  if (pointers.size === 2 && [...pointers.values()].every(p => p.pointerType === "touch")) { dbgLog("  -> PINCH START"); touchPan = null; startPinch(); return; }
+  if (pointers.size >= 2) dbgLog("  ** pointers.size=" + pointers.size + " but not a touch pair:", [...pointers.values()].map(p => p.pointerType).join(","));
   // "Only draw with a stylus" mode: a lone finger can't draw/erase/select, but it can still pan
   // the canvas — otherwise it'd be useless for navigation whenever the stylus isn't in hand.
-  if (pencilOnly && e.pointerType === "touch") { startTouchPan(e); return; }
-  if (e.button !== 0) return;
+  if (pencilOnly && e.pointerType === "touch") { dbgLog("  -> PAN START"); startTouchPan(e); return; }
+  if (e.button !== 0) { dbgLog("  -> ignored: button=" + e.button); return; }
   commitTextEdit();
   const w = evtWorld(e);
   const { px, py } = evtPos(e);
@@ -127,6 +133,7 @@ cv.addEventListener("pointerdown", e => {
       break;
   }
   if (drag) drag.pointerId = e.pointerId;
+  dbgLog("  -> drag=" + (drag ? drag.mode : "null"), "pointers.size(after)=" + pointers.size);
   needsDraw = true;
 });
 
@@ -134,6 +141,7 @@ cv.addEventListener("pointermove", e => {
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, e);
   if (pointers.size === 2) { doPinch(); return; }
   if (touchPan && e.pointerId === touchPan.pointerId) { doTouchPan(e); return; }
+  if (drag && e.pointerId !== drag.pointerId) dbgLog("MOVE", e.pointerType, e.pointerId, "IGNORED (drag owned by #" + drag.pointerId + ")");
   // A second pointer (a resting palm, most commonly) moving around shouldn't steer a stroke or
   // drag that a DIFFERENT pointer started — without this, an untracked palm touch could feed its
   // own coordinates into the in-progress drag, warping the line being drawn.
@@ -251,11 +259,12 @@ cv.addEventListener("pointermove", e => {
 });
 
 function endPointer(e) {
+  dbgLog("UP", e.type, e.pointerType, e.pointerId, "drag=" + (drag ? drag.mode + "#" + drag.pointerId : "null"), "pinch=" + !!pinch, "touchPan=" + !!touchPan);
   pointers.delete(e.pointerId);
   if (touchPan && e.pointerId === touchPan.pointerId) { touchPan = null; return; }
-  if (drag && e.pointerId !== drag.pointerId) return; // a different pointer lifting shouldn't end this drag
+  if (drag && e.pointerId !== drag.pointerId) { dbgLog("  -> IGNORED (drag owned by a different pointer)"); return; } // a different pointer lifting shouldn't end this drag
   if (pinch) { pinch = null; return; }
-  if (!drag) return;
+  if (!drag) { dbgLog("  -> no active drag, nothing to end"); return; }
   if (drag.pasteTimer) { clearTimeout(drag.pasteTimer); drag.pasteTimer = null; }
   const w = evtWorld(e);
   switch (drag.mode) {
@@ -355,7 +364,8 @@ wrap.addEventListener("wheel", e => {
 
 /* ---------------- stroke commit + smart shapes ---------------- */
 function commitStroke() {
-  if (!curStroke || !curStroke.pts.length) return;
+  if (!curStroke || !curStroke.pts.length) { dbgLog("commitStroke: NOTHING TO COMMIT (curStroke=" + !!curStroke + ")"); return; }
+  dbgLog("commitStroke: committing", curStroke.pts.length, "pts, totalStrokes will be", doc.strokes.length + 1);
   if (curStroke.pts.length === 1) {
     const p = curStroke.pts[0];
     curStroke.pts.push({ x: p.x + 0.4, y: p.y + 0.4, p: p.p });
