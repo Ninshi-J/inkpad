@@ -32,10 +32,10 @@
    driveRestoreFolder use a Drive "properties" query to fetch just the wanted
    notebook file(s) directly, not by downloading and checking every file.
 
-   Known intentional gap: deleting a notebook locally does NOT delete its
-   Drive file. Restore treats Drive as "everything ever backed up" and
-   will bring a deleted-locally notebook back, rather than risking a
-   silent permanent delete propagating from one device to another.
+   Deleting a notebook locally also deletes (trashes) its Drive file and
+   records a tombstone, so other devices know to drop their own copy
+   instead of resurrecting it — see storage.js's tombstoneNotebooks and
+   driveApplyTombstones below.
 
    Setup: fill in DRIVE_CLIENT_ID below with a Client ID from Google Cloud
    Console (OAuth consent screen + Web application credential, scope
@@ -125,13 +125,37 @@ async function driveCreateFolder() {
   return (await res.json()).id;
 }
 
+// Confirms a cached Drive file id is still live, not trashed, and still filed under `folderId` —
+// guards against a stale cache silently overwriting an orphaned file when the user deletes/trashes
+// a file (or the whole InkPad folder) directly in Drive's own UI, outside the app. Trusting a stale
+// id blindly is dangerous specifically because it's SELF-consistent: the device that wrote it keeps
+// reading its own writes back fine (same stale id, still resolves, still has the content it just
+// wrote), so nothing looks wrong there — but a *different* device's fresh, uncached lookup searches
+// by name/property with trashed=false and finds nothing, since the real data landed in a trashed or
+// wrong-folder file. This is what made "I cleared Drive, backed up, then couldn't see it on another
+// device" so confusing: the backup silently "succeeded" every time, on the one device that could no
+// longer tell the difference.
+async function driveValidateCachedFileId(id, folderId) {
+  if (!id) return false;
+  try {
+    const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=id,trashed,parents`);
+    if (!res.ok) return false;
+    const meta = await res.json();
+    return !meta.trashed && Array.isArray(meta.parents) && meta.parents.includes(folderId);
+  } catch (_) { return false; }
+}
+
 // Cached locally so routine backups skip a name-lookup round trip; falls back
-// to searching by name (e.g. after a fresh restore, or on a new device)
-// when the cache is empty.
+// to searching by name (e.g. after a fresh restore, or on a new device, or
+// when the cached id turns out to be stale) when the cache is empty or invalid.
 async function driveFindSingletonFileId(folderId, name, cacheKey) {
   let id = null;
   try { id = localStorage.getItem(cacheKey); } catch (_) {}
-  if (id) return id;
+  if (id) {
+    if (await driveValidateCachedFileId(id, folderId)) return id;
+    try { localStorage.removeItem(cacheKey); } catch (_) {}
+    id = null;
+  }
   const q = encodeURIComponent(`name='${name}' and trashed=false and '${folderId}' in parents`);
   const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
   if (!res.ok) throw new Error(`Drive lookup failed: ${res.status}`);
@@ -258,9 +282,17 @@ async function driveBackupLibraryIndexIfChanged(folderId) {
 async function driveBackupNotebook(nb, folderId) {
   const json = await storeGet("docdata", nb.id); // already-serialized string
   const fileName = driveSanitizeName(nb.name) + ".json";
-  const renameToo = !!nb.driveFileId && nb.driveSyncedName !== nb.name;
+  let existingId = nb.driveFileId || null;
+  if (existingId && !(await driveValidateCachedFileId(existingId, folderId))) {
+    // The cached id went stale (trashed, or the whole InkPad folder got cleared directly in Drive,
+    // outside the app) — don't blindly create a duplicate: another device may have already re-synced
+    // this exact notebook under a different Drive file, findable by its notebookId property.
+    const existing = await driveFindNotebookFileByProperty(folderId, nb.id);
+    existingId = existing ? existing.id : null;
+  }
+  const renameToo = !!existingId && nb.driveSyncedName !== nb.name;
   const bodyStr = JSON.stringify({ version: 1, notebookId: nb.id, docdata: json });
-  const result = await drivePushFile(nb.driveFileId || null, folderId, fileName, bodyStr, renameToo, { notebookId: nb.id });
+  const result = await drivePushFile(existingId, folderId, fileName, bodyStr, renameToo, { notebookId: nb.id });
   nb.driveFileId = result.id;
   nb.driveSyncedAt = Date.now();
   nb.driveSyncedName = nb.name;
@@ -558,7 +590,7 @@ async function driveRestoreOrphanedFile(file) {
   if (!res.ok) throw new Error(`Drive lookup failed: ${res.status}`);
   const parsed = JSON.parse(await res.text());
   const id = file.notebookId || parsed.notebookId || genId();
-  const nb = { id, name: file.name, folderId: null, createdAt: Date.now(), updatedAt: Date.now(), driveFileId: file.id, driveSyncedAt: Date.now(), driveSyncedName: file.name };
+  const nb = { id, name: file.name, folderId: null, order: nextOrderIn(null), createdAt: Date.now(), updatedAt: Date.now(), driveFileId: file.id, driveSyncedAt: Date.now(), driveSyncedName: file.name };
   await storePut("docdata", parsed.docdata, id);
   await storePut("notebooks", nb);
   libNotebooks = await storeGetAll("notebooks");
@@ -575,7 +607,10 @@ async function driveDeleteOrphanedFile(file) {
     try { await storePut("tombstones", entry); } catch (_) {}
   }
 }
-function driveOrphanRow(file) {
+// onRestored lets a caller other than the restore picker (e.g. the manage-backups dialog) decide
+// what happens after a successful restore instead of always closing #driveRestoreDlg — defaults to
+// that same close-the-restore-picker behavior so the original call site is unaffected.
+function driveOrphanRow(file, onRestored) {
   const row = document.createElement("div");
   row.className = "lib-row lib-notebook";
   row.innerHTML = `
@@ -590,7 +625,7 @@ function driveOrphanRow(file) {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Restore "${file.name}"?`, "This wasn't in your current library index — it's a leftover file in Drive (often from a notebook deleted locally before that also cleaned up Drive). Restoring adds it back as a new notebook.", "Restore");
     if (!ok) return;
-    try { await driveRestoreOrphanedFile(file); alert(`Restored "${file.name}" from Google Drive.`); $("driveRestoreDlg").close(); }
+    try { await driveRestoreOrphanedFile(file); alert(`Restored "${file.name}" from Google Drive.`); (onRestored || (() => $("driveRestoreDlg").close()))(); }
     catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
   };
   deleteBtn.onclick = async e => {
@@ -650,6 +685,121 @@ async function openDriveRestorePicker() {
   } catch (_) {} // best-effort -- the main tree above still works even if this extra check fails
 }
 
+/* ---------------- manage backups: what's actually in Drive right now, link health, per-file control ----------------
+   Unlike the restore picker (built from the lightweight library index, for speed), this reads the
+   real Drive-side status directly — whether each cached file link still resolves — since that's
+   exactly the thing that can silently go wrong (see driveValidateCachedFileId's comment) and is
+   otherwise invisible until a *different* device's restore comes up empty. */
+
+function driveManageSingletonRow(label, cacheKey, folderId) {
+  const row = document.createElement("div");
+  row.className = "lib-row lib-notebook";
+  row.innerHTML = `
+    <span class="lib-icon">\u{1F4C4}</span>
+    <span class="lib-name">${escapeXml(label)}</span>
+    <span class="lib-actions" style="display:flex;">
+      <span class="drive-status" style="color:var(--ink-soft);font-size:11px;margin-right:6px;white-space:nowrap;"></span>
+      <button type="button" title="Re-check this file's link">⟳</button>
+    </span>`;
+  const statusEl = row.querySelector(".drive-status");
+  const check = async () => {
+    statusEl.textContent = "checking…";
+    let id = null;
+    try { id = localStorage.getItem(cacheKey); } catch (_) {}
+    if (!id) { statusEl.textContent = "not created yet"; return; }
+    const ok = await driveValidateCachedFileId(id, folderId);
+    statusEl.textContent = ok ? "linked ✓" : "⚠ link is stale — will recreate on next backup";
+  };
+  row.querySelector("button").onclick = e => { e.stopPropagation(); check(); };
+  check();
+  return row;
+}
+
+function driveManageNotebookRow(nb, folderId) {
+  const row = document.createElement("div");
+  row.className = "lib-row lib-notebook";
+  row.innerHTML = `
+    <span class="lib-icon">\u{1F4C4}</span>
+    <span class="lib-name">${escapeXml(nb.name)}</span>
+    <span class="lib-actions" style="display:flex;">
+      <span class="drive-status" style="color:var(--ink-soft);font-size:11px;margin-right:6px;white-space:nowrap;"></span>
+      <button type="button" data-act="push" title="Push this notebook to Drive now">📤</button>
+      <button type="button" data-act="recheck" title="Re-check this notebook's Drive link">⟳</button>
+      <button type="button" data-act="delete" title="Delete this notebook's file from Drive (keeps it here locally)">\u{1F5D1}</button>
+    </span>`;
+  const statusEl = row.querySelector(".drive-status");
+  const refreshStatus = async () => {
+    if (!nb.driveFileId) { statusEl.textContent = "not backed up yet"; return; }
+    statusEl.textContent = "checking…";
+    const ok = await driveValidateCachedFileId(nb.driveFileId, folderId);
+    statusEl.textContent = ok ? `synced ${new Date(nb.driveSyncedAt).toLocaleString()}` : "⚠ link is stale — will recreate on next backup";
+  };
+  row.querySelector('[data-act=push]').onclick = async e => {
+    e.stopPropagation();
+    try { await driveBackupNotebook(nb, folderId); await refreshStatus(); }
+    catch (err) { alert("Push failed: " + (err && err.message ? err.message : err)); }
+  };
+  row.querySelector('[data-act=recheck]').onclick = e => { e.stopPropagation(); refreshStatus(); };
+  row.querySelector('[data-act=delete]').onclick = async e => {
+    e.stopPropagation();
+    const ok = await confirmDialogAsync(
+      `Delete "${nb.name}" from Drive?`,
+      "This removes just the Drive backup (moved to Drive's own Trash) — the notebook itself stays right here. It'll be backed up again next time you edit it, or if you push it here.",
+      "Delete"
+    );
+    if (!ok) return;
+    try {
+      let id = nb.driveFileId && await driveValidateCachedFileId(nb.driveFileId, folderId) ? nb.driveFileId : null;
+      if (!id) { const f = await driveFindNotebookFileByProperty(folderId, nb.id); id = f ? f.id : null; }
+      if (!id) { alert(`"${nb.name}" isn't backed up to Drive right now — nothing to delete.`); return; }
+      await driveTrashFile(id);
+      // Deliberately clear driveFileId only, not driveSyncedAt -- leaving driveSyncedAt alone keeps
+      // the auto-sync loop's dirty check (updatedAt > driveSyncedAt) false, so this doesn't get
+      // silently re-created on the next auto-push; it comes back only on a real edit or the push
+      // button above, same as if it had never had a Drive file at all.
+      nb.driveFileId = null;
+      try { await storePut("notebooks", nb); } catch (_) {}
+      await refreshStatus();
+    } catch (err) { alert("Delete failed: " + (err && err.message ? err.message : err)); }
+  };
+  refreshStatus();
+  return row;
+}
+
+async function openDriveManageDialog() {
+  if (!driveConfigured()) { alert("Google Drive sync isn't set up yet — see the top of js/drive-sync.js for the one-line config."); return; }
+  const tree = $("driveManageTree"), status = $("driveManageStatus");
+  tree.innerHTML = "";
+  status.textContent = "Loading…";
+  $("driveManageDlg").showModal();
+  let folderId;
+  try { folderId = await driveFindFolder(); }
+  catch (err) { status.textContent = "Couldn't load: " + (err && err.message ? err.message : err); return; }
+  if (!folderId) { status.textContent = "No InkPad backup found in Google Drive yet — back up once first."; return; }
+  status.textContent = "";
+
+  tree.appendChild(driveManageSingletonRow("InkPad Library.json (folder tree, notebook list)", DRIVE_LIBRARY_FILE_ID_KEY, folderId));
+  tree.appendChild(driveManageSingletonRow("InkPad Settings.json (keymap, palette, etc.)", DRIVE_SETTINGS_FILE_ID_KEY, folderId));
+
+  const nbHeading = document.createElement("div");
+  nbHeading.textContent = `Notebooks (${libNotebooks.length})`;
+  nbHeading.style.cssText = "font-size:11px;color:var(--ink-soft);margin:10px 0 4px;";
+  tree.appendChild(nbHeading);
+  for (const nb of libNotebooks) tree.appendChild(driveManageNotebookRow(nb, folderId));
+
+  try {
+    const knownIds = new Set(libNotebooks.map(n => n.id));
+    const orphans = await driveFetchOrphanedNotebookFiles(folderId, knownIds);
+    if (orphans.length) {
+      const heading = document.createElement("div");
+      heading.textContent = `Unrecognized files in Drive (${orphans.length}) — not linked to any notebook here`;
+      heading.style.cssText = "font-size:11px;color:var(--ink-soft);margin:10px 0 4px;";
+      tree.appendChild(heading);
+      for (const f of orphans) tree.appendChild(driveOrphanRow(f, () => openDriveManageDialog()));
+    }
+  } catch (_) {} // best-effort -- the rest of the dialog above still works even if this extra check fails
+}
+
 /* ---------------- auto-sync ---------------- */
 let driveAutoSyncEnabled = false;
 let driveAutoTimer = null;
@@ -701,6 +851,7 @@ function wireDriveMenu() {
     catch (err) { alert("Backup failed: " + (err && err.message ? err.message : err)); }
   };
   $("fmDriveRestore").onclick = () => { closeFileMenu(); openDriveRestorePicker(); };
+  $("fmDriveManage").onclick = () => { closeFileMenu(); openDriveManageDialog(); };
   $("driveRestoreAllBtn").onclick = async () => {
     if (!driveConfigured()) return needsSetup();
     const ok = await confirmDialogAsync("Restore everything from Google Drive?", "This replaces every notebook currently stored in your active storage location (browser storage, or a connected folder if you have one open) with what's in your Drive backup. This can't be undone locally.", "Restore");
