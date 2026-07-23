@@ -9,7 +9,14 @@ const ICONS = {
   text: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4V2.8h10V4M8 2.8v10.4M6 13.2h4"/></svg>',
   laser: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="5" r="2"/><path d="M2 14c2.5-2 5-5 7-7.5" stroke-dasharray="2 2"/></svg>',
   ruler: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.8" y="9.2" width="12.4" height="4" rx="1" transform="rotate(-30 8 11)"/><path d="M5 10.5l.8 1.4M7.5 9l.8 1.4M10 7.5l.8 1.4" transform="rotate(0)"/></svg>',
-  shape: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2h5v5H2zM9 2l5 2.5L9 7zM4 9l4 5 4-5z"/></svg>'
+  // Same artwork as the matching tiles inside #shapeImporterDlg (triangle/cube/coordinate-plane),
+  // reused here so each toolbar button reads as a preview of what it opens straight to.
+  shape2d: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3 L21 20 L3 20 Z" stroke-linejoin="round"/></svg>',
+  shape3d: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8 L3 19 L14 19 L14 8 Z"/><path d="M3 8 L8 3 L19 3 L14 8 Z"/><path d="M14 8 L19 3 L19 14 L14 19"/></svg>',
+  // The full-cross coordinate-plane icon reads as just a "+" at this button's small size — its
+  // detail sits right where the axes cross. This is the Quadrant-1 tile's icon instead: axes meet
+  // at a corner, leaving the diagonal line room to read clearly as "a graph" even shrunk down.
+  graphTools: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 21h18M3 21V3"/><path d="M4 18c3-5 6-9 9-12" stroke-width="1.4"/></svg>',
 };
 const TOOL_LIST = [
   ["pen", "Pen", "pen"], ["hl", "Highlighter", "hl"],
@@ -103,7 +110,9 @@ function buildToolButtons(host) {
   const gImporter = div("tb-group");
   gImporter.style.marginLeft = "auto";
   gImporter.append(
-    btn(`${ICONS.shape}<span>Diagrams</span>`, () => { $("shapeImporterDlg").showModal(); applyShapePrefsToDialog(); selectShapeType($("shapeTypeSelect").value); }, "Import mathematically sound diagrams, shapes, and coordinate planes"),
+    btn(ICONS.shape2d, () => openShapeDialog("2d"), "2D Shapes — triangles, circles, polygons, and more"),
+    btn(ICONS.shape3d, () => openShapeDialog("3d"), "3D Shapes — cubes, prisms, cylinders, cones, pyramids"),
+    btn(ICONS.graphTools, () => openShapeDialog("tools"), "Graphing Tools — coordinate planes and number lines"),
     btn("🏷️ Stamps", openStampDlg, "Reusable stamps — save a selection once, insert it again on any page"),
   );
   host.appendChild(gImporter);

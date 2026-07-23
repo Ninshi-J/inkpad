@@ -73,14 +73,7 @@
 
 <!-- Math Shapes Importer Dialog Window -->
 <dialog id="shapeImporterDlg" style="max-width: 480px; width: min(480px, 94vw);">
-  <h2>📐 Math Shape Importer</h2>
   <div class="shape-field" style="margin-bottom: 12px;">
-    <label>Select Mathematical Object</label>
-    <div id="shapeCategoryTabs" style="display:flex; gap:6px; margin: 6px 0 8px;">
-      <button type="button" class="side-btn shape-cat-tab" data-category="2d" style="width:auto; flex:1; margin-top:0;" onclick="selectShapeCategory('2d')">2D Shapes</button>
-      <button type="button" class="side-btn shape-cat-tab" data-category="3d" style="width:auto; flex:1; margin-top:0;" onclick="selectShapeCategory('3d')">3D Shapes</button>
-      <button type="button" class="side-btn shape-cat-tab" data-category="tools" style="width:auto; flex:1; margin-top:0;" onclick="selectShapeCategory('tools')">Graphing Tools</button>
-    </div>
     <div id="shapeTypeTiles" class="shape-tile-grid">
       <button type="button" class="shape-tile" data-type="plane" data-category="tools" onclick="selectShapeType('plane')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12h18M12 3v18"/><path d="M8 8l4 4M8 16l4-4"/></svg>

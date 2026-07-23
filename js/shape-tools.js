@@ -32,7 +32,6 @@ const SHAPE_CATEGORY = {
   plane: "tools", planeMath: "tools", planeQ1: "tools", numberline: "tools",
 };
 function selectShapeCategory(category) {
-  document.querySelectorAll(".shape-cat-tab").forEach(t => t.classList.toggle("active", t.dataset.category === category));
   document.querySelectorAll("#shapeTypeTiles .shape-tile").forEach(t => {
     t.style.display = t.dataset.category === category ? "" : "none";
   });
@@ -45,6 +44,17 @@ function selectShapeType(type) {
   selectShapeCategory(SHAPE_CATEGORY[type] || "2d");
   toggleShapeFormFields();
   renderShapePreview();
+}
+const SHAPE_CATEGORY_DEFAULT = { "2d": "triangle", "3d": "cube", tools: "plane" };
+// Opens the shape-importer dialog straight to one of its three category tabs — used by the
+// toolbar's three shape buttons (2D/3D/Graphing Tools) instead of one generic "Diagrams" button.
+// Keeps whatever type was last selected if it already belongs to that category (so re-opening the
+// same tab picks up where you left off), otherwise falls back to that category's first shape.
+function openShapeDialog(category) {
+  $("shapeImporterDlg").showModal();
+  applyShapePrefsToDialog();
+  const current = $("shapeTypeSelect").value;
+  selectShapeType(SHAPE_CATEGORY[current] === category ? current : SHAPE_CATEGORY_DEFAULT[category]);
 }
 
 // Per-notebook shape-dialog checkbox prefs (e.g. "show side labels") — saved in

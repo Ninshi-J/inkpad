@@ -383,7 +383,6 @@ kbd.listening { background: var(--accent-soft); border-color: var(--accent); }
 .shape-tile span { font-size: 11px; text-align: center; line-height: 1.2; }
 .shape-tile:hover { background: #fff; border-color: var(--ink-soft); }
 .shape-tile.active { border-color: var(--accent); background: var(--accent-soft); color: #0B5A54; }
-.shape-cat-tab.active { background: var(--accent-soft); border-color: var(--accent); color: #0B5A54; font-weight: bold; }
 #shapePreview {
   display: flex; align-items: center; justify-content: center;
   min-height: 160px; max-height: 240px; background: #fff;
