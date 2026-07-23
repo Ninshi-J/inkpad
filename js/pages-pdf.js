@@ -124,6 +124,17 @@ function schedulePdfUpgrade() {
   pdfUpgradeTimer = setTimeout(upgradeVisiblePdfImages, 220);
 }
 
+// Same "does this page have anything on it" check clearCurrentPage (js/sidebar.js) does inline —
+// factored out here since importPdfFiles below is a second, genuinely reusable caller.
+function isPageBlank(p) {
+  const top = p * stride(), bot = top + pageDims(p).h;
+  const inPage = y => y >= top && y < bot;
+  return !doc.strokes.some(s => !s.del && inPage(s.pts[0].y))
+    && !doc.tapes.some(t => !t.del && inPage(t.y))
+    && !doc.texts.some(t => !t.del && inPage(t.y))
+    && !doc.images.some(i => !i.del && inPage(i.y));
+}
+
 async function importPdfFiles(files) {
   let lib;
   try { lib = await loadPdfJs(); } catch (err) { alert(err.message); return; }
@@ -168,12 +179,18 @@ async function importPdfFiles(files) {
   });
   if (!chosen) return;
 
-  // Insert right after whichever page is currently in view — if that's also the last page
-  // (the common case), this simply appends, same as before; if you've navigated to a page in
-  // the middle of the document first, the PDF lands there instead, pushing later pages down.
-  const insertAt = curPage() + 1;
-  let atPage = insertAt;
-  insertPageAt(insertAt, chosen.length);
+  // If the page you're currently viewing is empty, the import fills THAT page directly instead
+  // of leaving it blank and inserting the PDF after it — only pages beyond the first get newly
+  // inserted (right after it, same as the non-blank case below). Otherwise, insert right after
+  // whichever page is currently in view — if that's also the last page (the common case), this
+  // simply appends, same as before; if you've navigated to a page in the middle of the document
+  // first, the PDF lands there instead, pushing later pages down.
+  const activePage = curPage();
+  const reuseBlankPage = isPageBlank(activePage);
+  let atPage = reuseBlankPage ? activePage : activePage + 1;
+  const firstNewPage = atPage;
+  const newPagesNeeded = reuseBlankPage ? chosen.length - 1 : chosen.length;
+  if (newPagesNeeded > 0) insertPageAt(activePage + 1, newPagesNeeded);
 
   const added = [];
   const newImages = [];
@@ -197,7 +214,7 @@ async function importPdfFiles(files) {
   // later on the same page layers on top of them, instead of potentially covering them.
   doc.images.unshift(...newImages);
   pushUndo({ op: "add", items: added });
-  V.scroll = Math.max(0, insertAt * stride() - 40);
+  V.scroll = Math.max(0, firstNewPage * stride() - 40);
   clampScroll(); markDirty(); syncUI();
   schedulePdfUpgrade();
 }
