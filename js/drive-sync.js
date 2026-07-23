@@ -162,6 +162,33 @@ async function drivePushFile(existingId, folderId, name, bodyStr, renameToo, pro
   return res.json(); // { id, modifiedTime }
 }
 
+// Moves a Drive file to Trash rather than a hard delete — recoverable from Drive's own Trash if
+// something goes wrong, and consistent with every other query here already filtering trashed=false.
+async function driveTrashFile(fileId) {
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }),
+  });
+  if (!res.ok) throw new Error(`Drive delete failed: ${res.status}`);
+}
+
+// Best-effort: called right after a local delete (see storage.js's tombstoneNotebooks). Deliberately
+// swallows failures (no Drive configured yet, offline, not signed in) — the tombstone is already
+// recorded locally regardless, so a device that IS synced will still catch the deletion next time
+// it reconciles, even if this specific attempt couldn't reach Drive.
+async function driveDeleteNotebookFiles(ids) {
+  if (!driveConfigured() || !ids.length) return;
+  try {
+    const folderId = await driveFindFolder();
+    if (!folderId) return; // never backed up anywhere yet -- nothing to delete
+    for (const id of ids) {
+      try {
+        const file = await driveFindNotebookFileByProperty(folderId, id);
+        if (file) await driveTrashFile(file.id);
+      } catch (_) {} // one file failing shouldn't block the rest
+    }
+  } catch (_) {}
+}
+
 async function driveFolderNewestModifiedTime(folderId) {
   const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
   const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime desc&pageSize=1&fields=files(modifiedTime)`);
@@ -187,11 +214,15 @@ async function driveFetchLibrarySnapshot() {
   const folderId = await driveFindFolder();
   if (!folderId) return null;
   const id = await driveFindSingletonFileId(folderId, DRIVE_LIBRARY_FILE_NAME, DRIVE_LIBRARY_FILE_ID_KEY);
-  if (!id) return { folderId, folders: [], notebooks: [], stamps: [], rosters: [] };
+  if (!id) return { folderId, folders: [], notebooks: [], stamps: [], rosters: [], deletedNotebookIds: [], docdata: null };
   const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
   if (!res.ok) throw new Error(`Drive lookup failed: ${res.status}`);
   const snap = JSON.parse(await res.text());
-  return { folderId, folders: snap.folders || [], notebooks: snap.notebooks || [], stamps: snap.stamps || [], rosters: snap.rosters || [] };
+  return {
+    folderId, folders: snap.folders || [], notebooks: snap.notebooks || [], stamps: snap.stamps || [], rosters: snap.rosters || [],
+    deletedNotebookIds: snap.deletedNotebookIds || [],
+    docdata: snap.docdata || null, // legacy single-blob backups only, predates per-notebook files
+  };
 }
 
 /* ---------------- per-tier push, each skipping a no-op upload ---------------- */
@@ -210,12 +241,12 @@ async function driveBackupSettingsIfChanged(folderId) {
 }
 
 async function driveBackupLibraryIndexIfChanged(folderId) {
-  const [folders, notebooksRaw, stamps, rosters] = await Promise.all([
-    storeGetAll("folders"), storeGetAll("notebooks"), storeGetAll("stamps"), storeGetAll("rosters"),
+  const [folders, notebooksRaw, stamps, rosters, deletedNotebookIds] = await Promise.all([
+    storeGetAll("folders"), storeGetAll("notebooks"), storeGetAll("stamps"), storeGetAll("rosters"), storeGetAll("tombstones"),
   ]);
   // Drive file id / sync bookkeeping is local-only, not meaningful to other devices.
   const notebooks = notebooksRaw.map(({ driveFileId, driveSyncedAt, driveSyncedName, ...rest }) => rest);
-  const bodyStr = JSON.stringify({ version: 1, folders, notebooks, stamps, rosters });
+  const bodyStr = JSON.stringify({ version: 1, folders, notebooks, stamps, rosters, deletedNotebookIds });
   if (bodyStr === driveLastPushedLibraryJson) return null;
   const id = await driveFindSingletonFileId(folderId, DRIVE_LIBRARY_FILE_NAME, DRIVE_LIBRARY_FILE_ID_KEY);
   const result = await drivePushFile(id, folderId, DRIVE_LIBRARY_FILE_NAME, bodyStr, false);
@@ -237,11 +268,50 @@ async function driveBackupNotebook(nb, folderId) {
   return result;
 }
 
+// Merges remote tombstones into the local list (so this device's own next push carries them
+// forward too — the library index is one shared blob, not a merge-friendly log, so if this
+// device's push didn't include a tombstone another device already recorded, it'd effectively
+// un-delete that notebook from the shared index). Returns any locally-present notebook that
+// turned out to be tombstoned, after actually removing it locally.
+async function driveMergeRemoteTombstones(remoteDeleted) {
+  if (!remoteDeleted || !remoteDeleted.length) return [];
+  const localIds = new Set(libTombstones.map(t => t.id));
+  for (const t of remoteDeleted) {
+    if (!localIds.has(t.id)) { libTombstones.push(t); try { await storePut("tombstones", t); } catch (_) {} }
+  }
+  return [];
+}
+async function driveApplyTombstones(remoteDeleted) {
+  await driveMergeRemoteTombstones(remoteDeleted);
+  const deletedIds = new Set(libTombstones.map(t => t.id));
+  const toRemove = libNotebooks.filter(nb => deletedIds.has(nb.id));
+  for (const nb of toRemove) {
+    libNotebooks = libNotebooks.filter(n => n.id !== nb.id);
+    try { await storeDelete("notebooks", nb.id); await storeDelete("docdata", nb.id); } catch (_) {}
+    if (nb.id === activeNotebookId) activeNotebookId = null;
+  }
+  return toRemove;
+}
+
 async function driveBackupNow() {
   await flushAutosave(); // make sure the active notebook's own latest edits are in docdata first
   const folderId = (await driveFindFolder()) || (await driveCreateFolder());
   let pushedAny = false, newestSeen = null;
   const note = t => { if (t && (!newestSeen || new Date(t) > new Date(newestSeen))) newestSeen = t; };
+
+  // Quick sync check: if a notebook was deleted on another device since this device last looked,
+  // drop it locally instead of blindly re-uploading it below and resurrecting it in Drive.
+  try {
+    const snap = await driveFetchLibrarySnapshot();
+    const removed = await driveApplyTombstones(snap ? snap.deletedNotebookIds : []);
+    if (removed.length) {
+      if (!activeNotebookId) {
+        if (libNotebooks.length) await switchNotebook(libNotebooks[0].id);
+        else await createNotebookRaw("My Notes", null);
+      }
+      renderLibTree();
+    }
+  } catch (_) {} // best-effort -- worst case a since-deleted notebook gets re-pushed once more
 
   const settingsResult = await driveBackupSettingsIfChanged(folderId);
   if (settingsResult) { pushedAny = true; note(settingsResult.modifiedTime); }
@@ -296,64 +366,38 @@ async function runRestoreWithNewerLocalGuard(runFn) {
 
 /* ---------------- restore: enumerate the whole folder and rebuild ---------------- */
 
+// Index-driven, deliberately — restores exactly what the picker's preview shows (the library
+// index), nothing more. It used to also enumerate every raw file in the Drive folder and
+// resurrect anything not in the index, which silently brought back old notebooks that had been
+// deleted locally (their Drive file was never cleaned up — see js/storage.js's
+// tombstoneNotebooks) even though they were never shown as part of what "restore everything"
+// claimed it would do. Any such leftover files are now surfaced separately in the picker as
+// "Unfiled backups," restorable/deletable on their own — driveRestoreNow() itself no longer
+// touches them.
 async function driveRestoreNow(force) {
-  const folderId = await driveFindFolder();
-  if (!folderId) throw new Error('No InkPad backup found in Google Drive yet — use "Back up to Drive" first.');
-  const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
-  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&pageSize=1000`);
-  if (!res.ok) throw new Error(`Drive lookup failed: ${res.status}`);
-  const { files } = await res.json();
-  if (!files || !files.length) throw new Error('No InkPad backup found in Google Drive yet — use "Back up to Drive" first.');
-
-  const settingsFile = files.find(f => f.name === DRIVE_SETTINGS_FILE_NAME);
-  const libraryFile = files.find(f => f.name === DRIVE_LIBRARY_FILE_NAME);
-  const notebookFiles = files.filter(f => f !== settingsFile && f !== libraryFile);
-
-  const fetchJson = async id => { const r = await driveFetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`); return r.ok ? JSON.parse(await r.text()) : null; };
-
-  const librarySnapshot = libraryFile ? await fetchJson(libraryFile.id) : null;
-  const settingsSnapshot = settingsFile ? await fetchJson(settingsFile.id) : null;
-
-  // Check against just the lightweight metadata already in hand — no need to download any
-  // notebook content yet to know whether to warn.
+  const snapshot = await driveFetchLibrarySnapshot();
+  if (!snapshot || !snapshot.folderId || (!snapshot.folders.length && !snapshot.notebooks.length)) {
+    throw new Error('No InkPad backup found in Google Drive yet — use "Back up to Drive" first.');
+  }
   if (!force) {
-    const atRisk = findNewerLocalNotebooks((librarySnapshot && librarySnapshot.notebooks) || []);
+    const atRisk = findNewerLocalNotebooks(snapshot.notebooks);
     if (atRisk.length) throw new DriveNewerLocalWarning(atRisk);
   }
 
-  const remoteNotebooks = [];
-  for (const f of notebookFiles) {
-    try {
-      const parsed = await fetchJson(f.id);
-      if (parsed && parsed.notebookId) remoteNotebooks.push({ file: f, notebookId: parsed.notebookId, docdata: parsed.docdata });
-    } catch (_) {} // skip anything in that folder that isn't a recognisable InkPad notebook file
-  }
+  for (const fo of snapshot.folders) await storePut("folders", fo);
+  for (const st of snapshot.stamps) await storePut("stamps", st);
+  for (const r of snapshot.rosters) await storePut("rosters", r);
+  await driveApplyTombstones(snapshot.deletedNotebookIds);
 
-  const folders = (librarySnapshot && librarySnapshot.folders) || [];
-  const notebooks = (librarySnapshot && librarySnapshot.notebooks) || [];
-  const knownIds = new Set(notebooks.map(n => n.id));
-  for (const rn of remoteNotebooks) {
-    if (!knownIds.has(rn.notebookId)) notebooks.push({ id: rn.notebookId, name: rn.file.name.replace(/\.json$/, ""), folderId: null, createdAt: Date.now(), updatedAt: Date.now() });
-  }
-  const stamps = (librarySnapshot && librarySnapshot.stamps) || [];
-  const rosters = (librarySnapshot && librarySnapshot.rosters) || [];
+  if (snapshot.notebooks.length) await driveRestoreSelected(snapshot.notebooks.map(n => n.id), snapshot, true);
 
-  for (const fo of folders) await storePut("folders", fo);
-  for (const nb of notebooks) {
-    const rn = remoteNotebooks.find(r => r.notebookId === nb.id);
-    if (rn) {
-      await storePut("docdata", rn.docdata, nb.id);
-      nb.driveFileId = rn.file.id; nb.driveSyncedAt = Date.now(); nb.driveSyncedName = nb.name;
-    } else if (librarySnapshot && librarySnapshot.docdata && librarySnapshot.docdata[nb.id]) {
-      // Legacy single-file backup (from before per-notebook files existed) — content was
-      // bundled inside the library file itself. Restores fine; migrates to its own file
-      // automatically on the next "Back up to Drive" (nb.updatedAt > nb.driveSyncedAt).
-      await storePut("docdata", librarySnapshot.docdata[nb.id], nb.id);
-    }
-    await storePut("notebooks", nb);
+  const folderId = snapshot.folderId;
+  const settingsId = await driveFindSingletonFileId(folderId, DRIVE_SETTINGS_FILE_NAME, DRIVE_SETTINGS_FILE_ID_KEY);
+  let settingsSnapshot = null;
+  if (settingsId) {
+    const r = await driveFetch(`https://www.googleapis.com/drive/v3/files/${settingsId}?alt=media`);
+    settingsSnapshot = r.ok ? JSON.parse(await r.text()) : null;
   }
-  for (const st of stamps) await storePut("stamps", st);
-  for (const r of rosters) await storePut("rosters", r);
   if (settingsSnapshot && settingsSnapshot.settings) applySettingsSnapshot(settingsSnapshot.settings);
 
   // Re-read from whichever backend is actually active (idb or a connected
@@ -364,16 +408,18 @@ async function driveRestoreNow(force) {
   libNotebooks = await storeGetAll("notebooks");
   libStamps = await storeGetAll("stamps");
   libRosters = await storeGetAll("rosters");
-  activeNotebookId = null;
-  const firstId = (notebooks[0] && notebooks[0].id) || (libNotebooks[0] && libNotebooks[0].id);
-  if (firstId) await switchNotebook(firstId);
+  libTombstones = await storeGetAll("tombstones");
   renderLibTree();
   renderStampGrid();
 
-  if (settingsFile) { try { localStorage.setItem(DRIVE_SETTINGS_FILE_ID_KEY, settingsFile.id); } catch (_) {} }
-  if (libraryFile) { try { localStorage.setItem(DRIVE_LIBRARY_FILE_ID_KEY, libraryFile.id); } catch (_) {} }
+  if (settingsId) { try { localStorage.setItem(DRIVE_SETTINGS_FILE_ID_KEY, settingsId); } catch (_) {} }
+  try { localStorage.setItem(DRIVE_LIBRARY_FILE_ID_KEY, await driveFindSingletonFileId(folderId, DRIVE_LIBRARY_FILE_NAME, DRIVE_LIBRARY_FILE_ID_KEY)); } catch (_) {}
   driveLastPushedSettingsJson = settingsSnapshot ? JSON.stringify(settingsSnapshot) : null;
-  driveLastPushedLibraryJson = librarySnapshot ? JSON.stringify({ version: 1, folders, notebooks: notebooks.map(({ driveFileId, driveSyncedAt, driveSyncedName, ...rest }) => rest), stamps, rosters }) : null;
+  driveLastPushedLibraryJson = JSON.stringify({
+    version: 1, folders: snapshot.folders,
+    notebooks: libNotebooks.map(({ driveFileId, driveSyncedAt, driveSyncedName, ...rest }) => rest),
+    stamps: snapshot.stamps, rosters: snapshot.rosters, deletedNotebookIds: libTombstones,
+  });
   try {
     const newest = await driveFolderNewestModifiedTime(folderId);
     if (newest) localStorage.setItem(DRIVE_LAST_SEEN_KEY, newest);
@@ -411,6 +457,11 @@ async function driveRestoreSelected(notebookIds, snapshot, force) {
         await storePut("docdata", parsed.docdata, nb.id);
         nb.driveFileId = file.id; nb.driveSyncedAt = Date.now(); nb.driveSyncedName = nb.name;
       }
+    } else if (snapshot.docdata && snapshot.docdata[nb.id]) {
+      // Legacy single-file backup (from before per-notebook files existed) — content was bundled
+      // inside the library file itself. Restores fine; migrates to its own file automatically on
+      // the next "Back up to Drive" (nb.updatedAt > nb.driveSyncedAt).
+      await storePut("docdata", snapshot.docdata[nb.id], nb.id);
     }
     await storePut("notebooks", nb);
   }
@@ -486,6 +537,78 @@ function driveRestoreNotebookRow(nb, depth) {
   return row;
 }
 
+/* ---------------- orphaned files: in Drive, but not in the current library index ---------------- */
+// These are exactly what "Restore everything" used to silently resurrect without ever showing them
+// in the preview first (see driveRestoreNow's comment) — most commonly notebooks deleted locally
+// before local-delete started also cleaning up Drive (js/storage.js's tombstoneNotebooks). Surfaced
+// here instead so the preview matches reality: restorable or deletable on their own, nothing hidden.
+// Metadata-only (name/modifiedTime/properties) — no content downloaded just to list them.
+async function driveFetchOrphanedNotebookFiles(folderId, knownIds) {
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime,properties)&pageSize=1000`);
+  if (!res.ok) throw new Error(`Drive lookup failed: ${res.status}`);
+  const { files } = await res.json();
+  return (files || [])
+    .filter(f => f.name !== DRIVE_SETTINGS_FILE_NAME && f.name !== DRIVE_LIBRARY_FILE_NAME)
+    .filter(f => !(f.properties && f.properties.notebookId && knownIds.has(f.properties.notebookId)))
+    .map(f => ({ id: f.id, name: f.name.replace(/\.json$/, ""), notebookId: (f.properties && f.properties.notebookId) || null, modifiedTime: f.modifiedTime }));
+}
+async function driveRestoreOrphanedFile(file) {
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`);
+  if (!res.ok) throw new Error(`Drive lookup failed: ${res.status}`);
+  const parsed = JSON.parse(await res.text());
+  const id = file.notebookId || parsed.notebookId || genId();
+  const nb = { id, name: file.name, folderId: null, createdAt: Date.now(), updatedAt: Date.now(), driveFileId: file.id, driveSyncedAt: Date.now(), driveSyncedName: file.name };
+  await storePut("docdata", parsed.docdata, id);
+  await storePut("notebooks", nb);
+  libNotebooks = await storeGetAll("notebooks");
+  await switchNotebook(id);
+  renderLibTree();
+  return nb;
+}
+async function driveDeleteOrphanedFile(file) {
+  await driveTrashFile(file.id);
+  if (file.notebookId) {
+    const entry = { id: file.notebookId, deletedAt: Date.now() };
+    libTombstones = libTombstones.filter(t => t.id !== entry.id);
+    libTombstones.push(entry);
+    try { await storePut("tombstones", entry); } catch (_) {}
+  }
+}
+function driveOrphanRow(file) {
+  const row = document.createElement("div");
+  row.className = "lib-row lib-notebook";
+  row.innerHTML = `
+    <span class="lib-icon">\u{1F4C4}</span>
+    <span class="lib-name">${escapeXml(file.name)}</span>
+    <span class="lib-actions" style="display:flex;">
+      <button type="button" title="Restore this notebook">⟳</button>
+      <button type="button" title="Delete this from Drive">\u{1F5D1}</button>
+    </span>`;
+  const [restoreBtn, deleteBtn] = row.querySelectorAll("button");
+  restoreBtn.onclick = async e => {
+    e.stopPropagation();
+    const ok = await confirmDialogAsync(`Restore "${file.name}"?`, "This wasn't in your current library index — it's a leftover file in Drive (often from a notebook deleted locally before that also cleaned up Drive). Restoring adds it back as a new notebook.", "Restore");
+    if (!ok) return;
+    try { await driveRestoreOrphanedFile(file); alert(`Restored "${file.name}" from Google Drive.`); $("driveRestoreDlg").close(); }
+    catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
+  };
+  deleteBtn.onclick = async e => {
+    e.stopPropagation();
+    const ok = await confirmDialogAsync(`Delete "${file.name}" from Drive?`, "This permanently removes this leftover file from Google Drive (moved to Drive's own Trash). It won't show up here again.", "Delete");
+    if (!ok) return;
+    try { await driveTrashFile(file.id); row.remove(); }
+    catch (err) { alert("Delete failed: " + (err && err.message ? err.message : err)); return; }
+    if (file.notebookId) {
+      const entry = { id: file.notebookId, deletedAt: Date.now() };
+      libTombstones = libTombstones.filter(t => t.id !== entry.id);
+      libTombstones.push(entry);
+      try { await storePut("tombstones", entry); } catch (_) {}
+    }
+  };
+  return row;
+}
+
 async function openDriveRestorePicker() {
   if (!driveConfigured()) { alert("Google Drive sync isn't set up yet — see the top of js/drive-sync.js for the one-line config."); return; }
   const tree = $("driveRestoreTree"), status = $("driveRestoreStatus");
@@ -513,6 +636,18 @@ async function openDriveRestorePicker() {
   }
   for (const f of (childrenByFolder.get(null) || [])) tree.appendChild(driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, 0));
   for (const nb of (notebooksByFolder.get(null) || [])) tree.appendChild(driveRestoreNotebookRow(nb, 0));
+
+  try {
+    const knownIds = new Set(snapshot.notebooks.map(n => n.id));
+    const orphans = await driveFetchOrphanedNotebookFiles(snapshot.folderId, knownIds);
+    if (orphans.length) {
+      const heading = document.createElement("div");
+      heading.textContent = `Unfiled backups (${orphans.length}) — in Drive, not in your current library`;
+      heading.style.cssText = "font-size:11px;color:var(--ink-soft);margin:10px 0 4px;";
+      tree.appendChild(heading);
+      for (const f of orphans) tree.appendChild(driveOrphanRow(f));
+    }
+  } catch (_) {} // best-effort -- the main tree above still works even if this extra check fails
 }
 
 /* ---------------- auto-sync ---------------- */

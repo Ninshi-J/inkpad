@@ -1,5 +1,5 @@
 "use strict";
-const IDB_NAME = "inkpad-db", IDB_VERSION = 5;
+const IDB_NAME = "inkpad-db", IDB_VERSION = 6;
 let idbReady = null;
 function openIdb() {
   if (idbReady) return idbReady;
@@ -21,6 +21,11 @@ function openIdb() {
       // Named class rosters for the random student picker — a teacher with several class periods
       // keeps one roster per class, switching the active one from the picker dialog.
       if (!db.objectStoreNames.contains("rosters")) db.createObjectStore("rosters", { keyPath: "id" });
+      // {id: notebookId, deletedAt} tombstones — records that a notebook was deliberately deleted
+      // (not just "absent"), so Drive sync on another device can tell "delete this too" apart from
+      // "never heard of this," instead of silently re-uploading a since-deleted notebook. See
+      // js/drive-sync.js's tombstone reconciliation.
+      if (!db.objectStoreNames.contains("tombstones")) db.createObjectStore("tombstones", { keyPath: "id" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -112,6 +117,7 @@ async function fsLoadIndex() {
   }
   if (!Array.isArray(fsIndexCache.folders)) fsIndexCache.folders = [];
   if (!Array.isArray(fsIndexCache.notebooks)) fsIndexCache.notebooks = [];
+  if (!Array.isArray(fsIndexCache.tombstones)) fsIndexCache.tombstones = [];
   return fsIndexCache;
 }
 async function fsSaveIndex() {
@@ -241,6 +247,7 @@ function defaultDocSettings() {
 
 let libFolders = [];       // [{id, name, parentId, createdAt}]
 let libNotebooks = [];     // [{id, name, folderId, createdAt, updatedAt}]
+let libTombstones = [];    // [{id: notebookId, deletedAt}] — see js/drive-sync.js
 let activeNotebookId = null;
 let libExpanded = new Set(); // folder ids currently expanded in the sidebar tree
 let libEditingName = false;  // true while a tree row's name is being inline-renamed — suspends global hotkeys, same idea as editingText
@@ -267,7 +274,8 @@ async function initLibrary() {
   try {
     libFolders = await idbGetAll("folders");
     libNotebooks = await idbGetAll("notebooks");
-  } catch (_) { libFolders = []; libNotebooks = []; }
+    libTombstones = await idbGetAll("tombstones");
+  } catch (_) { libFolders = []; libNotebooks = []; libTombstones = []; }
   await loadStamps();
   await loadRosters();
 
@@ -516,6 +524,19 @@ function collectFolderDescendantFolders(folderId) {
   (function walk(pid) { for (const f of libFolders.filter(x => x.parentId === pid)) { out.push(f.id); walk(f.id); } })(folderId);
   return out;
 }
+// Records that these notebook ids were deliberately deleted (not just "no longer present") — so
+// Drive sync on another device can tell the difference and delete its own stale copy instead of
+// silently re-uploading it. See js/drive-sync.js's driveApplyTombstones/driveDeleteNotebookFiles.
+async function tombstoneNotebooks(ids) {
+  const now = Date.now();
+  for (const id of ids) {
+    libTombstones = libTombstones.filter(t => t.id !== id);
+    const entry = { id, deletedAt: now };
+    libTombstones.push(entry);
+    try { await storePut("tombstones", entry); } catch (_) {}
+  }
+  driveDeleteNotebookFiles(ids); // best-effort, fire-and-forget — no Drive access yet is fine too
+}
 async function deleteNotebook(id) {
   const nb = libNotebooks.find(n => n.id === id);
   if (!nb) return;
@@ -523,6 +544,7 @@ async function deleteNotebook(id) {
     const wasActive = id === activeNotebookId;
     libNotebooks = libNotebooks.filter(n => n.id !== id);
     try { await storeDelete("notebooks", id); await storeDelete("docdata", id); } catch (_) {} // already warned; still removed in-memory
+    await tombstoneNotebooks([id]);
     if (!wasActive) { renderLibTree(); return; }
     activeNotebookId = null;
     if (libNotebooks.length === 0) await createNotebookRaw("My Notes", null);
@@ -542,6 +564,7 @@ async function deleteFolder(id) {
     const removedIds = new Set(affected.map(n => n.id));
     libNotebooks = libNotebooks.filter(n => !removedIds.has(n.id));
     libFolders = libFolders.filter(f => !descFolders.includes(f.id));
+    await tombstoneNotebooks([...removedIds]);
     if (!removedIds.has(activeNotebookId)) { renderLibTree(); return; }
     activeNotebookId = null;
     if (libNotebooks.length === 0) await createNotebookRaw("My Notes", null);
