@@ -2,7 +2,7 @@
   "name": "InkPad",
   "short_name": "InkPad",
   "description": "A Notability-style note-taking and sketching app.",
-  "start_url": "./app.html",
+  "start_url": "./app.html?debug=1",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
