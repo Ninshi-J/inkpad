@@ -2,7 +2,16 @@
 // Temporary diagnostic tool for tracking down the iPad "every other stroke" issue — has zero
 // effect unless the page is opened with ?debug=1 in the URL. Not meant to stay in the codebase
 // long-term; remove this file (and its <script> tag + sw.js cache entry) once the bug is found.
-const DEBUG_HUD = new URLSearchParams(location.search).get("debug") === "1";
+// The installed home-screen icon always opens the plain URL (its manifest start_url has no query
+// string), so a URL param alone can't reach it. Visiting ?debug=1 once in a normal Safari tab
+// also latches a localStorage flag, which DOES apply to the installed icon too (same origin, same
+// storage) — so the panel can follow you into standalone mode. ?debug=0 clears it again.
+(() => {
+  const p = new URLSearchParams(location.search).get("debug");
+  if (p === "1") { try { localStorage.setItem("inkpad.debugHud", "1"); } catch (_) {} }
+  if (p === "0") { try { localStorage.removeItem("inkpad.debugHud"); } catch (_) {} }
+})();
+const DEBUG_HUD = new URLSearchParams(location.search).get("debug") === "1" || localStorage.getItem("inkpad.debugHud") === "1";
 let dbgLog = () => {};
 if (DEBUG_HUD) {
   const panel = document.createElement("div");
@@ -18,8 +27,10 @@ if (DEBUG_HUD) {
   copyBtn.textContent = "Copy log";
   const clearBtn = document.createElement("button");
   clearBtn.textContent = "Clear";
-  [copyBtn, clearBtn].forEach(b => b.style.cssText = "font:11px sans-serif;padding:3px 8px;");
-  bar.appendChild(copyBtn); bar.appendChild(clearBtn);
+  const disableBtn = document.createElement("button");
+  disableBtn.textContent = "Disable";
+  [copyBtn, clearBtn, disableBtn].forEach(b => b.style.cssText = "font:11px sans-serif;padding:3px 8px;");
+  bar.appendChild(copyBtn); bar.appendChild(clearBtn); bar.appendChild(disableBtn);
   const body = document.createElement("div");
   body.style.cssText = "flex:1;overflow-y:auto;white-space:pre-wrap;word-break:break-all;";
   panel.appendChild(bar); panel.appendChild(body);
@@ -49,6 +60,10 @@ if (DEBUG_HUD) {
     );
   };
   clearBtn.onclick = () => { lines.length = 0; flush(); };
+  disableBtn.onclick = () => {
+    try { localStorage.removeItem("inkpad.debugHud"); } catch (_) {}
+    panel.remove();
+  };
 
   addEventListener("error", e => dbgLog("JS ERROR:", e.message, "@", (e.filename || "").split("/").pop() + ":" + e.lineno));
 
