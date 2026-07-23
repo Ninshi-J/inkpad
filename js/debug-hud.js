@@ -26,11 +26,21 @@ if (DEBUG_HUD) {
   document.body.appendChild(panel);
 
   const lines = [];
-  dbgLog = (...args) => {
-    lines.push(`[${performance.now().toFixed(0)}] ` + args.join(" "));
-    if (lines.length > 500) lines.shift();
+  // Writing to the DOM (textContent + forcing a scroll-height reflow) on every single call was
+  // itself expensive enough to risk being a confound — on a real device, enough main-thread work
+  // per event can make iOS stop delivering pencil touches altogether for a stretch, which would
+  // look exactly like "the stroke was never captured". Coalescing the actual DOM write into one
+  // per animation frame keeps dbgLog() itself cheap regardless of how often it's called.
+  let flushScheduled = false;
+  function flush() {
+    flushScheduled = false;
     body.textContent = lines.join("\n");
     body.scrollTop = body.scrollHeight;
+  }
+  dbgLog = (...args) => {
+    lines.push(`[${performance.now().toFixed(0)}] ` + args.join(" "));
+    if (lines.length > 800) lines.shift();
+    if (!flushScheduled) { flushScheduled = true; requestAnimationFrame(flush); }
   };
   copyBtn.onclick = () => {
     navigator.clipboard?.writeText(lines.join("\n")).then(
@@ -38,8 +48,37 @@ if (DEBUG_HUD) {
       () => { copyBtn.textContent = "Copy failed"; }
     );
   };
-  clearBtn.onclick = () => { lines.length = 0; body.textContent = ""; };
+  clearBtn.onclick = () => { lines.length = 0; flush(); };
 
   addEventListener("error", e => dbgLog("JS ERROR:", e.message, "@", (e.filename || "").split("/").pop() + ":" + e.lineno));
-  dbgLog("debug hud active");
+
+  // Raw, unconditional listeners at the window/capture level — completely separate from
+  // input.js's own logic, so these fire even if something else intercepts the event, stops its
+  // propagation, or targets a different element first. If a "missing" stroke shows nothing here
+  // either, the browser/OS never dispatched the event to the page at all (system gesture
+  // swallowing it, or the touch being dropped outright) — not a bug in this app's own JS.
+  ["pointerdown", "pointerup", "pointercancel"].forEach(type => {
+    addEventListener(type, e => {
+      const t = e.target;
+      dbgLog("RAW", type, e.pointerType, e.pointerId, "target=" + (t && (t.id || t.tagName || "?")));
+    }, { capture: true, passive: true });
+  });
+  addEventListener("touchstart", e => dbgLog("RAW touchstart, touches=" + e.touches.length), { capture: true, passive: true });
+  addEventListener("touchcancel", e => dbgLog("RAW touchcancel, touches=" + e.touches.length), { capture: true, passive: true });
+
+  // Independent jank detector: an iPad's main thread getting blocked for a stretch is a known way
+  // for iOS to stop delivering pencil touch events for that window entirely — this would explain
+  // a stroke that never even reaches pointerdown. Runs its own rAF loop (not tied to the app's
+  // render loop) and flags any gap between frames wider than expected.
+  let lastFrameT = performance.now();
+  function jankLoop() {
+    const now = performance.now();
+    const gap = now - lastFrameT;
+    if (gap > 80) dbgLog("** JANK: frame gap", gap.toFixed(0) + "ms");
+    lastFrameT = now;
+    requestAnimationFrame(jankLoop);
+  }
+  requestAnimationFrame(jankLoop);
+
+  dbgLog("debug hud active (v2: raw capture listeners + jank detector)");
 }
