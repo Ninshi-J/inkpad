@@ -1,7 +1,7 @@
 "use strict";
 // Bump this on any change to the cached file list (including editing the files
 // themselves) so clients pick up the new version instead of a stale cache.
-const CACHE_NAME = "inkpad-shell-v15";
+const CACHE_NAME = "inkpad-shell-v16";
 
 const ASSETS = [
   "./index.html",

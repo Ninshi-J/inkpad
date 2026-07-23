@@ -33,15 +33,16 @@ cv.addEventListener("pointerdown", e => {
       drag = null; live = null; curStroke = null;
     }
     if (pinch) pinch = null;
+    touchPan = null;
   } else if (e.pointerType === "touch" && [...pointers.values()].some(p => p.pointerType === "pen")) {
     return; // palm resting while the pencil is already down — ignore it entirely
   }
   cv.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, e);
-  if (pointers.size === 2 && [...pointers.values()].every(p => p.pointerType === "touch")) { startPinch(); return; }
-  // "Only draw with a stylus" mode: a lone finger is tracked (so a second finger can still
-  // trigger the pinch/pan above) but otherwise does nothing — no drawing, erasing, or selecting.
-  if (pencilOnly && e.pointerType === "touch") return;
+  if (pointers.size === 2 && [...pointers.values()].every(p => p.pointerType === "touch")) { touchPan = null; startPinch(); return; }
+  // "Only draw with a stylus" mode: a lone finger can't draw/erase/select, but it can still pan
+  // the canvas — otherwise it'd be useless for navigation whenever the stylus isn't in hand.
+  if (pencilOnly && e.pointerType === "touch") { startTouchPan(e); return; }
   if (e.button !== 0) return;
   commitTextEdit();
   const w = evtWorld(e);
@@ -132,6 +133,7 @@ cv.addEventListener("pointerdown", e => {
 cv.addEventListener("pointermove", e => {
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, e);
   if (pointers.size === 2) { doPinch(); return; }
+  if (touchPan && e.pointerId === touchPan.pointerId) { doTouchPan(e); return; }
   // A second pointer (a resting palm, most commonly) moving around shouldn't steer a stroke or
   // drag that a DIFFERENT pointer started — without this, an untracked palm touch could feed its
   // own coordinates into the in-progress drag, warping the line being drawn.
@@ -250,6 +252,7 @@ cv.addEventListener("pointermove", e => {
 
 function endPointer(e) {
   pointers.delete(e.pointerId);
+  if (touchPan && e.pointerId === touchPan.pointerId) { touchPan = null; return; }
   if (drag && e.pointerId !== drag.pointerId) return; // a different pointer lifting shouldn't end this drag
   if (pinch) { pinch = null; return; }
   if (!drag) return;
@@ -319,6 +322,23 @@ function doPinch() {
   needsDraw = true;
 }
 const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+
+/* single-finger pan, "only draw with a stylus" mode only — a lone finger can't draw there, so it
+   drags the canvas instead (content follows the finger, like scrolling any touch surface) rather
+   than being dead weight whenever the stylus isn't in hand. */
+let touchPan = null;
+function startTouchPan(e) {
+  const { px, py } = evtPos(e);
+  touchPan = { pointerId: e.pointerId, x0: px, y0: py, scroll0: V.scroll, scrollX0: V.scrollX };
+}
+function doTouchPan(e) {
+  if (!touchPan) return;
+  const { px, py } = evtPos(e);
+  V.scroll = touchPan.scroll0 - (py - touchPan.y0) / V.zoom;
+  V.scrollX = touchPan.scrollX0 - (px - touchPan.x0) / V.zoom;
+  clampScroll(); clampScrollX();
+  needsDraw = true;
+}
 
 wrap.addEventListener("wheel", e => {
   e.preventDefault();
