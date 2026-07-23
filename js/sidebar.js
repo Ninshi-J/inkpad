@@ -125,13 +125,37 @@ function rebuildSidebar() {
 }
 
 /* ---------------- Files sidebar: folder/notebook tree ---------------- */
+// Folders and notebooks under the same parent are merged into one manually-ordered list (see
+// storage.js's ensureLibOrder/moveItem) instead of notebooks always being grouped separately from
+// folders — so a drag can freely interleave them, and there's no separate "collapse the notebooks"
+// affordance needed beyond each folder's own expand/collapse.
 function libChildren(parentId) {
   parentId = parentId || null;
-  return {
-    folders: libFolders.filter(f => (f.parentId || null) === parentId).sort((a, b) => a.name.localeCompare(b.name)),
-    notebooks: libNotebooks.filter(n => (n.folderId || null) === parentId).sort((a, b) => a.name.localeCompare(b.name)),
-  };
+  const folders = libFolders.filter(f => (f.parentId || null) === parentId).map(item => ({ kind: "folder", item }));
+  const notebooks = libNotebooks.filter(n => (n.folderId || null) === parentId).map(item => ({ kind: "notebook", item }));
+  return [...folders, ...notebooks].sort((a, b) => (a.item.order ?? 0) - (b.item.order ?? 0) || a.item.name.localeCompare(b.item.name));
 }
+function buildLibChild(c, depth) { return c.kind === "folder" ? buildFolderRow(c.item, depth) : buildNotebookRow(c.item, depth); }
+// Which zone of a row a dragged item is hovering over: "before"/"after" reorder as a sibling, or
+// (only offered for folders, in the row's middle band) "nest" to drop inside it.
+function dragZone(e, row, allowNest) {
+  const r = row.getBoundingClientRect();
+  const frac = (e.clientY - r.top) / r.height;
+  if (!allowNest) return frac < 0.5 ? "before" : "after";
+  if (frac < 0.25) return "before";
+  if (frac > 0.75) return "after";
+  return "nest";
+}
+// The sibling right after `id` in parentId's list, skipping the item currently being dragged (which
+// may itself be that "next" sibling) — used to translate a "drop after this row" gesture into the
+// insertBeforeKey moveItem() actually wants. Null means "id is last", i.e. append at the end.
+function siblingKeyAfter(parentId, kind, id, dragged) {
+  const list = libChildren(parentId).filter(c => !(dragged && c.kind === dragged.kind && c.item.id === dragged.id));
+  const idx = list.findIndex(c => c.kind === kind && c.item.id === id);
+  if (idx === -1 || idx === list.length - 1) return null;
+  return { kind: list[idx + 1].kind, id: list[idx + 1].item.id };
+}
+function clearDropClasses(row) { row.classList.remove("dragover", "drop-before", "drop-after"); }
 // Connect/disconnect/reconnect controls for the folder-on-disk backend — kept in step with
 // renderLibTree() (called from there) since every place that changes storageBackend/fsRoot/
 // fsPendingHandle already triggers a tree re-render, so this piggybacks on the same call sites
@@ -155,16 +179,16 @@ function renderLibStorageStatus() {
   }
 }
 function renderLibTree() {
+  ensureLibOrder();
   renderLibStorageStatus();
   const root = $("libTree");
   if (!root) return; // sidebar not built yet (initLibrary() can resolve before first rebuildSidebar() call lands)
   root.innerHTML = "";
-  const { folders, notebooks } = libChildren(null);
-  if (!folders.length && !notebooks.length) {
+  const children = libChildren(null);
+  if (!children.length) {
     root.innerHTML = `<div class="lib-empty">No notebooks yet</div>`;
   } else {
-    root.appendChild(buildNotebookGroup("root", 0, notebooks));
-    for (const f of folders) root.appendChild(buildFolderRow(f, 0));
+    for (const c of children) root.appendChild(buildLibChild(c, 0));
   }
   // Dropping on the tree's own background (not on a specific row) files the dragged item at the
   // top level — the "un-nest it" gesture.
@@ -176,38 +200,16 @@ function renderLibTree() {
   };
 }
 let libDrag = null; // { kind: "folder"|"notebook", id } of the row currently being dragged
-let libNbGroupCollapsed = new Set(); // folder ids (or "root") whose own direct-notebook group is collapsed
-// A folder's own notebooks render as one collapsible group, ABOVE its subfolders — so opening
-// "Algebra" shows its notebooks (Graphing, Expanding brackets, ...) immediately, instead of
-// burying them below every nested subfolder's entire contents (subfolders sort alphabetically
-// after notebooks used to, which meant a folder's own notebooks could end up far down the list
-// once it had a few levels of subfolders under it — see [[inkpad-architecture]]). `parentKey` is
-// the folder id this group belongs to, or the literal string "root" for top-level notebooks.
-function buildNotebookGroup(parentKey, depth, notebooks) {
-  const frag = document.createDocumentFragment();
-  if (!notebooks.length) return frag;
-  const collapsed = libNbGroupCollapsed.has(parentKey);
-  const header = document.createElement("div");
-  header.className = "lib-row lib-nbgroup";
-  header.style.paddingLeft = (depth * 14) + "px";
-  header.innerHTML = `<span class="lib-toggle">${collapsed ? "▸" : "▾"}</span><span class="lib-name">Notebooks (${notebooks.length})</span>`;
-  header.onclick = () => {
-    libNbGroupCollapsed.has(parentKey) ? libNbGroupCollapsed.delete(parentKey) : libNbGroupCollapsed.add(parentKey);
-    renderLibTree();
-  };
-  frag.appendChild(header);
-  if (!collapsed) for (const nb of notebooks) frag.appendChild(buildNotebookRow(nb, depth));
-  return frag;
-}
 function buildFolderRow(f, depth) {
   const wrap = document.createElement("div");
   const row = document.createElement("div");
   row.className = "lib-row lib-folder";
   row.style.paddingLeft = (depth * 14) + "px";
   row.draggable = true;
+  row.dataset.id = f.id;
   const expanded = libExpanded.has(f.id);
-  const { folders, notebooks } = libChildren(f.id);
-  const hasChildren = folders.length + notebooks.length > 0;
+  const children = libChildren(f.id);
+  const hasChildren = children.length > 0;
   // Only offer "create a roster" on top-level folders (the real-world unit that gets a class
   // list, e.g. a "Y9" folder) — showing it on every subject subfolder underneath is clutter,
   // since those inherit the top-level roster automatically. A subfolder that already has its
@@ -222,6 +224,7 @@ function buildFolderRow(f, depth) {
     <span class="lib-actions">
       <button type="button" data-act="newnb" title="New notebook here">➕\u{1F4C4}</button>
       <button type="button" data-act="newfolder" title="New folder here">➕\u{1F4C1}</button>
+      <button type="button" data-act="props" title="Folder properties — default template for new notebooks here">⚙️</button>
       ${showRosterBtn ? `<button type="button" data-act="roster" title="${hasOwnRoster ? "This folder's class roster" : "Create a class roster for this folder"}">🎓</button>` : ""}
       <button type="button" data-act="rename" title="Rename">✎</button>
       <button type="button" data-act="delete" title="Delete">\u{1F5D1}</button>
@@ -231,10 +234,7 @@ function buildFolderRow(f, depth) {
   const childWrap = document.createElement("div");
   childWrap.className = "lib-children";
   if (!expanded) childWrap.style.display = "none";
-  if (expanded) {
-    childWrap.appendChild(buildNotebookGroup(f.id, depth + 1, notebooks));
-    for (const sub of folders) childWrap.appendChild(buildFolderRow(sub, depth + 1));
-  }
+  if (expanded) for (const c of children) childWrap.appendChild(buildLibChild(c, depth + 1));
   wrap.appendChild(childWrap);
 
   const toggle = () => {
@@ -247,29 +247,78 @@ function buildFolderRow(f, depth) {
   nameEl.ondblclick = e => { e.stopPropagation(); startInlineRename(nameEl, "folder", f.id); };
   row.querySelector('[data-act=newnb]').onclick = e => { e.stopPropagation(); createNotebook(f.id); };
   row.querySelector('[data-act=newfolder]').onclick = e => { e.stopPropagation(); createFolder(f.id); };
+  row.querySelector('[data-act=props]').onclick = e => { e.stopPropagation(); openFolderProps(f); };
   const rosterBtn = row.querySelector('[data-act=roster]');
   if (rosterBtn) rosterBtn.onclick = e => { e.stopPropagation(); manageFolderRoster(f); };
   row.querySelector('[data-act=rename]').onclick = e => { e.stopPropagation(); startInlineRename(nameEl, "folder", f.id); };
   row.querySelector('[data-act=delete]').onclick = e => { e.stopPropagation(); deleteFolder(f.id); };
+  // Right-click is a bonus shortcut to the same properties dialog for mouse users — the ⚙ button
+  // above is the reliable path everywhere else, since there's no right-click on a touchscreen/iPad.
+  row.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); openFolderProps(f); });
 
   row.addEventListener("dragstart", e => { libDrag = { kind: "folder", id: f.id }; if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; e.stopPropagation(); });
-  row.addEventListener("dragend", () => { libDrag = null; });
+  row.addEventListener("dragend", () => { libDrag = null; clearDropClasses(row); });
+  // Top/bottom bands reorder this folder as a sibling; the middle band nests the dragged item
+  // inside it instead (existing "drop onto a folder" gesture, now just one of three zones).
   row.addEventListener("dragover", e => {
     if (!libDrag || (libDrag.kind === "folder" && (libDrag.id === f.id || isDescendantFolder(f.id, libDrag.id)))) return;
-    e.preventDefault(); e.stopPropagation(); row.classList.add("dragover");
+    e.preventDefault(); e.stopPropagation();
+    const zone = dragZone(e, row, true);
+    clearDropClasses(row);
+    row.classList.add(zone === "nest" ? "dragover" : zone === "before" ? "drop-before" : "drop-after");
+    row.dataset.dropZone = zone;
   });
-  row.addEventListener("dragleave", () => row.classList.remove("dragover"));
+  row.addEventListener("dragleave", () => clearDropClasses(row));
   row.addEventListener("drop", e => {
-    e.preventDefault(); e.stopPropagation(); row.classList.remove("dragover");
-    if (libDrag) { libExpanded.add(f.id); moveItem(libDrag.kind, libDrag.id, f.id); }
+    e.preventDefault(); e.stopPropagation();
+    const zone = row.dataset.dropZone;
+    clearDropClasses(row);
+    if (!libDrag) return;
+    if (zone === "nest") { libExpanded.add(f.id); moveItem(libDrag.kind, libDrag.id, f.id); }
+    else {
+      const parentId = f.parentId || null;
+      const beforeKey = zone === "before" ? { kind: "folder", id: f.id } : siblingKeyAfter(parentId, "folder", f.id, libDrag);
+      moveItem(libDrag.kind, libDrag.id, parentId, beforeKey);
+    }
   });
   return wrap;
+}
+// Folder properties: the default doc settings (paper/orientation/template/ruling/grid/outline) a
+// brand-new notebook created in this folder starts with, instead of the app-wide default — see
+// resolveDocDefaultsForFolder() in storage.js. Each field has an "(app default)" opt-out (mirroring
+// the sidebar's own "This page" override controls) so a folder can override just one field while
+// leaving the rest inherited from a parent folder's own defaults, or from the app default.
+function openFolderProps(f) {
+  const d = f.docDefaults || {};
+  $("folderPropsName").textContent = f.name;
+  $("fpPaper").value = d.paper || "";
+  $("fpOrient").value = d.landscape == null ? "" : (d.landscape ? "l" : "p");
+  $("fpTmpl").value = d.template || "";
+  $("fpRule").value = d.ruleSp || "";
+  $("fpGrid").value = d.gridSp || "";
+  $("fpOutline").value = d.outline == null ? "" : (d.outline ? "1" : "0");
+  const dlg = $("folderPropsDlg");
+  dlg.showModal();
+  $("folderPropsCancelBtn").onclick = () => dlg.close();
+  $("folderPropsSaveBtn").onclick = async () => {
+    const nd = {};
+    if ($("fpPaper").value) nd.paper = $("fpPaper").value;
+    if ($("fpOrient").value) nd.landscape = $("fpOrient").value === "l";
+    if ($("fpTmpl").value) nd.template = $("fpTmpl").value;
+    if ($("fpRule").value) nd.ruleSp = Math.max(12, +$("fpRule").value);
+    if ($("fpGrid").value) nd.gridSp = Math.max(10, +$("fpGrid").value);
+    if ($("fpOutline").value !== "") nd.outline = $("fpOutline").value === "1";
+    if (Object.keys(nd).length) f.docDefaults = nd; else delete f.docDefaults;
+    try { await storePut("folders", f); } catch (_) {}
+    dlg.close();
+  };
 }
 function buildNotebookRow(n, depth) {
   const row = document.createElement("div");
   row.className = "lib-row lib-notebook" + (n.id === activeNotebookId ? " active" : "");
   row.style.paddingLeft = (depth * 14 + 12) + "px";
   row.draggable = true;
+  row.dataset.id = n.id;
   row.innerHTML = `
     <span class="lib-icon">\u{1F4C4}</span>
     <span class="lib-name">${escapeXml(n.name)}</span>
@@ -286,7 +335,27 @@ function buildNotebookRow(n, depth) {
   row.querySelector('[data-act=delete]').onclick = e => { e.stopPropagation(); deleteNotebook(n.id); };
 
   row.addEventListener("dragstart", e => { libDrag = { kind: "notebook", id: n.id }; if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; e.stopPropagation(); });
-  row.addEventListener("dragend", () => { libDrag = null; });
+  row.addEventListener("dragend", () => { libDrag = null; clearDropClasses(row); });
+  // Notebooks can't contain anything, so unlike a folder row this only ever reorders a sibling —
+  // top half of the row means "before", bottom half means "after".
+  row.addEventListener("dragover", e => {
+    if (!libDrag || (libDrag.kind === "notebook" && libDrag.id === n.id)) return;
+    e.preventDefault(); e.stopPropagation();
+    const zone = dragZone(e, row, false);
+    clearDropClasses(row);
+    row.classList.add(zone === "before" ? "drop-before" : "drop-after");
+    row.dataset.dropZone = zone;
+  });
+  row.addEventListener("dragleave", () => clearDropClasses(row));
+  row.addEventListener("drop", e => {
+    e.preventDefault(); e.stopPropagation();
+    const zone = row.dataset.dropZone;
+    clearDropClasses(row);
+    if (!libDrag) return;
+    const parentId = n.folderId || null;
+    const beforeKey = zone === "before" ? { kind: "notebook", id: n.id } : siblingKeyAfter(parentId, "notebook", n.id, libDrag);
+    moveItem(libDrag.kind, libDrag.id, parentId, beforeKey);
+  });
   return row;
 }
 // Rename in place — double-click (or the pencil button) turns the row's name span into an

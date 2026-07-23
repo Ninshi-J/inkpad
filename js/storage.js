@@ -242,11 +242,29 @@ async function loadSettingsFromDisk() {
 /* ---------------- notebook/folder library ---------------- */
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 function defaultDocSettings() {
-  return { paper: "a4", landscape: false, template: "ruled", ruleSp: 34, gridSp: 28, outline: true, pages: 1, pageStyles: {}, shapePrefs: {} };
+  return { paper: "a4", landscape: false, template: "blank", ruleSp: 34, gridSp: 28, outline: true, pages: 1, pageStyles: {}, shapePrefs: {} };
+}
+// Resolves the doc settings a brand-new notebook in this folder should start with, by walking the
+// folder's ancestor chain (nearest first) and taking each of the 6 fields below from the nearest
+// ancestor whose own `docDefaults` sets it — so a subfolder can override just e.g. "template" while
+// still inheriting "paper" from a parent folder's own defaults, rather than an override being all-
+// or-nothing. Same "nearest wins, per-field" idea as S.pageStyles' per-page overrides (state.js's
+// pageStyle()), just resolved once at notebook-creation time instead of on every render.
+function resolveDocDefaultsForFolder(folderId) {
+  const result = defaultDocSettings();
+  const remaining = new Set(["paper", "landscape", "template", "ruleSp", "gridSp", "outline"]);
+  for (let fid = folderId; fid && remaining.size; fid = (libFolders.find(f => f.id === fid) || {}).parentId) {
+    const d = (libFolders.find(f => f.id === fid) || {}).docDefaults;
+    if (!d) continue;
+    for (const field of [...remaining]) if (d[field] != null) { result[field] = d[field]; remaining.delete(field); }
+  }
+  return result;
 }
 
-let libFolders = [];       // [{id, name, parentId, createdAt}]
-let libNotebooks = [];     // [{id, name, folderId, createdAt, updatedAt}]
+let libFolders = [];       // [{id, name, parentId, order, createdAt, docDefaults?}] — docDefaults is a
+                           // partial {paper, landscape, template, ruleSp, gridSp, outline} override,
+                           // see resolveDocDefaultsForFolder above
+let libNotebooks = [];     // [{id, name, folderId, order, createdAt, updatedAt}]
 let libTombstones = [];    // [{id: notebookId, deletedAt}] — see js/drive-sync.js
 let activeNotebookId = null;
 let libExpanded = new Set(); // folder ids currently expanded in the sidebar tree
@@ -268,6 +286,52 @@ async function flushAutosave() {
     const nb = libNotebooks.find(n => n.id === activeNotebookId);
     if (nb) { nb.updatedAt = Date.now(); await storePut("notebooks", nb); }
   } catch (_) {}
+}
+
+// Folders and notebooks that share a parent are reordered together as one manually-sortable list
+// (see sidebar.js's libChildren) instead of being auto-grouped/alphabetized. Older saved libraries
+// (and Drive backups from before this existed) have no `order` field yet — this backfills one, per
+// sibling group, the first time such a group is seen, preserving the old notebooks-then-folders
+// alphabetical layout so nothing visibly reshuffles on upgrade. Idempotent and cheap, so it's safe
+// to call on every render (see renderLibTree) rather than needing every load path wired up.
+function ensureLibOrder() {
+  const groups = new Map(); // "parentId-or-empty" -> [{kind, item}]
+  const bucket = key => groups.get(key) || (groups.set(key, []), groups.get(key));
+  for (const f of libFolders) bucket(f.parentId || "").push({ kind: "folder", item: f });
+  for (const n of libNotebooks) bucket(n.folderId || "").push({ kind: "notebook", item: n });
+  for (const list of groups.values()) {
+    const unordered = list.filter(c => typeof c.item.order !== "number");
+    if (!unordered.length) continue; // fully migrated already — never re-touch real order values
+    // A sibling group can end up with a MIX of already-ordered items (anything the user has
+    // dragged, or created/restored after this feature shipped) and never-touched legacy ones (e.g.
+    // a Drive restore reintroducing notebooks from a backup older than this feature) — reordering
+    // the WHOLE group from scratch here would silently undo a manual drag the moment one more
+    // legacy sibling shows up. So real order values are never recomputed; only the still-missing
+    // ones get backfilled, appended after whatever's already ordered, in their own relative
+    // notebooks-then-folders-alphabetical sequence — the plain (never-touched) case still comes out
+    // as a clean 1000/2000/3000... sequence exactly as before, since the reduce below starts at 0.
+    unordered.sort((a, b) => a.kind === b.kind ? a.item.name.localeCompare(b.item.name) : (a.kind === "notebook" ? -1 : 1));
+    let order = list.reduce((m, c) => typeof c.item.order === "number" ? Math.max(m, c.item.order) : m, 0);
+    for (const c of unordered) {
+      order += 1000;
+      c.item.order = order;
+      storePut(c.kind === "folder" ? "folders" : "notebooks", c.item).catch(() => {});
+    }
+  }
+}
+function nextOrderIn(parentId) {
+  const kids = libChildren(parentId || null);
+  return kids.length ? Math.max(...kids.map(c => c.item.order ?? 0)) + 1000 : 1000;
+}
+// Picks an order value that sits strictly between two neighboring siblings' order values (null on
+// either side means "no neighbor there" — the very start or very end of the list). A gap of 1000
+// between fresh siblings leaves room for many in-between inserts before the numbers need spacing
+// out again, and floats have far more precision than this app could ever need in practice.
+function computeOrderBetween(prevOrder, nextOrder) {
+  if (prevOrder == null && nextOrder == null) return 1000;
+  if (prevOrder == null) return nextOrder - 1000;
+  if (nextOrder == null) return prevOrder + 1000;
+  return (prevOrder + nextOrder) / 2;
 }
 
 async function initLibrary() {
@@ -444,12 +508,15 @@ async function switchNotebook(id) {
   activeNotebookId = id;
   try { localStorage.setItem("inkpad.activeNotebookId", id); } catch (_) {}
   if (json) { deserialize(json); }
-  else { resetDocState(); Object.assign(S, defaultDocSettings()); rebuildSidebar(); }
+  else {
+    const nb = libNotebooks.find(n => n.id === id);
+    resetDocState(); Object.assign(S, resolveDocDefaultsForFolder(nb && nb.folderId)); rebuildSidebar();
+  }
 }
 
 async function createNotebookRaw(name, folderId) {
   const id = genId(), now = Date.now();
-  const nb = { id, name, folderId: folderId || null, createdAt: now, updatedAt: now };
+  const nb = { id, name, folderId: folderId || null, order: nextOrderIn(folderId), createdAt: now, updatedAt: now };
   libNotebooks.push(nb);
   try { await storePut("notebooks", nb); } catch (_) {} // already warned; still usable in-memory this session
   for (let anc = folderId; anc; anc = libFolders.find(f => f.id === anc)?.parentId) libExpanded.add(anc);
@@ -465,7 +532,7 @@ async function createNotebook(folderId) {
 async function createFolder(parentId) {
   const name = await promptDialog("New folder", "Name", "New folder");
   if (name == null) return;
-  const fo = { id: genId(), name: name.trim() || "New folder", parentId: parentId || null, createdAt: Date.now() };
+  const fo = { id: genId(), name: name.trim() || "New folder", parentId: parentId || null, order: nextOrderIn(parentId), createdAt: Date.now() };
   libFolders.push(fo);
   try { await storePut("folders", fo); } catch (_) {} // already warned; still usable in-memory this session
   if (parentId) libExpanded.add(parentId);
@@ -487,22 +554,31 @@ function isDescendantFolder(folderId, ancestorId) {
   }
   return false;
 }
-async function moveItem(kind, id, newParentId) {
+// Moves an item to newParentId, optionally positioning it right before another sibling there
+// (insertBeforeKey: {kind, id}, or omitted/null to append at the end) — used both for re-parenting
+// (drag onto a folder, or onto the tree background to un-nest) and for pure same-parent reordering
+// (drag onto a sibling's before/after drop zone — see sidebar.js's dragZone/buildFolderRow/
+// buildNotebookRow). Folders and notebooks under the same parent share one order namespace so they
+// interleave in the manually-sorted list a user builds instead of being auto-split apart.
+async function moveItem(kind, id, newParentId, insertBeforeKey) {
   newParentId = newParentId || null;
+  const item = (kind === "folder" ? libFolders : libNotebooks).find(x => x.id === id);
+  if (!item) return;
+  if (kind === "folder" && (id === newParentId || (newParentId && isDescendantFolder(newParentId, id)))) return; // no cycles
+
+  const siblings = libChildren(newParentId).filter(c => !(c.kind === kind && c.item.id === id));
+  const idx = insertBeforeKey ? siblings.findIndex(c => c.kind === insertBeforeKey.kind && c.item.id === insertBeforeKey.id) : -1;
+  const prevItem = idx > 0 ? siblings[idx - 1].item : (idx === -1 && siblings.length ? siblings[siblings.length - 1].item : null);
+  const nextItem = idx >= 0 ? siblings[idx].item : null;
+  const newOrder = computeOrderBetween(prevItem ? (prevItem.order ?? 0) : null, nextItem ? (nextItem.order ?? 0) : null);
+
+  const curParentId = kind === "folder" ? (item.parentId || null) : (item.folderId || null);
+  if (curParentId === newParentId && item.order === newOrder) return; // no-op
+
   try {
-    if (kind === "folder") {
-      if (id === newParentId || (newParentId && isDescendantFolder(newParentId, id))) return; // no cycles
-      const fo = libFolders.find(f => f.id === id);
-      if (!fo || fo.parentId === newParentId) return;
-      fo.parentId = newParentId;
-      await storePut("folders", fo);
-    } else {
-      const nb = libNotebooks.find(n => n.id === id);
-      if (!nb || nb.folderId === newParentId) return;
-      nb.folderId = newParentId;
-      nb.updatedAt = Date.now();
-      await storePut("notebooks", nb);
-    }
+    if (kind === "folder") item.parentId = newParentId; else { item.folderId = newParentId; item.updatedAt = Date.now(); }
+    item.order = newOrder;
+    await storePut(kind === "folder" ? "folders" : "notebooks", item);
   } catch (_) {} // already warned; the move still applies in-memory
   renderLibTree();
 }
@@ -511,7 +587,7 @@ async function duplicateNotebook(id) {
   if (!src) return;
   let json = null;
   try { json = id === activeNotebookId ? await serialize() : await storeGet("docdata", id); } catch (_) {}
-  const nb = { id: genId(), name: src.name + " copy", folderId: src.folderId, createdAt: Date.now(), updatedAt: Date.now() };
+  const nb = { id: genId(), name: src.name + " copy", folderId: src.folderId, order: nextOrderIn(src.folderId), createdAt: Date.now(), updatedAt: Date.now() };
   libNotebooks.push(nb);
   try {
     await storePut("notebooks", nb);

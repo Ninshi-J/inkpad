@@ -65,7 +65,7 @@ const LASER_MS = 900;
 const SHAPE_HOLD_MS = 650;
 
 const S = { // document settings (saved)
-  paper: "a4", landscape: false, template: "ruled",
+  paper: "a4", landscape: false, template: "blank",
   ruleSp: 34, gridSp: 28, outline: true, pages: 1,
   pageStyles: {}, // page index -> { template, ruleSp, gridSp, outline, landscape } overrides; each falls back to the document default when unset
   shapePrefs: {}, // checkbox id -> checked, for the math-shape dialog (e.g. "show side labels") — per notebook, so a Y9 and a Y7 notebook can keep different defaults

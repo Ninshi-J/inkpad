@@ -730,6 +730,25 @@
   <form method="dialog" style="text-align:right;margin-top:16px;"><button autofocus>Close</button></form>
 </dialog>
 
+<dialog id="folderPropsDlg" style="max-width:340px;width:min(340px,94vw)">
+  <h2>Folder properties — <span id="folderPropsName"></span></h2>
+  <p style="color:var(--ink-soft);font-size:11.5px;margin-bottom:10px;">New notebooks created here (or in a subfolder that doesn't set its own) start with these settings instead of the app default.</p>
+  <div class="side-row"><label>Paper</label>
+    <select id="fpPaper"><option value="">(app default)</option><option value="a4">A4</option><option value="letter">Letter</option><option value="a5">A5</option></select></div>
+  <div class="side-row"><label>Orientation</label>
+    <select id="fpOrient"><option value="">(app default)</option><option value="p">Portrait</option><option value="l">Landscape</option></select></div>
+  <div class="side-row"><label>Template</label>
+    <select id="fpTmpl"><option value="">(app default)</option><option value="ruled">Ruled</option><option value="grid">Grid</option><option value="dotted">Dotted</option><option value="blank">Blank</option></select></div>
+  <div class="side-row"><label>Line spacing</label><input id="fpRule" type="number" min="18" max="80" step="2" placeholder="default"></div>
+  <div class="side-row"><label>Grid / dot size</label><input id="fpGrid" type="number" min="14" max="80" step="2" placeholder="default"></div>
+  <div class="side-row"><label>Page outline</label>
+    <select id="fpOutline"><option value="">(app default)</option><option value="1">On</option><option value="0">Off</option></select></div>
+  <form method="dialog" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+    <button type="button" id="folderPropsCancelBtn">Cancel</button>
+    <button type="button" id="folderPropsSaveBtn" style="background:var(--accent-soft);border-color:var(--accent);color:#0B5A54">Save</button>
+  </form>
+</dialog>
+
 <dialog id="pagePickerDlg" style="max-width:640px;width:min(640px,94vw)">
   <h2 id="pagePickerTitle">Select pages</h2>
   <div id="pagePickerToolbar" style="display:flex;gap:8px;margin-bottom:10px">
