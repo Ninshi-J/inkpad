@@ -50,6 +50,7 @@ const DRIVE_LIBRARY_FILE_NAME = "InkPad Library.json";
 const DRIVE_SETTINGS_FILE_ID_KEY = "inkpad.driveSettingsFileId";
 const DRIVE_LIBRARY_FILE_ID_KEY = "inkpad.driveLibraryFileId";
 const DRIVE_AUTO_SYNC_KEY = "inkpad.driveAutoSync";
+const DRIVE_EVER_SIGNED_IN_KEY = "inkpad.driveEverSignedIn";
 const DRIVE_LAST_SEEN_KEY = "inkpad.driveLastSeenModified";
 const DRIVE_AUTO_PUSH_INTERVAL_MS = 2 * 60000;
 
@@ -72,24 +73,77 @@ function loadGis() {
   return driveGisReady;
 }
 
-// Tries a silent token refresh first (works while an earlier grant this
-// session is still valid); only falls back to the interactive Google
-// account picker when that fails or forceConsent is requested.
-async function driveGetToken(forceConsent) {
-  await loadGis();
+function ensureDriveTokenClient() {
   if (!driveTokenClient) {
     driveTokenClient = google.accounts.oauth2.initTokenClient({
       client_id: DRIVE_CLIENT_ID, scope: DRIVE_SCOPE, callback: () => {},
     });
   }
-  const attempt = prompt => new Promise((resolve, reject) => {
+  return driveTokenClient;
+}
+function requestDriveToken(prompt) {
+  return new Promise((resolve, reject) => {
     driveTokenClient.callback = resp => resp.error ? reject(resp) : resolve(resp.access_token);
     driveTokenClient.requestAccessToken({ prompt });
   });
+}
+// Tries a silent token refresh first (works while an earlier grant this
+// session is still valid); only falls back to the interactive Google
+// account picker when that fails or forceConsent is requested.
+async function driveGetToken(forceConsent) {
+  await loadGis();
+  ensureDriveTokenClient();
   if (!forceConsent) {
-    try { return driveAccessToken = await attempt(""); } catch (_) {}
+    try {
+      driveAccessToken = await requestDriveToken("");
+      markDriveEverSignedIn();
+      return driveAccessToken;
+    } catch (_) {}
   }
-  return driveAccessToken = await attempt("consent");
+  driveAccessToken = await requestDriveToken("consent");
+  markDriveEverSignedIn();
+  return driveAccessToken;
+}
+// Silent-only check, used purely to answer "are we signed in right now" (status line, boot check)
+// — unlike driveGetToken(false), this never falls back to the interactive consent popup on
+// failure. Popping a real Google sign-in window just to display a status label would be a bad
+// surprise the user never asked for.
+async function driveTrySilentToken() {
+  await loadGis();
+  ensureDriveTokenClient();
+  const token = await requestDriveToken("");
+  driveAccessToken = token;
+  markDriveEverSignedIn();
+  return token;
+}
+function markDriveEverSignedIn() {
+  try { localStorage.setItem(DRIVE_EVER_SIGNED_IN_KEY, "1"); } catch (_) {}
+}
+function driveHasEverSignedIn() {
+  try { return localStorage.getItem(DRIVE_EVER_SIGNED_IN_KEY) === "1"; } catch (_) { return false; }
+}
+// Distinguishes a device that's *never* connected Drive from one where a previously-working grant
+// has stopped silently renewing (revoked access, consent expired, etc.) — the latter is the "was
+// signed in, now isn't" case the status line calls out specifically, since the fix (re-authorize)
+// differs from a fresh setup. Checked opportunistically (boot, and every time the File menu opens)
+// via the silent-only path above rather than kept as a standing flag.
+async function refreshDriveSignInStatus() {
+  const el = $("fmDriveStatus");
+  if (!el) return;
+  if (!driveConfigured()) { el.textContent = ""; el.className = "fm-status"; return; }
+  try {
+    await driveTrySilentToken();
+    el.textContent = "Signed in to Google Drive";
+    el.className = "fm-status signed-in";
+  } catch (_) {
+    if (driveHasEverSignedIn()) {
+      el.textContent = "Not signed in — this device was signed in before; sign in again to resume syncing";
+      el.className = "fm-status signed-out-lost";
+    } else {
+      el.textContent = "Not signed in";
+      el.className = "fm-status";
+    }
+  }
 }
 
 async function driveFetch(url, opts = {}) {
@@ -396,6 +450,58 @@ async function runRestoreWithNewerLocalGuard(runFn) {
   return true;
 }
 
+/* ---------------- warn before deleting a notebook that was never in Drive at all ---------------- */
+
+// "Restore everything" is the one restore path meant to make local storage exactly mirror Drive
+// (its own confirm dialog already says "replaces every notebook..."). That means deleting local
+// notebooks that aren't part of the Drive backup at all — not just ones this device already knows
+// were deliberately deleted (driveApplyTombstones handles those separately). This is a distinct
+// risk from DriveNewerLocalWarning above: there's no remote copy to compare timestamps against, so
+// silently wiping one could destroy something that was never backed up anywhere. Warned separately,
+// and only on this one restore path — driveRestoreSelected/driveRestoreFolder are deliberately
+// scoped and never touch notebooks outside what was asked for.
+class DriveLocalOnlyWarning extends Error {
+  constructor(items) { super("Local-only notebooks would be deleted"); this.localOnly = items; }
+}
+function formatLocalOnlyWarning(items) {
+  return items.map(nb => `"${nb.name}"`).join(", ");
+}
+// Runs driveRestoreNow, sequentially confirming each distinct risk it can throw (a notebook that
+// looks newer locally, then — separately — local-only notebooks a true mirror would delete) before
+// re-running with that specific guard bypassed. Two independent flags rather than one shared
+// "force" so confirming one risk doesn't silently wave through the other unconfirmed.
+async function runRestoreEverythingGuard() {
+  let force = false, forceLocalWipe = false;
+  for (;;) {
+    try {
+      await driveRestoreNow(force, forceLocalWipe);
+      return true;
+    } catch (err) {
+      if (err instanceof DriveNewerLocalWarning) {
+        const ok = await confirmDialogAsync(
+          "Local changes look newer than Drive",
+          `${formatNewerLocalWarning(err.newerLocal)}. Restoring will overwrite ${err.newerLocal.length > 1 ? "these" : "this"} with the older Drive version. Continue anyway?`,
+          "Restore anyway"
+        );
+        if (!ok) return false;
+        force = true;
+        continue;
+      }
+      if (err instanceof DriveLocalOnlyWarning) {
+        const ok = await confirmDialogAsync(
+          "Local notebooks not in this Drive backup",
+          `${formatLocalOnlyWarning(err.localOnly)} ${err.localOnly.length > 1 ? "aren't" : "isn't"} in your Drive backup at all and will be permanently deleted to make this device match Drive exactly. This can't be undone. Continue?`,
+          "Delete and restore"
+        );
+        if (!ok) return false;
+        forceLocalWipe = true;
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 /* ---------------- restore: enumerate the whole folder and rebuild ---------------- */
 
 // Index-driven, deliberately — restores exactly what the picker's preview shows (the library
@@ -406,7 +512,7 @@ async function runRestoreWithNewerLocalGuard(runFn) {
 // claimed it would do. Any such leftover files are now surfaced separately in the picker as
 // "Unfiled backups," restorable/deletable on their own — driveRestoreNow() itself no longer
 // touches them.
-async function driveRestoreNow(force) {
+async function driveRestoreNow(force, forceLocalWipe) {
   const snapshot = await driveFetchLibrarySnapshot();
   if (!snapshot || !snapshot.folderId || (!snapshot.folders.length && !snapshot.notebooks.length)) {
     throw new Error('No InkPad backup found in Google Drive yet — use "Back up to Drive" first.');
@@ -416,12 +522,30 @@ async function driveRestoreNow(force) {
     if (atRisk.length) throw new DriveNewerLocalWarning(atRisk);
   }
 
+  // Reconcile tombstones early (safe/idempotent — recording a remote-known deletion id doesn't
+  // itself remove anything) so the local-only check below can tell apart "local-only because it was
+  // deliberately deleted somewhere" (already handled by tombstones, not a surprise) from "local-only
+  // because it simply never made it into this Drive backup at all" (the new, riskier case).
+  await driveMergeRemoteTombstones(snapshot.deletedNotebookIds);
+  const remoteIds = new Set(snapshot.notebooks.map(n => n.id));
+  const tombstonedIds = new Set(libTombstones.map(t => t.id));
+  const localOnly = libNotebooks.filter(nb => !remoteIds.has(nb.id) && !tombstonedIds.has(nb.id));
+  if (!forceLocalWipe && localOnly.length) throw new DriveLocalOnlyWarning(localOnly);
+
   for (const fo of snapshot.folders) await storePut("folders", fo);
   for (const st of snapshot.stamps) await storePut("stamps", st);
   for (const r of snapshot.rosters) await storePut("rosters", r);
   await driveApplyTombstones(snapshot.deletedNotebookIds);
 
   if (snapshot.notebooks.length) await driveRestoreSelected(snapshot.notebooks.map(n => n.id), snapshot, true);
+
+  // True mirror: delete local notebooks that aren't part of the Drive backup at all. Computed
+  // above (before any mutation) so the warning names exactly what's about to go; re-filter against
+  // the current activeNotebookId here since driveRestoreSelected (just above) may have switched it.
+  for (const nb of localOnly) {
+    try { await storeDelete("notebooks", nb.id); await storeDelete("docdata", nb.id); } catch (_) {}
+    if (nb.id === activeNotebookId) activeNotebookId = null;
+  }
 
   const folderId = snapshot.folderId;
   const settingsId = await driveFindSingletonFileId(folderId, DRIVE_SETTINGS_FILE_NAME, DRIVE_SETTINGS_FILE_ID_KEY);
@@ -441,6 +565,11 @@ async function driveRestoreNow(force) {
   libStamps = await storeGetAll("stamps");
   libRosters = await storeGetAll("rosters");
   libTombstones = await storeGetAll("tombstones");
+  // Edge case the local-only wipe above can newly reach: a Drive backup with no notebooks in it,
+  // restored onto a device whose entire local library was local-only — matches deleteNotebook's own
+  // "don't leave the app with nothing open" fallback rather than leaving activeNotebookId dangling.
+  if (libNotebooks.length === 0) await createNotebookRaw("My Notes", null);
+  else if (!activeNotebookId || !libNotebooks.some(nb => nb.id === activeNotebookId)) await switchNotebook(libNotebooks[0].id);
   renderLibTree();
   renderStampGrid();
 
@@ -837,7 +966,7 @@ async function checkDriveForNewerBackup() {
       `Your Drive backup was updated ${new Date(newest).toLocaleString()}. Restore it now? This replaces what's currently stored on this device.`,
       "Restore"
     );
-    if (ok) { await runRestoreWithNewerLocalGuard(force => driveRestoreNow(force)); return; }
+    if (ok) { await runRestoreEverythingGuard(); return; }
     try { localStorage.setItem(DRIVE_LAST_SEEN_KEY, newest); } catch (_) {} // don't ask again for the same version
   } catch (_) {}
 }
@@ -857,7 +986,7 @@ function wireDriveMenu() {
     const ok = await confirmDialogAsync("Restore everything from Google Drive?", "This replaces every notebook currently stored in your active storage location (browser storage, or a connected folder if you have one open) with what's in your Drive backup. This can't be undone locally.", "Restore");
     if (!ok) return;
     try {
-      const proceeded = await runRestoreWithNewerLocalGuard(force => driveRestoreNow(force));
+      const proceeded = await runRestoreEverythingGuard();
       if (proceeded) { alert("Restored from Google Drive."); $("driveRestoreDlg").close(); }
     } catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
   };
@@ -875,4 +1004,5 @@ function wireDriveMenu() {
     }
   };
   startDriveAutoPushLoop(); // no-op internally unless/until the pref is on
+  refreshDriveSignInStatus();
 }

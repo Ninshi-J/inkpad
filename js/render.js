@@ -37,6 +37,7 @@ function render() {
   drawStrokes("pen");
   drawTexts();
   drawTapes();
+  drawTimerObjs();
   ctx.restore();
 
   drawSelection();
@@ -248,6 +249,38 @@ function drawTapes() {
 function roundRect(x, y, w, h, r) {
   ctx.beginPath();
   ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h);
+}
+
+// The reset zone is the chip's rightmost slice — shared by drawTimerObjs (screen-space, ×V.zoom)
+// and timerObjZone in input.js (world-space, no ×V.zoom) so the drawn divider and the hit-test
+// agree on exactly where it starts regardless of zoom level.
+function timerObjResetWidth(t) { return Math.min(24, t.w * 0.28); }
+function drawTimerObjs() {
+  for (const t of doc.timers) {
+    if (t.del) continue;
+    const x = sx(t.x), y = sy(t.y), w = t.w * V.zoom, h = t.h * V.zoom;
+    const ms = t.mode === "down" ? timerObjRemainingMs(t) : timerObjElapsedMs(t);
+    const done = t.mode === "down" && !t.running && t.durationMs > 0 && timerObjElapsedMs(t) >= t.durationMs;
+    ctx.fillStyle = done ? "#F6D9D9" : "#D5E8E5";
+    ctx.strokeStyle = done ? "#C93F3F" : "#0F766E";
+    ctx.lineWidth = 1.5;
+    roundRect(x, y, w, h, 8); ctx.fill(); ctx.stroke();
+    const resetW = timerObjResetWidth(t) * V.zoom;
+    ctx.strokeStyle = done ? "rgba(180,60,60,.35)" : "rgba(15,118,110,.35)";
+    ctx.lineWidth = 1;
+    line(x + w - resetW, y + 4, x + w - resetW, y + h - 4);
+    ctx.fillStyle = done ? "#8A2E2E" : "#0B5A54";
+    ctx.textBaseline = "middle";
+    ctx.font = `${13 * V.zoom}px sans-serif`;
+    ctx.textAlign = "left";
+    ctx.fillText(t.running ? "⏸" : (done ? "✓" : "▶"), x + 8, y + h / 2 + 1);
+    ctx.font = `600 ${14 * V.zoom}px ui-monospace, monospace`;
+    ctx.fillText(fmtClock(ms), x + 26, y + h / 2 + 1);
+    ctx.font = `${13 * V.zoom}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText("↺", x + w - resetW / 2, y + h / 2 + 1);
+    ctx.textAlign = "left";
+  }
 }
 
 function canRotateSelection() {
@@ -561,9 +594,27 @@ wireScrollbar(vScrollTrack, vScrollThumb, "y",
   () => pageScrollMax(curPage()),
   clampScroll);
 
+// Advances every running embedded timer/stopwatch once per frame: stops a countdown and chimes
+// the moment it reaches zero, and reports whether anything is still running so frame() knows to
+// keep forcing redraws (same idea as the audio.playing check just below) — once nothing's running,
+// this goes back to costing nothing every frame instead of a separate setInterval per object.
+function tickTimerObjs() {
+  let anyRunning = false;
+  for (const t of doc.timers) {
+    if (t.del || !t.running) continue;
+    if (t.mode === "down" && timerObjElapsedMs(t) >= t.durationMs) {
+      t.running = false; t.baseMs = t.durationMs;
+      playTimerChime();
+    } else {
+      anyRunning = true;
+    }
+  }
+  return anyRunning;
+}
 function frame() {
   if (needsDraw) { needsDraw = false; render(); }
   if (audio.playing || audio.rec) { needsDraw = true; syncStatus(); }
+  if (tickTimerObjs()) needsDraw = true;
   positionSelToolbar();
   if (editingText) { positionTextFmtBar(); positionTextResizeHandle(); }
   requestAnimationFrame(frame);

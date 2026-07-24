@@ -2,6 +2,7 @@
 const TOOL_NAMES = {
   pen: "Pen", hl: "Highlighter", eraserStroke: "Eraser", eraserPartial: "Partial eraser",
   tape: "Tape", lasso: "Lasso", text: "Text", laser: "Laser",
+  timerObj: "Timer", stopwatchObj: "Stopwatch",
 };
 function fmtT(ms) { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
 function syncStatus() {

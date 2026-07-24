@@ -61,7 +61,7 @@ cv.addEventListener("pointerdown", e => {
     return;
   }
 
-  if ((e.ctrlKey || e.metaKey) && audio.totalMs > 0 && V.tool !== "tape") {
+  if ((e.ctrlKey || e.metaKey) && audio.totalMs > 0 && V.tool !== "tape" && V.tool !== "timerObj" && V.tool !== "stopwatchObj") {
     const s = strokeAt(w.x, w.y);
     if (s && s.t != null) { seekAudio(s.t); startPlayback(); return; }
   }
@@ -84,6 +84,12 @@ cv.addEventListener("pointerdown", e => {
       const t = tapeAt(w.x, w.y);
       if (t && (e.altKey)) { t.del = true; pushUndo({ op: "del", items: [{ kind: "tape", ref: t }] }); markDirty(); break; }
       drag = { mode: "tapeMaybe", x0: w.x, y0: w.y, hit: t };
+      break;
+    }
+    case "timerObj": case "stopwatchObj": {
+      const t = timerObjAt(w.x, w.y);
+      if (t && e.altKey) { t.del = true; pushUndo({ op: "del", items: [{ kind: "timer", ref: t }] }); markDirty(); break; }
+      drag = { mode: "timerObjMaybe", x0: w.x, y0: w.y, hit: t, newMode: V.tool === "timerObj" ? "down" : "up" };
       break;
     }
     case "lasso": {
@@ -272,6 +278,18 @@ function endPointer(e) {
     case "tapeMaybe":
       if (drag.hit) { drag.hit.revealed = !drag.hit.revealed; markDirty(); }
       break;
+    case "timerObjMaybe": {
+      // No drag-to-size for these (fixed chip size) — moving past the tap threshold just cancels
+      // the gesture instead of creating/toggling anything, rather than trying to interpret a drag.
+      if (Math.hypot(w.x - drag.x0, w.y - drag.y0) > 6) break;
+      if (drag.hit) {
+        if (timerObjZone(drag.hit, w.x) === "reset") resetTimerObj(drag.hit);
+        else toggleTimerObj(drag.hit);
+      } else {
+        createTimerObjAt(drag.x0, drag.y0, drag.newMode);
+      }
+      break;
+    }
     case "tapeNew": {
       const x = Math.min(drag.x0, w.x), y = Math.min(drag.y0, w.y);
       const tw = Math.abs(w.x - drag.x0), th = Math.abs(w.y - drag.y0);
@@ -534,6 +552,51 @@ function tapeAt(x, y) {
   }
   return null;
 }
+
+/* ---------------- embedded timer/stopwatch objects ---------------- */
+// Fixed chip size — these aren't drag-to-size like tape, just click-to-place at a default size
+// (then movable/resizable afterward like any other object via lasso-select).
+const TIMER_OBJ_W = 130, TIMER_OBJ_H = 42;
+function timerObjAt(x, y) {
+  for (let i = doc.timers.length - 1; i >= 0; i--) {
+    const t = doc.timers[i];
+    if (!t.del && x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) return t;
+  }
+  return null;
+}
+// Which part of the chip a world-space x falls in — "reset" is the narrow strip at the right edge
+// (see timerObjResetWidth in render.js, shared so the drawn divider and this hit-test always agree).
+function timerObjZone(t, wx) {
+  return wx >= t.x + t.w - timerObjResetWidth(t) ? "reset" : "body";
+}
+function toggleTimerObj(t) {
+  if (t.running) {
+    t.baseMs = timerObjElapsedMs(t); t.running = false;
+  } else {
+    if (t.mode === "down" && t.baseMs >= t.durationMs) t.baseMs = 0; // restart a finished countdown
+    t.startWall = performance.now(); t.running = true;
+  }
+  markDirty(); needsDraw = true;
+}
+function resetTimerObj(t) {
+  t.running = false; t.baseMs = 0;
+  markDirty(); needsDraw = true;
+}
+// Timer (countdown) asks for a duration first since there's a real target to hit; Stopwatch has
+// nothing to configure, so it's just dropped in place immediately, already at 0:00.
+async function createTimerObjAt(cx, cy, mode) {
+  let durationMs = 300000;
+  if (mode === "down") {
+    const ms = await promptTimerDuration(durationMs);
+    if (ms == null) return;
+    durationMs = ms;
+  }
+  const w = TIMER_OBJ_W, h = TIMER_OBJ_H;
+  const t = { x: cx - w / 2, y: cy - h / 2, w, h, mode, durationMs, running: false, baseMs: 0, startWall: null, del: false };
+  doc.timers.push(t);
+  pushUndo({ op: "add", items: [{ kind: "timer", ref: t }] });
+  bumpPages(t.y + t.h); markDirty(); needsDraw = true;
+}
 function imageCorners(im) {
   const cx = im.x + im.w / 2, cy = im.y + im.h / 2;
   const hw = im.w / 2, hh = im.h / 2, rot = im.rot || 0;
@@ -562,12 +625,9 @@ function eraseStrokeAt(x, y) {
   const killed = [];
   const s = strokeAt(x, y, V.eraserSize);
   if (s) { s.del = true; killed.push({ kind: "stroke", ref: s }); }
-  for (const t of doc.texts) {
-    const b = textBB(t);
-    if (!t.del && x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1) { t.del = true; killed.push({ kind: "text", ref: t }); }
-  }
-  // Images (including imported PDF pages) are intentionally left alone here — lasso-select + delete is the
-  // intended way to remove them, since the eraser is meant for freehand ink, not whole embedded pictures.
+  // Text boxes and images (including imported PDF pages) are intentionally left alone here —
+  // the eraser is for freehand ink; the Text tool (click in, select-all + delete) or lasso-select +
+  // delete are the intended ways to remove those instead.
   if (killed.length) { pushUndo({ op: "del", items: killed }); markDirty(); }
 }
 function splitStrokeByTest(s, insideTest) {
@@ -691,6 +751,8 @@ function finishLasso(partial) {
   }
   for (const im of doc.images)
     if (!im.del && pointInPoly(im.x + im.w / 2, im.y + im.h / 2, poly)) sel.items.push({ kind: "image", ref: im });
+  for (const t of doc.timers)
+    if (!t.del && pointInPoly(t.x + t.w / 2, t.y + t.h / 2, poly)) sel.items.push({ kind: "timer", ref: t });
 }
 
 function pickObjectAt(x, y) {
@@ -708,6 +770,8 @@ function pickObjectAt(x, y) {
     const im = doc.images[i];
     if (!im.del && pointInImage(im, x, y)) return { kind: "image", ref: im };
   }
+  const tm = timerObjAt(x, y);
+  if (tm) return { kind: "timer", ref: tm };
   return null;
 }
 function deleteSelection() {

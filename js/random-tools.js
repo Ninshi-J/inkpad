@@ -135,7 +135,7 @@ function updateRosterStatus() {
   const remaining = names.filter(n => !rpPicked.has(n));
   $("rpRosterStatus").textContent = $("rpNoRepeat").checked
     ? `${remaining.length} of ${names.length} left this round`
-    : `${names.length} student${names.length === 1 ? "" : "s"} in roster`;
+    : "";
 }
 // Rapidly swaps a display element through random candidate values before settling on the real
 // pick — a lightweight "spin" feel shared by the student/dice/number pickers, without needing an

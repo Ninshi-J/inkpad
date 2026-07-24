@@ -1,7 +1,7 @@
 "use strict";
 function resetDocState() {
   stopPlayback(); stopRecord();
-  doc.strokes = []; doc.tapes = []; doc.texts = []; doc.images = [];
+  doc.strokes = []; doc.tapes = []; doc.texts = []; doc.images = []; doc.timers = [];
   audio.segments.forEach(s => URL.revokeObjectURL(s.url));
   audio.segments = []; audio.totalMs = 0; audio.posMs = 0;
   S.pages = 1;
@@ -132,7 +132,8 @@ function isPageBlank(p) {
   return !doc.strokes.some(s => !s.del && inPage(s.pts[0].y))
     && !doc.tapes.some(t => !t.del && inPage(t.y))
     && !doc.texts.some(t => !t.del && inPage(t.y))
-    && !doc.images.some(i => !i.del && inPage(i.y));
+    && !doc.images.some(i => !i.del && inPage(i.y))
+    && !doc.timers.some(t => !t.del && inPage(t.y));
 }
 
 async function importPdfFiles(files) {
@@ -249,6 +250,7 @@ function deleteCurrentPage() {
   visit(doc.tapes, "tape", o => o.y);
   visit(doc.texts, "text", o => o.y);
   visit(doc.images, "image", o => o.y);
+  visit(doc.timers, "timer", o => o.y);
   S.pages--;
   const pageStylesBefore = S.pageStyles || {};
   const pageStylesAfter = remapPageStyles(p, -1, true);
@@ -273,6 +275,7 @@ function insertPageAt(atIndex, count = 1) {
   visit(doc.tapes, "tape", o => o.y);
   visit(doc.texts, "text", o => o.y);
   visit(doc.images, "image", o => o.y);
+  visit(doc.timers, "timer", o => o.y);
   S.pages += count;
   const pageStylesBefore = S.pageStyles || {};
   const pageStylesAfter = remapPageStyles(atIndex, count, false);
@@ -288,7 +291,8 @@ function pageHasContent(p) {
   return doc.strokes.some(s => !s.del && inP(s.pts[0].y)) ||
     doc.tapes.some(t => !t.del && inP(t.y)) ||
     doc.texts.some(t => !t.del && inP(t.y)) ||
-    doc.images.some(im => !im.del && inP(im.y));
+    doc.images.some(im => !im.del && inP(im.y)) ||
+    doc.timers.some(t => !t.del && inP(t.y));
 }
 
 function renderPageThumbnail(p, thumbW, asCanvas) {
@@ -337,6 +341,12 @@ function renderPageThumbnail(p, thumbW, asCanvas) {
     thumbCtx.fillStyle = "#FFD682";
     thumbCtx.fillRect(t.x * scale, (t.y - top) * scale, t.w * scale, t.h * scale);
   }
+  for (const t of doc.timers) {
+    if (t.del || t.y < top || t.y >= bot) continue;
+    thumbCtx.fillStyle = "#D5E8E5"; thumbCtx.strokeStyle = "#0F766E"; thumbCtx.lineWidth = 1;
+    thumbCtx.fillRect(t.x * scale, (t.y - top) * scale, t.w * scale, t.h * scale);
+    thumbCtx.strokeRect(t.x * scale, (t.y - top) * scale, t.w * scale, t.h * scale);
+  }
   thumbCtx.textBaseline = "top";
   for (const t of doc.texts) {
     if (t.del || t.y < top || t.y >= bot) continue;
@@ -374,7 +384,7 @@ async function openExportDialog() {
 
 function buildFilteredDoc(pages) {
   const st = stride();
-  const out = { strokes: [], tapes: [], texts: [], images: [] };
+  const out = { strokes: [], tapes: [], texts: [], images: [], timers: [] };
   pages.forEach((srcP, i) => {
     const top = srcP * st, bot = top + st;
     const shift = i * st - top;
@@ -383,6 +393,7 @@ function buildFilteredDoc(pages) {
     doc.tapes.forEach(t => { if (!t.del && inP(t.y)) out.tapes.push({ ...t, y: t.y + shift }); });
     doc.texts.forEach(t => { if (!t.del && inP(t.y)) out.texts.push({ ...t, y: t.y + shift }); });
     doc.images.forEach(im => { if (!im.del && inP(im.y)) out.images.push({ ...im, y: im.y + shift }); });
+    doc.timers.forEach(t => { if (!t.del && inP(t.y)) out.timers.push({ ...t, y: t.y + shift }); });
   });
   return { ...out, pageCount: pages.length };
 }
@@ -412,6 +423,7 @@ async function serialize(pages) {
     tapes: doc.tapes.filter(t => !t.del),
     texts: doc.texts.filter(t => !t.del),
     images: doc.images.filter(i => !i.del),
+    timers: doc.timers.filter(t => !t.del),
     pageCount: S.pages,
   };
   const segs = [];
@@ -449,6 +461,13 @@ async function serialize(pages) {
         ...(hasVectorSrc ? { pdfSrcId, pdfPageIndex, pdfBox, pdfWholePage: !!pdfWholePage } : {}),
       };
     }),
+    // Never persisted as "running" — baseMs is frozen to whatever it's currently elapsed (even
+    // mid-countdown) so a reopened notebook shows the same time it was left at, but always paused;
+    // startWall (a performance.now() anchor) is meaningless across a reload so it's dropped entirely.
+    timers: src.timers.map(t => ({
+      x: t.x, y: t.y, w: t.w, h: t.h, mode: t.mode, durationMs: t.durationMs,
+      baseMs: t.running ? timerObjElapsedMs(t) : t.baseMs,
+    })),
     audio: segs,
     ...(Object.keys(pdfSourcesOut).length ? { pdfSources: pdfSourcesOut } : {}),
   });
@@ -472,6 +491,7 @@ function deserialize(json) {
   });
   doc.tapes = (d.tapes || []).map(t => ({ ...t, del: false }));
   doc.texts = (d.texts || []).map(t => ({ ...t, del: false }));
+  doc.timers = (d.timers || []).map(t => ({ ...t, running: false, startWall: null, del: false }));
 
   // Persisted PDF source bytes (if this file was saved with them) get remapped onto fresh
   // in-memory ids — this session may already have allocated ids for PDFs imported before this

@@ -314,6 +314,11 @@ dialog button:hover { background: var(--chrome-2); }
   border-radius: 6px; font-size: 12.5px; color: var(--ink); cursor: pointer;
 }
 .tb-menu .fm-check:hover { background: var(--chrome-2); }
+.tb-menu .fm-status {
+  padding: 4px 10px 6px; font-size: 11.5px; color: var(--ink-soft);
+}
+.tb-menu .fm-status.signed-in { color: #0B5A54; }
+.tb-menu .fm-status.signed-out-lost { color: #8A2E2E; }
 /* .swatch-cell (base rule elsewhere) is position:relative — .ring-cell overrides that to fixed
    so JS can place it directly on the ring, while still anchoring its .swatch-remove child. */
 .ring-cell { position: fixed; width: 32px; height: 32px; }

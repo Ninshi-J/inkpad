@@ -17,11 +17,17 @@ const ICONS = {
   // detail sits right where the axes cross. This is the Quadrant-1 tile's icon instead: axes meet
   // at a corner, leaving the diagonal line room to read clearly as "a graph" even shrunk down.
   graphTools: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 21h18M3 21V3"/><path d="M4 18c3-5 6-9 9-12" stroke-width="1.4"/></svg>',
+  // A plain clock face (no top crown) vs. the stopwatch's crown+stem below — the two need to read
+  // as different objects at a glance since they're now separate tools/objects, not one with a mode toggle.
+  timerObj: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8.5" r="6"/><path d="M8 5v3.5l2.7 1.6"/></svg>',
+  stopwatchObj: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="9.5" r="5.5"/><path d="M8 9.5V6.5"/><path d="M6 1.5h4"/><path d="M8 1.5v1.3"/></svg>',
 };
 const TOOL_LIST = [
   ["pen", "Pen", "pen"], ["hl", "Highlighter", "hl"],
   ["eraserStroke", "Eraser", "eraser"], ["eraserPartial", "Partial eraser", "eraserP"],
-  ["tape", "Tape", "tape"], ["lasso", "Lasso", "lasso"],
+  ["tape", "Tape", "tape"],
+  ["timerObj", "Timer", "timerObjTool"], ["stopwatchObj", "Stopwatch", "stopwatchObjTool"],
+  ["lasso", "Lasso", "lasso"],
   ["text", "Text", "text"], ["laser", "Laser", "laser"],
 ];
 

@@ -784,6 +784,17 @@
   </form>
 </dialog>
 
+<dialog id="timerObjSetDlg" style="max-width:280px;width:min(280px,92vw)">
+  <h2>Set timer</h2>
+  <p style="color:var(--ink-soft);font-size:12px;margin-bottom:8px;">Placed on the page — just hit start when you're ready to use it.</p>
+  <div class="side-row"><label>Minutes</label><input id="tsMin" type="number" min="0" max="180" value="5"></div>
+  <div class="side-row"><label>Seconds</label><input id="tsSec" type="number" min="0" max="59" value="0"></div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+    <button type="button" id="tsCancelBtn">Cancel</button>
+    <button type="button" id="tsPlaceBtn" style="background:var(--accent-soft);border-color:var(--accent);color:#0B5A54">Place</button>
+  </div>
+</dialog>
+
 <dialog id="helpDlg">
   <h2>InkPad shortcuts</h2>
   <div class="keys" id="helpKeys"></div>
@@ -858,6 +869,7 @@
   <button type="button" id="fmExport">Export…</button>
   <button type="button" id="fmSave">Save</button>
   <button type="button" id="fmOpen">Open</button>
+  <div id="fmDriveStatus" class="fm-status"></div>
   <button type="button" id="fmDriveBackup">Back up to Drive</button>
   <button type="button" id="fmDriveRestore">Restore from Drive</button>
   <button type="button" id="fmDriveManage">Manage Drive backups…</button>

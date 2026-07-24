@@ -186,7 +186,15 @@ const doc = {
   tapes: [],    // {x,y,w,h, revealed, del}
   texts: [],    // {x,y, color, size, lines:[], del}
   images: [],   // {img:HTMLImageElement, data:dataURL, x,y,w,h, del}
+  // A timer ("down") counts down from durationMs and chimes at zero; a stopwatch ("up") just
+  // counts up with no target — same shape either way, distinguished only by `mode`. baseMs is
+  // elapsed time accumulated across pause/resume; startWall (performance.now() at last start,
+  // live-only, not persisted) plus baseMs gives current elapsed while running — same pattern as
+  // the floating timer widget's own `timer` object in js/timer.js, just per-object instead of global.
+  timers: [],   // {x,y,w,h, mode:'down'|'up', durationMs, running, baseMs, startWall, del}
 };
+function timerObjElapsedMs(t) { return t.running ? t.baseMs + (performance.now() - t.startWall) : t.baseMs; }
+function timerObjRemainingMs(t) { return Math.max(0, t.durationMs - timerObjElapsedMs(t)); }
 let undoStack = [], redoStack = [];
 let dirty = false, needsDraw = true;
 
@@ -279,6 +287,7 @@ function lastContentPage() {
   scan(doc.tapes, t => t.y + t.h);
   scan(doc.texts, t => t.y);
   scan(doc.images, i => i.y + i.h);
+  scan(doc.timers, t => t.y + t.h);
   return m;
 }
 function curPage() {

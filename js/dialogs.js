@@ -57,6 +57,39 @@ function promptDialog(title, placeholder, defaultValue) {
   });
 }
 
+// Asks for a minute/second duration when placing a new embedded countdown timer on the page —
+// resolves the duration in ms, or null if cancelled. A stopwatch never calls this (nothing to
+// configure, it starts at 0:00 immediately). Same element-reuse/no-native-submit pattern as
+// promptDialog above.
+function promptTimerDuration(defaultMs) {
+  return new Promise(resolve => {
+    const dlg = $("timerObjSetDlg");
+    const minEl = $("tsMin"), secEl = $("tsSec");
+    minEl.value = Math.floor(defaultMs / 60000);
+    secEl.value = Math.round((defaultMs % 60000) / 1000);
+    let done = false;
+    const cleanup = () => {
+      $("tsCancelBtn").onclick = null; $("tsPlaceBtn").onclick = null;
+      minEl.removeEventListener("keydown", onKeydown); secEl.removeEventListener("keydown", onKeydown);
+    };
+    const finish = val => { if (done) return; done = true; cleanup(); dlg.close(); resolve(val); };
+    const place = () => {
+      const m = Math.max(0, +minEl.value || 0), s = Math.max(0, Math.min(59, +secEl.value || 0));
+      const ms = (m * 60 + s) * 1000;
+      finish(ms > 0 ? ms : 60000); // a genuinely zero duration isn't useful — floor it to a minute
+    };
+    const onKeydown = e => {
+      if (e.key === "Enter") { e.preventDefault(); place(); }
+      else if (e.key === "Escape") { e.preventDefault(); finish(null); }
+    };
+    $("tsCancelBtn").onclick = () => finish(null);
+    $("tsPlaceBtn").onclick = place;
+    minEl.addEventListener("keydown", onKeydown); secEl.addEventListener("keydown", onKeydown);
+    dlg.showModal();
+    minEl.focus(); minEl.select();
+  });
+}
+
 function showPagePicker({ title, items, okLabel, extraControls }) {
   return new Promise(resolve => {
     const dlg = $("pagePickerDlg");

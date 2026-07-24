@@ -6,6 +6,8 @@ const ACTIONS = [
   { id: "eraserP",   label: "Partial eraser",         key: "r",   run: () => setTool("eraserPartial") },
   { id: "lasso",     label: "Lasso",                  key: "a",   run: () => setTool("lasso") },
   { id: "tape",      label: "Tape",                   key: "-",   run: () => setTool("tape") },
+  { id: "timerObjTool",    label: "Timer (place on page)",     key: "j", run: () => setTool("timerObj") },
+  { id: "stopwatchObjTool", label: "Stopwatch (place on page)", key: "k", run: () => setTool("stopwatchObj") },
   { id: "text",      label: "Text",                   key: "t",   run: () => setTool("text") },
   { id: "laser",     label: "Laser",                  key: "f",   run: () => setTool("laser") },
   { id: "ruler",     label: "Ruler toggle",           key: "g",   run: () => { V.ruler = !V.ruler; } },
@@ -159,6 +161,7 @@ function toggleFileMenu(btnEl) {
   menu.style.left = Math.round(r.left) + "px";
   menu.style.top = Math.round(r.bottom + 4) + "px";
   menu.classList.add("open");
+  refreshDriveSignInStatus();
   setTimeout(() => addEventListener("pointerdown", fileMenuOutside, true), 0);
 }
 function closeFileMenu() {
@@ -190,7 +193,11 @@ function beginRemap(id, kbdEl) {
 addEventListener("keydown", e => {
   // Any open <dialog> (shape importer, confirm, page picker, name prompt…) or an in-place rename
   // in the Files tree owns the keyboard while it's up — without this, typing into e.g. a "New
-  // notebook" name field would also fire canvas hotkeys like the digit-key color presets.
+  // notebook" name field would also fire canvas hotkeys like the digit-key color presets. The
+  // floating timer widget's custom minute/second fields are a plain (non-<dialog>) panel, so they
+  // need their own check here too — same bug, since those inputs slipped through this guard.
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
   if (editingText || libEditingName || document.querySelector("dialog[open]")) return;
   const k = e.key.toLowerCase();
   if (pendingPlacement) {

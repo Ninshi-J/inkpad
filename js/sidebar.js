@@ -428,6 +428,7 @@ function clearCurrentPage() {
   doc.tapes.forEach(t => { if (!t.del && inPage(t.y)) { t.del = true; killed.push({ kind: "tape", ref: t }); } });
   doc.texts.forEach(t => { if (!t.del && inPage(t.y)) { t.del = true; killed.push({ kind: "text", ref: t }); } });
   doc.images.forEach(i => { if (!i.del && inPage(i.y)) { i.del = true; killed.push({ kind: "image", ref: i }); } });
+  doc.timers.forEach(t => { if (!t.del && inPage(t.y)) { t.del = true; killed.push({ kind: "timer", ref: t }); } });
   if (killed.length) { pushUndo({ op: "del", items: killed }); clearSelection(); markDirty(); }
 }
 

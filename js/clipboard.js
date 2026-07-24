@@ -4,7 +4,7 @@ const clipboard = { items: [], crop: null, pasteCount: 0 };
 function cloneForClipboard(kind, ref) {
   if (kind === "stroke") return { kind, tool: ref.tool, color: ref.color, w: ref.w, pts: ref.pts.map(p => ({ ...p })) };
   if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h };
-  if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, lines: ref.lines.slice() };
+  if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, lines: ref.lines.slice() };
   return {
     kind, img: ref.img, data: ref.data, x: ref.x, y: ref.y, w: ref.w, h: ref.h,
     rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY,
@@ -173,7 +173,7 @@ function insertClipboardWithOffset(dx, dy) {
       copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, revealed: false, del: false };
       doc.tapes.push(copy);
     } else if (it.kind === "text") {
-      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, lines: it.lines.slice(), del: false };
+      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, lines: it.lines.slice(), del: false };
       doc.texts.push(copy);
     } else {
       copy = {
