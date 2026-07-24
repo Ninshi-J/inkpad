@@ -367,6 +367,12 @@ function doTouchPan(e) {
   needsDraw = true;
 }
 
+// Windows treats a stylus "press and hold" as a synthesized right-click by default (its own Pen &
+// Touch setting, separate from any browser touch-gesture handling) -- without this, that shows the
+// browser's native context menu (with Cut/Copy/Paste) right in the middle of drawing. Suppressed
+// unconditionally; InkPad has no legitimate use for a right-click context menu on the canvas itself.
+wrap.addEventListener("contextmenu", e => e.preventDefault());
+
 wrap.addEventListener("wheel", e => {
   e.preventDefault();
   const { px, py } = evtPos(e);

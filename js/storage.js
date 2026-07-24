@@ -273,18 +273,25 @@ let libEditingName = false;  // true while a tree row's name is being inline-ren
 let autosaveTimer = null;
 function scheduleAutosave() {
   clearTimeout(autosaveTimer);
-  autosaveTimer = setTimeout(async () => { await flushAutosave(); dirty = false; syncStatus(); }, 900);
+  autosaveTimer = setTimeout(async () => { await flushAutosave(); syncStatus(); }, 900);
 }
 // Writes the in-memory document to the *currently active* notebook's record — called both by the
-// debounced autosave timer and right before switching notebooks, so the notebook being left never
-// loses whatever was typed/drawn in the last <900ms.
+// debounced autosave timer and right before switching notebooks/backends, so the notebook being
+// left never loses whatever was typed/drawn in the last <900ms.
+//
+// Gated on `dirty`: this used to run (and bump nb.updatedAt) unconditionally on every single call,
+// including switchNotebook's "save whatever I'm leaving" call -- meaning just opening a notebook
+// and switching away without ever editing it made it look modified to Drive sync (it always
+// "looked newer than Drive" even though nothing had changed). There's nothing to flush if nothing
+// was marked dirty, so this is now a no-op in that case.
 async function flushAutosave() {
   clearTimeout(autosaveTimer);
-  if (!activeNotebookId) return;
+  if (!activeNotebookId || !dirty) return;
   try {
     await storePut("docdata", await serialize(), activeNotebookId);
     const nb = libNotebooks.find(n => n.id === activeNotebookId);
     if (nb) { nb.updatedAt = Date.now(); await storePut("notebooks", nb); }
+    dirty = false;
   } catch (_) {}
 }
 

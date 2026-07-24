@@ -51,12 +51,12 @@ function buildToolButtons(host) {
 
   const g1 = div("tb-group");
   for (const [id, label, actId] of TOOL_LIST) {
-    const b = btn(`${ICONS[id]}<span>${label}</span>`, () => setTool(id));
+    const b = btn(ICONS[id], () => setTool(id));
     b.dataset.tool = id;
     b.title = `${label} (${keyFor(actId).toUpperCase()})`;
     g1.appendChild(b);
   }
-  const ruler = btn(`${ICONS.ruler}<span>Ruler</span>`, () => { V.ruler = !V.ruler; syncUI(); });
+  const ruler = btn(ICONS.ruler, () => { V.ruler = !V.ruler; syncUI(); });
   ruler.id = "rulerBtn"; ruler.title = `Straight lines (${keyFor("ruler").toUpperCase()}) — hold Shift while drawing for a straight line snapped to horizontal/vertical, with or without this on`;
   g1.appendChild(ruler);
   host.appendChild(g1);

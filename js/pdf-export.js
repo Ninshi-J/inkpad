@@ -187,14 +187,30 @@ async function exportPdf(pages) {
       for (const s of doc.strokes) {
         if (s.del || s.tool !== pass || s.pts.length < 2) continue;
         if (s.pts[0].y < top || s.pts[0].y >= bot) continue;
-        const w = (pass === "hl" ? halfWidth(s) * 2 : s.w * 1.15) * PT;
         const [r, g, b] = hexToRgb01(s.color);
-        const ops = [pushGraphicsState()];
-        if (pass === "hl") ops.push(setGraphicsState(hlGs));
-        ops.push(setStrokingColor(rgb(r, g, b)), setLineWidth(w), moveTo(X(s.pts[0].x), Y(s.pts[0].y)));
-        for (let k = 1; k < s.pts.length; k++) ops.push(lineTo(X(s.pts[k].x), Y(s.pts[k].y)));
-        ops.push(stroke(), popGraphicsState());
-        page.pushOperators(...ops);
+        if (pass === "hl") {
+          const w = halfWidth(s) * 2 * PT;
+          const ops = [pushGraphicsState(), setGraphicsState(hlGs), setStrokingColor(rgb(r, g, b)), setLineWidth(w), moveTo(X(s.pts[0].x), Y(s.pts[0].y))];
+          for (let k = 1; k < s.pts.length; k++) ops.push(lineTo(X(s.pts[k].x), Y(s.pts[k].y)));
+          ops.push(stroke(), popGraphicsState());
+          page.pushOperators(...ops);
+          continue;
+        }
+        // Pen strokes render with a per-point, pressure-varying width on the canvas (see
+        // halfWidth()/drawInk() above in render.js) -- a single flat line width for the whole
+        // stroke always mismatches somewhere (previously a constant s.w * 1.15, which read
+        // noticeably bolder than lighter/tapered sections of the actual on-screen ink). Drawn
+        // per-segment instead, each with its own width from the same halfWidth() formula the
+        // canvas uses, averaged across the segment's two endpoint pressures.
+        for (let k = 1; k < s.pts.length; k++) {
+          const avgP = ((s.pts[k - 1].p ?? 0.5) + (s.pts[k].p ?? 0.5)) / 2;
+          const w = halfWidth(s, avgP) * 2 * PT;
+          page.pushOperators(
+            pushGraphicsState(), setStrokingColor(rgb(r, g, b)), setLineWidth(w),
+            moveTo(X(s.pts[k - 1].x), Y(s.pts[k - 1].y)), lineTo(X(s.pts[k].x), Y(s.pts[k].y)),
+            stroke(), popGraphicsState(),
+          );
+        }
       }
     }
 

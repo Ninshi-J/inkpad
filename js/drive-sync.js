@@ -99,6 +99,29 @@ function requestDriveToken(prompt) {
     driveTokenClient.requestAccessToken({ prompt });
   });
 }
+// Coalesces silent-token attempts that happen close together into ONE real call to Google instead
+// of one per call site. At boot alone, three independent places can each want a token within
+// moments of each other -- the sign-in status check, the "is there a newer Drive backup?" check,
+// and whatever driveFetch call happens first -- and none of them knew about each other, so each
+// fired its own separate requestAccessToken. On an account/browser where the silent attempt can't
+// complete invisibly (no valid session, blocked third-party cookies, etc.), that meant one visible
+// Google prompt per call site -- reported directly as "opening the app, I got 3 login prompts."
+// The settled result (success OR failure) is kept for a few seconds so near-simultaneous callers
+// share it instead of each retrying live.
+let driveSilentAttempt = null;
+function driveSilentTokenShared() {
+  if (driveSilentAttempt) return driveSilentAttempt;
+  driveSilentAttempt = (async () => {
+    await loadGis();
+    ensureDriveTokenClient();
+    const token = await requestDriveToken("");
+    driveAccessToken = token;
+    markDriveEverSignedIn();
+    return token;
+  })();
+  driveSilentAttempt.catch(() => {}).finally(() => setTimeout(() => { driveSilentAttempt = null; }, 5000));
+  return driveSilentAttempt;
+}
 // Tries a silent token refresh first (works while an earlier grant this session is still valid);
 // only falls back to the interactive Google account picker when that fails AND we're inside a
 // genuine user-initiated action (see driveInteractiveAllowed above). This gate applies even when
@@ -106,19 +129,17 @@ function requestDriveToken(prompt) {
 // that suddenly stops working mid-background-operation must fail quietly too, not force a popup
 // just because that particular call site happened to ask for forceConsent directly.
 async function driveGetToken(forceConsent) {
-  await loadGis();
-  ensureDriveTokenClient();
   if (!forceConsent) {
     try {
-      driveAccessToken = await requestDriveToken("");
-      markDriveEverSignedIn();
-      return driveAccessToken;
+      return await driveSilentTokenShared();
     } catch (err) {
       if (!driveInteractiveAllowed) throw err;
     }
   } else if (!driveInteractiveAllowed) {
     throw new Error("Not signed in to Google Drive.");
   }
+  await loadGis();
+  ensureDriveTokenClient();
   driveAccessToken = await requestDriveToken("consent");
   markDriveEverSignedIn();
   return driveAccessToken;
@@ -126,14 +147,10 @@ async function driveGetToken(forceConsent) {
 // Silent-only check, used purely to answer "are we signed in right now" (status line, boot check)
 // — unlike driveGetToken(false), this never falls back to the interactive consent popup on
 // failure. Popping a real Google sign-in window just to display a status label would be a bad
-// surprise the user never asked for.
-async function driveTrySilentToken() {
-  await loadGis();
-  ensureDriveTokenClient();
-  const token = await requestDriveToken("");
-  driveAccessToken = token;
-  markDriveEverSignedIn();
-  return token;
+// surprise the user never asked for. Shares the same coalesced attempt as driveGetToken's silent
+// path above, so this and a near-simultaneous automatic Drive call don't each fire their own.
+function driveTrySilentToken() {
+  return driveSilentTokenShared();
 }
 function markDriveEverSignedIn() {
   try { localStorage.setItem(DRIVE_EVER_SIGNED_IN_KEY, "1"); } catch (_) {}
