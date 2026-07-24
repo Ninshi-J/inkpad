@@ -161,7 +161,10 @@ function toggleFileMenu(btnEl) {
   menu.style.left = Math.round(r.left) + "px";
   menu.style.top = Math.round(r.bottom + 4) + "px";
   menu.classList.add("open");
-  refreshDriveSignInStatus();
+  // Deliberately NOT re-checking Drive sign-in status here on every open -- that used to call the
+  // real Google auth endpoint each time, which is exactly what made opening this menu itself feel
+  // like it was "prompting to sign in." Status is refreshed once at boot and after any real Drive
+  // operation (backup/restore) actually runs instead -- see wireDriveMenu in drive-sync.js.
   setTimeout(() => addEventListener("pointerdown", fileMenuOutside, true), 0);
 }
 function closeFileMenu() {

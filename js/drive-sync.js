@@ -61,6 +61,18 @@ let driveTokenClient = null;
 let driveAccessToken = null;
 let driveGisReady = null;
 
+// Automatic/background code (the boot-time "check for a newer Drive backup" and the periodic
+// auto-push timer) must never surprise the user with a real Google sign-in popup they didn't ask
+// for -- only a genuine click on a Drive action (Back up, Restore, Manage) should ever escalate a
+// failed silent token refresh into the interactive consent flow. Set true only around those
+// explicit user-initiated call trees; driveGetToken consults it below.
+let driveInteractiveAllowed = false;
+async function withDriveInteractive(fn) {
+  driveInteractiveAllowed = true;
+  try { return await fn(); }
+  finally { driveInteractiveAllowed = false; }
+}
+
 function loadGis() {
   if (driveGisReady) return driveGisReady;
   driveGisReady = new Promise((resolve, reject) => {
@@ -87,9 +99,11 @@ function requestDriveToken(prompt) {
     driveTokenClient.requestAccessToken({ prompt });
   });
 }
-// Tries a silent token refresh first (works while an earlier grant this
-// session is still valid); only falls back to the interactive Google
-// account picker when that fails or forceConsent is requested.
+// Tries a silent token refresh first (works while an earlier grant this session is still valid);
+// only falls back to the interactive Google account picker when that fails AND we're inside a
+// genuine user-initiated action (see driveInteractiveAllowed above) or forceConsent is requested.
+// Automatic/background callers that hit a silent failure just get an error instead -- they're
+// expected to fail quietly, not pop a sign-in window nobody asked for right now.
 async function driveGetToken(forceConsent) {
   await loadGis();
   ensureDriveTokenClient();
@@ -98,7 +112,9 @@ async function driveGetToken(forceConsent) {
       driveAccessToken = await requestDriveToken("");
       markDriveEverSignedIn();
       return driveAccessToken;
-    } catch (_) {}
+    } catch (err) {
+      if (!driveInteractiveAllowed) throw err;
+    }
   }
   driveAccessToken = await requestDriveToken("consent");
   markDriveEverSignedIn();
@@ -667,7 +683,7 @@ function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
     const ok = await confirmDialogAsync(`Restore "${f.name}"?`, "This replaces every notebook in this folder (and any subfolders) currently stored on this device with what's in Drive.", "Restore");
     if (!ok) return;
     try {
-      const proceeded = await runRestoreWithNewerLocalGuard(force => driveRestoreFolder(f.id, force));
+      const proceeded = await withDriveInteractive(() => runRestoreWithNewerLocalGuard(force => driveRestoreFolder(f.id, force)));
       if (proceeded) { alert(`Restored "${f.name}" from Google Drive.`); $("driveRestoreDlg").close(); }
     } catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
   };
@@ -691,7 +707,7 @@ function driveRestoreNotebookRow(nb, depth) {
     const ok = await confirmDialogAsync(`Restore "${nb.name}"?`, "This replaces this notebook's content currently stored on this device with what's in Drive.", "Restore");
     if (!ok) return;
     try {
-      const proceeded = await runRestoreWithNewerLocalGuard(force => driveRestoreSelected([nb.id], null, force));
+      const proceeded = await withDriveInteractive(() => runRestoreWithNewerLocalGuard(force => driveRestoreSelected([nb.id], null, force)));
       if (proceeded) { alert(`Restored "${nb.name}" from Google Drive.`); $("driveRestoreDlg").close(); }
     } catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
   };
@@ -754,14 +770,14 @@ function driveOrphanRow(file, onRestored) {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Restore "${file.name}"?`, "This wasn't in your current library index — it's a leftover file in Drive (often from a notebook deleted locally before that also cleaned up Drive). Restoring adds it back as a new notebook.", "Restore");
     if (!ok) return;
-    try { await driveRestoreOrphanedFile(file); alert(`Restored "${file.name}" from Google Drive.`); (onRestored || (() => $("driveRestoreDlg").close()))(); }
+    try { await withDriveInteractive(() => driveRestoreOrphanedFile(file)); alert(`Restored "${file.name}" from Google Drive.`); (onRestored || (() => $("driveRestoreDlg").close()))(); }
     catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
   };
   deleteBtn.onclick = async e => {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Delete "${file.name}" from Drive?`, "This permanently removes this leftover file from Google Drive (moved to Drive's own Trash). It won't show up here again.", "Delete");
     if (!ok) return;
-    try { await driveTrashFile(file.id); row.remove(); }
+    try { await withDriveInteractive(() => driveTrashFile(file.id)); row.remove(); }
     catch (err) { alert("Delete failed: " + (err && err.message ? err.message : err)); return; }
     if (file.notebookId) {
       const entry = { id: file.notebookId, deletedAt: Date.now() };
@@ -839,7 +855,7 @@ function driveManageSingletonRow(label, cacheKey, folderId) {
     const ok = await driveValidateCachedFileId(id, folderId);
     statusEl.textContent = ok ? "linked ✓" : "⚠ link is stale — will recreate on next backup";
   };
-  row.querySelector("button").onclick = e => { e.stopPropagation(); check(); };
+  row.querySelector("button").onclick = e => { e.stopPropagation(); withDriveInteractive(check); };
   check();
   return row;
 }
@@ -865,10 +881,10 @@ function driveManageNotebookRow(nb, folderId) {
   };
   row.querySelector('[data-act=push]').onclick = async e => {
     e.stopPropagation();
-    try { await driveBackupNotebook(nb, folderId); await refreshStatus(); }
+    try { await withDriveInteractive(() => driveBackupNotebook(nb, folderId)); await refreshStatus(); }
     catch (err) { alert("Push failed: " + (err && err.message ? err.message : err)); }
   };
-  row.querySelector('[data-act=recheck]').onclick = e => { e.stopPropagation(); refreshStatus(); };
+  row.querySelector('[data-act=recheck]').onclick = e => { e.stopPropagation(); withDriveInteractive(refreshStatus); };
   row.querySelector('[data-act=delete]').onclick = async e => {
     e.stopPropagation();
     const ok = await confirmDialogAsync(
@@ -878,16 +894,18 @@ function driveManageNotebookRow(nb, folderId) {
     );
     if (!ok) return;
     try {
-      let id = nb.driveFileId && await driveValidateCachedFileId(nb.driveFileId, folderId) ? nb.driveFileId : null;
-      if (!id) { const f = await driveFindNotebookFileByProperty(folderId, nb.id); id = f ? f.id : null; }
-      if (!id) { alert(`"${nb.name}" isn't backed up to Drive right now — nothing to delete.`); return; }
-      await driveTrashFile(id);
-      // Deliberately clear driveFileId only, not driveSyncedAt -- leaving driveSyncedAt alone keeps
-      // the auto-sync loop's dirty check (updatedAt > driveSyncedAt) false, so this doesn't get
-      // silently re-created on the next auto-push; it comes back only on a real edit or the push
-      // button above, same as if it had never had a Drive file at all.
-      nb.driveFileId = null;
-      try { await storePut("notebooks", nb); } catch (_) {}
+      await withDriveInteractive(async () => {
+        let id = nb.driveFileId && await driveValidateCachedFileId(nb.driveFileId, folderId) ? nb.driveFileId : null;
+        if (!id) { const f = await driveFindNotebookFileByProperty(folderId, nb.id); id = f ? f.id : null; }
+        if (!id) { alert(`"${nb.name}" isn't backed up to Drive right now — nothing to delete.`); return; }
+        await driveTrashFile(id);
+        // Deliberately clear driveFileId only, not driveSyncedAt -- leaving driveSyncedAt alone keeps
+        // the auto-sync loop's dirty check (updatedAt > driveSyncedAt) false, so this doesn't get
+        // silently re-created on the next auto-push; it comes back only on a real edit or the push
+        // button above, same as if it had never had a Drive file at all.
+        nb.driveFileId = null;
+        try { await storePut("notebooks", nb); } catch (_) {}
+      });
       await refreshStatus();
     } catch (err) { alert("Delete failed: " + (err && err.message ? err.message : err)); }
   };
@@ -966,7 +984,7 @@ async function checkDriveForNewerBackup() {
       `Your Drive backup was updated ${new Date(newest).toLocaleString()}. Restore it now? This replaces what's currently stored on this device.`,
       "Restore"
     );
-    if (ok) { await runRestoreEverythingGuard(); return; }
+    if (ok) { await withDriveInteractive(runRestoreEverythingGuard); return; }
     try { localStorage.setItem(DRIVE_LAST_SEEN_KEY, newest); } catch (_) {} // don't ask again for the same version
   } catch (_) {}
 }
@@ -976,19 +994,21 @@ function wireDriveMenu() {
   $("fmDriveBackup").onclick = async () => {
     closeFileMenu();
     if (!driveConfigured()) return needsSetup();
-    try { const pushed = await driveBackupNow(); alert(pushed ? "Backed up to Google Drive." : "Already up to date — nothing's changed since the last backup."); }
+    try { const pushed = await withDriveInteractive(driveBackupNow); alert(pushed ? "Backed up to Google Drive." : "Already up to date — nothing's changed since the last backup."); }
     catch (err) { alert("Backup failed: " + (err && err.message ? err.message : err)); }
+    refreshDriveSignInStatus();
   };
-  $("fmDriveRestore").onclick = () => { closeFileMenu(); openDriveRestorePicker(); };
-  $("fmDriveManage").onclick = () => { closeFileMenu(); openDriveManageDialog(); };
+  $("fmDriveRestore").onclick = () => { closeFileMenu(); withDriveInteractive(openDriveRestorePicker); };
+  $("fmDriveManage").onclick = () => { closeFileMenu(); withDriveInteractive(openDriveManageDialog); };
   $("driveRestoreAllBtn").onclick = async () => {
     if (!driveConfigured()) return needsSetup();
     const ok = await confirmDialogAsync("Restore everything from Google Drive?", "This replaces every notebook currently stored in your active storage location (browser storage, or a connected folder if you have one open) with what's in your Drive backup. This can't be undone locally.", "Restore");
     if (!ok) return;
     try {
-      const proceeded = await runRestoreEverythingGuard();
+      const proceeded = await withDriveInteractive(runRestoreEverythingGuard);
       if (proceeded) { alert("Restored from Google Drive."); $("driveRestoreDlg").close(); }
     } catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
+    refreshDriveSignInStatus();
   };
 
   loadDriveAutoSyncPref();
@@ -1000,9 +1020,10 @@ function wireDriveMenu() {
     saveDriveAutoSyncPref();
     if (driveAutoSyncEnabled) {
       startDriveAutoPushLoop();
-      try { await driveBackupNow(); } catch (err) { alert("Initial backup failed: " + (err && err.message ? err.message : err)); }
+      try { await withDriveInteractive(driveBackupNow); } catch (err) { alert("Initial backup failed: " + (err && err.message ? err.message : err)); }
+      refreshDriveSignInStatus();
     }
   };
   startDriveAutoPushLoop(); // no-op internally unless/until the pref is on
-  refreshDriveSignInStatus();
+  refreshDriveSignInStatus(); // one silent check at boot only -- not re-probed on every File-menu open
 }
