@@ -101,9 +101,10 @@ function requestDriveToken(prompt) {
 }
 // Tries a silent token refresh first (works while an earlier grant this session is still valid);
 // only falls back to the interactive Google account picker when that fails AND we're inside a
-// genuine user-initiated action (see driveInteractiveAllowed above) or forceConsent is requested.
-// Automatic/background callers that hit a silent failure just get an error instead -- they're
-// expected to fail quietly, not pop a sign-in window nobody asked for right now.
+// genuine user-initiated action (see driveInteractiveAllowed above). This gate applies even when
+// forceConsent is explicitly requested (used by driveFetch's 401-retry below) -- a cached token
+// that suddenly stops working mid-background-operation must fail quietly too, not force a popup
+// just because that particular call site happened to ask for forceConsent directly.
 async function driveGetToken(forceConsent) {
   await loadGis();
   ensureDriveTokenClient();
@@ -115,6 +116,8 @@ async function driveGetToken(forceConsent) {
     } catch (err) {
       if (!driveInteractiveAllowed) throw err;
     }
+  } else if (!driveInteractiveAllowed) {
+    throw new Error("Not signed in to Google Drive.");
   }
   driveAccessToken = await requestDriveToken("consent");
   markDriveEverSignedIn();
