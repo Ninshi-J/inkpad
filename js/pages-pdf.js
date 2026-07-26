@@ -368,6 +368,8 @@ async function openExportDialog() {
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
       <input type="radio" name="exportType" value="pdf" checked> Vector PDF (.pdf)</label>
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+      <input type="radio" name="exportType" value="svg"> Vector SVG (.svg)</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
       <input type="radio" name="exportType" value="inkpad"> Editable file (.inkpad)</label>`;
   const chosen = await showPagePicker({
     title: "Export document",
@@ -379,6 +381,7 @@ async function openExportDialog() {
   const type = typeWrap.querySelector('input[name=exportType]:checked').value;
   const fullDoc = chosen.length === S.pages;
   if (type === "pdf") await exportPdf(fullDoc ? null : chosen);
+  else if (type === "svg") await exportSvg(fullDoc ? null : chosen);
   else saveFile(fullDoc ? null : chosen);
 }
 

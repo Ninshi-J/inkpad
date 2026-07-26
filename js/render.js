@@ -223,10 +223,39 @@ function drawImages() {
 function drawTexts() {
   for (const t of doc.texts) {
     if (t.del || t.hidden) continue;
-    ctx.fillStyle = t.color;
     ctx.font = `${t.size * V.zoom}px ${fontCss(t)}`;
+    // fontBoundingBoxAscent/Descent are measured relative to whatever textBaseline is CURRENTLY
+    // set, not as absolute font metrics -- has to be read under "alphabetic" (ascent measured up
+    // from the real baseline) before switching to "top" for the actual fillText/drawImage calls
+    // below, or it comes back as ~0 (the "top" anchor is already roughly at the ascent line).
+    ctx.textBaseline = "alphabetic";
+    const ascent = ctx.measureText("M").fontBoundingBoxAscent || t.size * V.zoom * 0.8;
     ctx.textBaseline = "top";
-    wrappedLines(t).forEach((ln, i) => ctx.fillText(ln, sx(t.x), sy(t.y + i * t.size * 1.3)));
+    wrappedLines(t).forEach((ln, i) => {
+      const y = sy(t.y + i * t.size * 1.3);
+      if (!lineHasMath(ln)) { ctx.fillStyle = t.color; ctx.fillText(ln, sx(t.x), y); return; }
+      let x = sx(t.x);
+      for (const run of splitMathRuns(ln)) {
+        if (run.text !== undefined) {
+          ctx.fillStyle = t.color;
+          ctx.fillText(run.text, x, y);
+          x += ctx.measureText(run.text).width;
+          continue;
+        }
+        const span = getMathSpan(run.math, t.size, t.color);
+        if (span && span.img && !span.failed) {
+          const dw = span.w * V.zoom, dh = span.h * V.zoom;
+          ctx.drawImage(span.img, x, y + ascent + span.baselineOffset * V.zoom, dw, dh);
+          x += dw;
+        } else {
+          // still rendering (or failed) -- show the raw "$...$" source rather than a blank gap
+          ctx.fillStyle = t.color;
+          const raw = `$${run.math}$`;
+          ctx.fillText(raw, x, y);
+          x += ctx.measureText(raw).width;
+        }
+      }
+    });
   }
 }
 

@@ -136,6 +136,15 @@ async function exportPdf(pages) {
     return rasterCache.get(im);
   }
 
+  // Rendered inline-math spans (see math-typeset.js) are already a stable PNG data URL keyed by
+  // their own (source, size, color) -- de-dupe on that so the same "$v=d/t$" appearing on several
+  // lines only gets embedded as one XObject instead of once per occurrence.
+  const mathImageCache = new Map(); // dataURL -> Promise<PDFEmbeddedImage>
+  function getMathPdfImage(span) {
+    if (!mathImageCache.has(span.dataURL)) mathImageCache.set(span.dataURL, pdfDoc.embedPng(dataURLToBytes(span.dataURL)));
+    return mathImageCache.get(span.dataURL);
+  }
+
   // Places an embedded XObject at world rect (im.x,im.y,im.w,im.h). Delegates the actual
   // placement to pdf-lib's own drawPage/drawImage (x,y = bottom-left corner, width/height in
   // points) rather than a hand-rolled `cm` matrix — embedPage's Form XObjects aren't simply
@@ -221,15 +230,36 @@ async function exportPdf(pages) {
       const paras = (t.lines.length ? t.lines : [""]).map(sanitizeForWinAnsi);
       const lines = t.w ? paras.flatMap(p => wrapParagraphPdf(font, p, t.w * PT, t.size * PT)) : paras;
       const ascent = pdfAscentFor(t);
-      lines.forEach((ln, k) => {
+      for (let k = 0; k < lines.length; k++) {
+        const ln = lines[k];
         // t.y + k*size*1.3 is the world-space TOP of this line, matching drawTexts()'s
         // textBaseline:"top" canvas rendering exactly; + size*ascent converts that top position
         // into this font's actual baseline, which is what PDF text drawing positions from.
-        page.drawText(ln, {
-          x: X(t.x), y: Y(t.y + k * t.size * 1.3 + t.size * ascent),
-          size: t.size * PT, font, color: rgb(r, g, b),
-        });
-      });
+        const baseline = t.y + k * t.size * 1.3 + t.size * ascent;
+        if (!lineHasMath(ln)) {
+          page.drawText(ln, { x: X(t.x), y: Y(baseline), size: t.size * PT, font, color: rgb(r, g, b) });
+          continue;
+        }
+        let curX = t.x; // world-space cursor, same units as t.x
+        for (const run of splitMathRuns(ln)) {
+          if (run.text !== undefined) {
+            page.drawText(run.text, { x: X(curX), y: Y(baseline), size: t.size * PT, font, color: rgb(r, g, b) });
+            curX += font.widthOfTextAtSize(run.text, t.size);
+            continue;
+          }
+          const span = await getMathSpanAsync(run.math, t.size, t.color);
+          if (span && span.dataURL && !span.failed) {
+            const pngImg = await getMathPdfImage(span);
+            const imgBottomWorld = baseline + span.baselineOffset + span.h;
+            page.drawImage(pngImg, { x: X(curX), y: Y(imgBottomWorld), width: span.w * PT, height: span.h * PT });
+            curX += span.w;
+          } else {
+            const raw = `$${run.math}$`;
+            page.drawText(raw, { x: X(curX), y: Y(baseline), size: t.size * PT, font, color: rgb(r, g, b) });
+            curX += font.widthOfTextAtSize(raw, t.size);
+          }
+        }
+      }
     }
 
     for (const t of doc.tapes) {
@@ -245,6 +275,164 @@ async function exportPdf(pages) {
   a.download = "notes.pdf";
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+/* ---------------- SVG export ----------------
+   One standalone <svg> document per selected page, built directly from doc.* rather than going
+   through pdf-lib. Unlike the PDF path (standard-14 fonts, WinAnsi-only, so "θ" degrades to
+   "theta"), SVG <text> is plain Unicode -- symbols, Greek letters, sub/superscript digits etc.
+   come through as-is, and strokes are built the same way drawInk() builds them on the canvas
+   (a real filled, pressure-varying polygon) rather than the PDF path's flat-per-segment lines. */
+function svgImageEl(im, top) {
+  const localY = im.y - top;
+  const href = im.data;
+  if (im.rot || im.flipX || im.flipY) {
+    const cx = im.x + im.w / 2, cy = localY + im.h / 2;
+    const deg = (im.rot || 0) * 180 / Math.PI;
+    const sx = im.flipX ? -1 : 1, sy = im.flipY ? -1 : 1;
+    return `<image href="${href}" xlink:href="${href}" x="${-im.w / 2}" y="${-im.h / 2}" width="${im.w}" height="${im.h}" transform="translate(${cx} ${cy}) rotate(${deg}) scale(${sx} ${sy})"/>\n`;
+  }
+  return `<image href="${href}" xlink:href="${href}" x="${im.x}" y="${localY}" width="${im.w}" height="${im.h}"/>\n`;
+}
+// Mirrors pathThrough() in render.js (a smooth path through points via quadratic curves to each
+// pair's midpoint) but emits an SVG path "d" string in page-local (top-shifted) coordinates
+// instead of driving a canvas context.
+function svgPathThroughD(pts, top) {
+  const ly = p => p.y - top;
+  if (pts.length === 1) return `M ${pts[0].x} ${ly(pts[0])} L ${pts[0].x + 0.01} ${ly(pts[0])}`;
+  let d = `M ${pts[0].x} ${ly(pts[0])} `;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const m = midpoint(pts[i], pts[i + 1]);
+    d += `Q ${pts[i].x} ${ly(pts[i])} ${m.x} ${ly(m)} `;
+  }
+  const last = pts[pts.length - 1];
+  d += `L ${last.x} ${ly(last)}`;
+  return d;
+}
+// Mirrors drawInk() in render.js: a highlighter stroke is a simple translucent stroked path; a
+// pen stroke with 3+ points is a filled shape built from per-point pressure-varying offsets, with
+// round end caps -- so the exported vector matches what's actually on screen.
+function svgStrokeEl(s, top) {
+  const pts = s.pts;
+  if (s.tool === "hl") {
+    const w = halfWidth(s) * 2;
+    return `<path d="${svgPathThroughD(pts, top)}" fill="none" stroke="${s.color}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" opacity="${HL_ALPHA}"/>\n`;
+  }
+  if (pts.length < 3) {
+    const w = halfWidth(s, pts[0].p) * 2;
+    return `<path d="${svgPathThroughD(pts, top)}" fill="none" stroke="${s.color}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>\n`;
+  }
+  const L = [], R = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    let nx = -(b.y - a.y), ny = b.x - a.x;
+    const len = Math.hypot(nx, ny) || 1;
+    const h = halfWidth(s, pts[i].p);
+    nx = nx / len * h; ny = ny / len * h;
+    L.push({ x: pts[i].x + nx, y: pts[i].y - top + ny });
+    R.push({ x: pts[i].x - nx, y: pts[i].y - top - ny });
+  }
+  let d = `M ${L[0].x} ${L[0].y} `;
+  for (let i = 1; i < L.length - 1; i++) {
+    const m = { x: (L[i].x + L[i + 1].x) / 2, y: (L[i].y + L[i + 1].y) / 2 };
+    d += `Q ${L[i].x} ${L[i].y} ${m.x} ${m.y} `;
+  }
+  d += `L ${L[L.length - 1].x} ${L[L.length - 1].y} L ${R[R.length - 1].x} ${R[R.length - 1].y} `;
+  for (let i = R.length - 2; i > 0; i--) {
+    const m = { x: (R[i].x + R[i - 1].x) / 2, y: (R[i].y + R[i - 1].y) / 2 };
+    d += `Q ${R[i].x} ${R[i].y} ${m.x} ${m.y} `;
+  }
+  d += `L ${R[0].x} ${R[0].y} Z`;
+  const s0 = pts[0], eN = pts[pts.length - 1];
+  return `<path d="${d}" fill="${s.color}"/>\n` +
+    `<circle cx="${s0.x}" cy="${s0.y - top}" r="${halfWidth(s, s0.p)}" fill="${s.color}"/>\n` +
+    `<circle cx="${eN.x}" cy="${eN.y - top}" r="${halfWidth(s, eN.p)}" fill="${s.color}"/>\n`;
+}
+async function svgTextEl(t, top) {
+  const ascent = pdfAscentFor(t);
+  // fontCss(t) is a CSS stack with "quoted" family names -- swap to single quotes so it doesn't
+  // clash with the double-quoted attribute it's embedded in below.
+  const family = fontCss(t).replace(/"/g, "'");
+  measureCtx.font = `${t.size}px ${fontCss(t)}`;
+  let out = "";
+  const lines = wrappedLines(t);
+  for (let k = 0; k < lines.length; k++) {
+    const ln = lines[k];
+    if (!ln) continue;
+    const baseline = t.y - top + k * t.size * 1.3 + t.size * ascent;
+    if (!lineHasMath(ln)) {
+      out += `<text x="${t.x}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(ln)}</text>\n`;
+      continue;
+    }
+    let curX = t.x;
+    for (const run of splitMathRuns(ln)) {
+      if (run.text !== undefined) {
+        out += `<text x="${curX}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(run.text)}</text>\n`;
+        curX += measureCtx.measureText(run.text).width;
+        continue;
+      }
+      const span = await getMathSpanAsync(run.math, t.size, t.color);
+      if (span && span.dataURL && !span.failed) {
+        const imgTop = baseline + span.baselineOffset;
+        out += `<image href="${span.dataURL}" xlink:href="${span.dataURL}" x="${curX}" y="${imgTop}" width="${span.w}" height="${span.h}"/>\n`;
+        curX += span.w;
+      } else {
+        const raw = `$${run.math}$`;
+        out += `<text x="${curX}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(raw)}</text>\n`;
+        curX += measureCtx.measureText(raw).width;
+      }
+    }
+  }
+  return out;
+}
+async function buildPageSvg(srcP) {
+  const dims = pageDims(srcP);
+  const top = srcP * stride(), bot = top + dims.h;
+  let body = `<rect x="0" y="0" width="${dims.w}" height="${dims.h}" fill="#fff"/>\n`;
+
+  for (const im of doc.images) {
+    if (im.del) continue;
+    const imgP = Math.max(0, Math.min(S.pages - 1, Math.floor(im.y / stride())));
+    if (imgP !== srcP) continue;
+    body += svgImageEl(im, top);
+  }
+
+  for (const pass of ["hl", "pen"]) {
+    for (const s of doc.strokes) {
+      if (s.del || s.tool !== pass || s.pts.length < 2) continue;
+      if (s.pts[0].y < top || s.pts[0].y >= bot) continue;
+      body += svgStrokeEl(s, top);
+    }
+  }
+
+  for (const t of doc.texts) {
+    if (t.del || t.y < top || t.y >= bot) continue;
+    body += await svgTextEl(t, top);
+  }
+
+  for (const t of doc.tapes) {
+    if (t.del || t.revealed || t.y < top || t.y >= bot) continue;
+    body += `<rect x="${t.x}" y="${t.y - top}" width="${t.w}" height="${t.h}" fill="#FFD682"/>\n`;
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+    `width="${dims.w}" height="${dims.h}" viewBox="0 0 ${dims.w} ${dims.h}">\n${body}</svg>`;
+}
+async function exportSvg(pages) {
+  pages = (pages && pages.length) ? pages : Array.from({ length: S.pages }, (_, i) => i);
+  // SVG has no native multi-page container, so multiple selected pages come out as one file per
+  // page instead of one combined document -- staggered slightly so Chrome's multi-download
+  // permission prompt (which only appears once) doesn't drop any of them.
+  for (let i = 0; i < pages.length; i++) {
+    const blob = new Blob([await buildPageSvg(pages[i])], { type: "image/svg+xml" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = pages.length > 1 ? `notes-page${pages[i] + 1}.svg` : "notes.svg";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    if (i < pages.length - 1) await new Promise(res => setTimeout(res, 150));
+  }
 }
 
 /* ============================================================================
