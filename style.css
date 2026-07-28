@@ -264,7 +264,14 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
 }
 #textFmtBar .tfb-size { display: flex; align-items: center; gap: 4px; }
 #textFmtBar .tfb-size input[type=range] { width: 70px; }
-#textFmtBar .tfb-size span { font-size: 11px; color: var(--ink-soft); width: 26px; text-align: right; }
+#textFmtBar .tfb-size input[type=number] {
+  font: inherit; font-size: 11.5px; color: var(--ink); background: #fff;
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 3px;
+  width: 38px; text-align: right;
+}
+/* Scrolling to nudge the value (see the wheel listener in text-edit.js) only makes sense while
+   these are focused/hovered — a subtle ring on hover hints that without adding a label. */
+#textFmtBar .tfb-size input:hover, #textFmtBar .tfb-size input:focus { outline: 1.5px solid var(--accent-soft); outline-offset: 1px; }
 #textFmtBar .tfb-swatches { display: flex; gap: 4px; align-items: center; }
 #textFmtBar .swatch { width: 18px; height: 18px; }
 #textFmtBar .tfb-sep { width: 1px; align-self: stretch; margin: 2px 0; background: var(--line); }

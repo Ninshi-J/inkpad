@@ -203,12 +203,37 @@ function buildTextFmtBar() {
   const sep1 = document.createElement("div"); sep1.className = "tfb-sep"; bar.appendChild(sep1);
 
   const sizeWrap = document.createElement("div"); sizeWrap.className = "tfb-size";
+  const SIZE_TITLE = "Font size — drag, type a value, or scroll over either control to nudge it";
   const sizeRng = document.createElement("input");
   sizeRng.type = "range"; sizeRng.min = 8; sizeRng.max = 120; sizeRng.value = editingText.size;
-  sizeRng.title = "Font size";
-  const sizeLabel = document.createElement("span"); sizeLabel.textContent = editingText.size + "px";
-  sizeRng.oninput = () => { sizeLabel.textContent = sizeRng.value + "px"; applyTextFmt({ size: +sizeRng.value }); };
-  sizeWrap.append(sizeRng, sizeLabel);
+  sizeRng.title = SIZE_TITLE;
+  const sizeNum = document.createElement("input");
+  sizeNum.type = "number"; sizeNum.min = 6; sizeNum.max = 400; sizeNum.step = 1;
+  sizeNum.value = editingText.size;
+  sizeNum.title = SIZE_TITLE;
+  const clampSize = v => Math.max(6, Math.min(400, Math.round(v)));
+  // The range only covers a sane everyday span (8–120) — typing a bigger value still works via
+  // the number box, it just won't drag the slider thumb past its own end.
+  const syncSizeControls = v => { sizeNum.value = v; if (v >= +sizeRng.min && v <= +sizeRng.max) sizeRng.value = v; };
+  sizeRng.oninput = () => { const v = clampSize(+sizeRng.value); syncSizeControls(v); applyTextFmt({ size: v }); };
+  sizeNum.addEventListener("input", () => {
+    if (sizeNum.value === "") return; // mid-edit (e.g. just cleared it to retype) — don't commit yet
+    const v = clampSize(+sizeNum.value);
+    syncSizeControls(v);
+    applyTextFmt({ size: v });
+  });
+  // Leaving the box empty/invalid and clicking away shouldn't silently leave the text un-sized —
+  // snap the displayed number back to whatever size is actually still in effect.
+  sizeNum.addEventListener("blur", () => { sizeNum.value = editingText.size; });
+  const onSizeWheel = e => {
+    e.preventDefault();
+    const v = clampSize(editingText.size + (e.deltaY < 0 ? 1 : -1));
+    syncSizeControls(v);
+    applyTextFmt({ size: v });
+  };
+  sizeRng.addEventListener("wheel", onSizeWheel, { passive: false });
+  sizeNum.addEventListener("wheel", onSizeWheel, { passive: false });
+  sizeWrap.append(sizeRng, sizeNum);
   bar.appendChild(sizeWrap);
 
   const sep2 = document.createElement("div"); sep2.className = "tfb-sep"; bar.appendChild(sep2);
@@ -258,6 +283,12 @@ textResizeHandleEl.addEventListener("pointerdown", e => {
   try { textResizeHandleEl.setPointerCapture(e.pointerId); } catch (_) {}
   textResizeHandleEl.classList.add("dragging");
   textResizeDrag = { pointerId: e.pointerId, startX: e.clientX, startWidth: textEdit.offsetWidth };
+  // This drag already tracks width/position itself below — the ResizeObserver exists only to
+  // catch width changes from OTHER sources (e.g. re-opening an already-sized box), and leaving
+  // it live during a manual drag means two independent systems can both react to the very same
+  // DOM width change, each writing editingText.w/lastSetWidthPx off the back of the other's
+  // write. Paused for the duration of the drag, resumed on release (see endTextResizeDrag).
+  if (textEditResizeObs) textEditResizeObs.disconnect();
 });
 textResizeHandleEl.addEventListener("pointermove", e => {
   if (!textResizeDrag || !editingText || e.pointerId !== textResizeDrag.pointerId) return;
@@ -275,6 +306,7 @@ function endTextResizeDrag(e) {
   try { textResizeHandleEl.releasePointerCapture(textResizeDrag.pointerId); } catch (_) {}
   textResizeDrag = null;
   textResizeHandleEl.classList.remove("dragging");
+  if (textEditResizeObs && editingText) textEditResizeObs.observe(textEdit);
 }
 textResizeHandleEl.addEventListener("pointerup", endTextResizeDrag);
 textResizeHandleEl.addEventListener("pointercancel", endTextResizeDrag);
