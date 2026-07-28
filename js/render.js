@@ -272,18 +272,30 @@ function drawTexts() {
   }
 }
 
+// Darkens a #rrggbb hex color by a flat fraction per channel — used to derive a tape's border
+// from its (user-configurable) fill color, same relationship the original hardcoded fill/border
+// pair (#FFD682/#D4A03C) already had, just computed instead of a second stored color to pick.
+function darkenHex(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = v => Math.max(0, Math.round(v * (1 - amt)));
+  const r = ch((n >> 16) & 255), g = ch((n >> 8) & 255), b = ch(n & 255);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+}
 function drawTapes() {
   for (const t of doc.tapes) {
     if (t.del || !isLayerVisible(t.layer)) continue;
     const x = sx(t.x), y = sy(t.y), w = t.w * V.zoom, h = t.h * V.zoom;
+    const fill = t.color || "#FFD682";
+    const border = darkenHex(fill, 0.22);
     if (!t.revealed) {
-      ctx.fillStyle = "#FFD682";
-      ctx.strokeStyle = "#D4A03C"; ctx.lineWidth = 1.5;
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = border; ctx.lineWidth = 1.5;
       roundRect(x, y, w, h, 4); ctx.fill(); ctx.stroke();
-      ctx.strokeStyle = "rgba(180,130,40,.35)";
+      ctx.strokeStyle = border; ctx.globalAlpha = 0.35;
       line(x + 8, y + 3, x + 8, y + h - 3);
+      ctx.globalAlpha = 1;
     } else {
-      ctx.strokeStyle = "#D4A03C"; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
       roundRect(x, y, w, h, 4); ctx.stroke(); ctx.setLineDash([]);
     }
   }
@@ -310,15 +322,22 @@ function drawTimerObjs() {
     const resetW = timerObjResetWidth(t) * V.zoom;
     ctx.strokeStyle = done ? "rgba(180,60,60,.35)" : "rgba(15,118,110,.35)";
     ctx.lineWidth = 1;
-    line(x + w - resetW, y + 4, x + w - resetW, y + h - 4);
+    line(x + w - resetW, y + 3, x + w - resetW, y + h - 3);
     ctx.fillStyle = done ? "#8A2E2E" : "#0B5A54";
     ctx.textBaseline = "middle";
-    ctx.font = `${13 * V.zoom}px sans-serif`;
+    const iconChar = t.running ? "⏸" : (done ? "✓" : "▶");
+    ctx.font = `${12 * V.zoom}px sans-serif`;
     ctx.textAlign = "left";
-    ctx.fillText(t.running ? "⏸" : (done ? "✓" : "▶"), x + 8, y + h / 2 + 1);
-    ctx.font = `600 ${14 * V.zoom}px ui-monospace, monospace`;
-    ctx.fillText(fmtClock(ms), x + 26, y + h / 2 + 1);
-    ctx.font = `${13 * V.zoom}px sans-serif`;
+    const iconX = x + 7 * V.zoom;
+    ctx.fillText(iconChar, iconX, y + h / 2 + 1);
+    // The icon glyph's actual rendered width varies by character and font/platform (a pause icon
+    // and a checkmark aren't the same width as a triangle) — measuring it and adding a fixed gap,
+    // rather than a hardcoded offset sized for one glyph, keeps the clock text from ever landing
+    // on top of it regardless of which icon is showing.
+    const digitX = iconX + ctx.measureText(iconChar).width + 5 * V.zoom;
+    ctx.font = `600 ${13 * V.zoom}px ui-monospace, monospace`;
+    ctx.fillText(fmtClock(ms), digitX, y + h / 2 + 1);
+    ctx.font = `${11 * V.zoom}px sans-serif`;
     ctx.textAlign = "center";
     ctx.fillText("↺", x + w - resetW / 2, y + h / 2 + 1);
     ctx.textAlign = "left";

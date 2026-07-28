@@ -168,16 +168,26 @@ function applyShapeDefaultsToImporter() {
     if (gridEl) { gridEl.value = shapeDefaults.graphGridThickness; const v = $(`${prefix}GridThickVal`); if (v) v.textContent = gridEl.value; }
   }
 }
-function openShapeDefaultsDlg() {
+// Populates/commits the "Shapes & Graphs" category's fields inside the unified #settingsDlg
+// (js/settings-ui.js) — these two used to open/save a dedicated #shapeDefaultsDlg, folded into
+// that dialog as just another category since this session's settings-consolidation feature.
+function populateShapeDefaultsFields() {
   $("sdGraphFontSize").value = shapeDefaults.graphFontSize; $("sdGraphFontVal").textContent = shapeDefaults.graphFontSize;
   $("sdGraphGridThickness").value = shapeDefaults.graphGridThickness; $("sdGraphGridVal").textContent = shapeDefaults.graphGridThickness;
   const graphPct = Math.round(shapeDefaults.graphSizeFrac * 100);
   $("sdGraphSizeFrac").value = graphPct; $("sdGraphSizeVal").textContent = graphPct;
   const shapePct = Math.round(shapeDefaults.shapeSizeFrac * 100);
   $("sdShapeSizeFrac").value = shapePct; $("sdShapeSizeVal").textContent = shapePct;
-  $("shapeDefaultsDlg").showModal();
 }
-function saveShapeDefaultsFromDialog() {
+function resetShapeDefaultsFields() {
+  $("sdGraphFontSize").value = SHAPE_DEFAULTS_FALLBACK.graphFontSize; $("sdGraphFontVal").textContent = SHAPE_DEFAULTS_FALLBACK.graphFontSize;
+  $("sdGraphGridThickness").value = SHAPE_DEFAULTS_FALLBACK.graphGridThickness; $("sdGraphGridVal").textContent = SHAPE_DEFAULTS_FALLBACK.graphGridThickness;
+  const graphPct = Math.round(SHAPE_DEFAULTS_FALLBACK.graphSizeFrac * 100);
+  $("sdGraphSizeFrac").value = graphPct; $("sdGraphSizeVal").textContent = graphPct;
+  const shapePct = Math.round(SHAPE_DEFAULTS_FALLBACK.shapeSizeFrac * 100);
+  $("sdShapeSizeFrac").value = shapePct; $("sdShapeSizeVal").textContent = shapePct;
+}
+function commitShapeDefaultsFromSettingsDlg() {
   shapeDefaults = {
     graphFontSize: parseInt($("sdGraphFontSize").value) || SHAPE_DEFAULTS_FALLBACK.graphFontSize,
     graphGridThickness: parseFloat($("sdGraphGridThickness").value) || SHAPE_DEFAULTS_FALLBACK.graphGridThickness,
@@ -185,13 +195,8 @@ function saveShapeDefaultsFromDialog() {
     shapeSizeFrac: (parseFloat($("sdShapeSizeFrac").value) || SHAPE_DEFAULTS_FALLBACK.shapeSizeFrac * 100) / 100,
   };
   saveShapeDefaults();
-  $("shapeDefaultsDlg").close();
   applyShapeDefaultsToImporter();
   renderShapePreview();
-}
-function restoreShapeDefaults() {
-  shapeDefaults = { ...SHAPE_DEFAULTS_FALLBACK };
-  openShapeDefaultsDlg();
 }
 
 // Per-notebook shape-dialog checkbox prefs (e.g. "show side labels") — saved in

@@ -199,7 +199,11 @@ cv.addEventListener("pointermove", e => {
     case "tapeMaybe": {
       const w = evtWorld(e);
       if ((w.x - drag.x0) ** 2 + (w.y - drag.y0) ** 2 > 20) {
-        drag = { mode: "tapeNew", x0: drag.x0, y0: drag.y0 };
+        // Carries drag.pointerId forward — without it, this fresh object loses the tag pointerdown
+        // gave it (see line ~141), and the very next pointermove's owner check (line ~154) treats
+        // it as belonging to a different pointer and silently drops every further move for the
+        // rest of the drag, freezing the tape's live preview right at the threshold-crossing size.
+        drag = { mode: "tapeNew", x0: drag.x0, y0: drag.y0, pointerId: drag.pointerId };
         live = { mode: "tape", x0: drag.x0, y0: drag.y0, x1: w.x, y1: w.y };
       }
       break;
@@ -277,6 +281,7 @@ function endPointer(e) {
     case "draw": commitStroke(); break;
     case "tapeMaybe":
       if (drag.hit) { drag.hit.revealed = !drag.hit.revealed; markDirty(); }
+      else createTapeAt(drag.x0, drag.y0);
       break;
     case "timerObjMaybe": {
       // No drag-to-size for these (fixed chip size) — moving past the tap threshold just cancels
@@ -294,7 +299,7 @@ function endPointer(e) {
       const x = Math.min(drag.x0, w.x), y = Math.min(drag.y0, w.y);
       const tw = Math.abs(w.x - drag.x0), th = Math.abs(w.y - drag.y0);
       if (tw > 10 && th > 8) {
-        const t = { x, y, w: tw, h: th, revealed: false, del: false, layer: currentLayerId() };
+        const t = { x, y, w: tw, h: th, color: tapeDefaults.color, revealed: false, del: false, layer: currentLayerId() };
         doc.tapes.push(t);
         pushUndo({ op: "add", items: [{ kind: "tape", ref: t }] });
         bumpPages(y + th); markDirty();
@@ -558,11 +563,21 @@ function tapeAt(x, y) {
   }
   return null;
 }
+// A plain click (no meaningful drag — see "tapeMaybe" in endPointer) used to just do nothing;
+// now it drops a tape at tapeDefaults' size, centered on the click point, same click-to-place
+// idiom as createTimerObjAt below.
+function createTapeAt(cx, cy) {
+  const w = tapeDefaults.w, h = tapeDefaults.h;
+  const t = { x: cx - w / 2, y: cy - h / 2, w, h, color: tapeDefaults.color, revealed: false, del: false, layer: currentLayerId() };
+  doc.tapes.push(t);
+  pushUndo({ op: "add", items: [{ kind: "tape", ref: t }] });
+  bumpPages(t.y + t.h); markDirty(); needsDraw = true;
+}
 
 /* ---------------- embedded timer/stopwatch objects ---------------- */
-// Fixed chip size — these aren't drag-to-size like tape, just click-to-place at a default size
-// (then movable/resizable afterward like any other object via lasso-select).
-const TIMER_OBJ_W = 130, TIMER_OBJ_H = 42;
+// Chip size and default duration come from timerObjDefaults (js/state.js) — user-editable via
+// the Settings dialog. These are click-to-place at that default size (then movable/resizable
+// afterward like any other object via lasso-select), not drag-to-size like tape.
 function timerObjAt(x, y) {
   for (let i = doc.timers.length - 1; i >= 0; i--) {
     const t = doc.timers[i];
@@ -591,13 +606,13 @@ function resetTimerObj(t) {
 // Timer (countdown) asks for a duration first since there's a real target to hit; Stopwatch has
 // nothing to configure, so it's just dropped in place immediately, already at 0:00.
 async function createTimerObjAt(cx, cy, mode) {
-  let durationMs = 300000;
+  let durationMs = timerObjDefaults.durationMs;
   if (mode === "down") {
     const ms = await promptTimerDuration(durationMs);
     if (ms == null) return;
     durationMs = ms;
   }
-  const w = TIMER_OBJ_W, h = TIMER_OBJ_H;
+  const w = timerObjDefaults.w, h = timerObjDefaults.h;
   const t = { x: cx - w / 2, y: cy - h / 2, w, h, mode, durationMs, running: false, baseMs: 0, startWall: null, del: false, layer: currentLayerId() };
   doc.timers.push(t);
   pushUndo({ op: "add", items: [{ kind: "timer", ref: t }] });

@@ -197,6 +197,7 @@ function currentSettingsSnapshot() {
     timerMode: timer.mode, timerDurationMs: timer.durationMs,
     shapeCategory: localStorage.getItem("inkpad.shapeCategory") || null,
     shapeDefaults,
+    widthByTool: V.widthByTool, eraserSizeByTool: V.eraserSizeByTool, tapeDefaults, timerObjDefaults,
   };
 }
 function applySettingsSnapshot(s) {
@@ -215,7 +216,18 @@ function applySettingsSnapshot(s) {
   if (Number.isFinite(s.timerDurationMs) && s.timerDurationMs > 0) timer.durationMs = s.timerDurationMs;
   if (s.shapeCategory) try { localStorage.setItem("inkpad.shapeCategory", s.shapeCategory); } catch (_) {}
   if (s.shapeDefaults && typeof s.shapeDefaults === "object") Object.assign(shapeDefaults, s.shapeDefaults);
+  if (s.widthByTool && typeof s.widthByTool === "object") {
+    Object.assign(V.widthByTool, s.widthByTool);
+    V.width = V.widthByTool[V.lastWidthTool];
+  }
+  if (s.eraserSizeByTool && typeof s.eraserSizeByTool === "object") {
+    Object.assign(V.eraserSizeByTool, s.eraserSizeByTool);
+    if (V.tool === "eraserStroke" || V.tool === "eraserPartial") V.eraserSize = V.eraserSizeByTool[V.tool];
+  }
+  if (s.tapeDefaults && typeof s.tapeDefaults === "object") Object.assign(tapeDefaults, s.tapeDefaults);
+  if (s.timerObjDefaults && typeof s.timerObjDefaults === "object") Object.assign(timerObjDefaults, s.timerObjDefaults);
   savePalette(); saveKeymap(); saveTextDefaults(); saveTimerPrefs(); saveShapeDefaults();
+  savePenDefaults(); saveEraserDefaults(); saveTapeDefaults(); saveTimerObjDefaults();
   try { localStorage.setItem("inkpad.colorByTool", JSON.stringify(V.colorByTool)); } catch (_) {}
 }
 let settingsSaveTimer = null;

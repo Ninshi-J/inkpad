@@ -339,7 +339,7 @@ function renderPageThumbnail(p, thumbW, asCanvas) {
   }
   for (const t of doc.tapes) {
     if (t.del || t.revealed || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
-    thumbCtx.fillStyle = "#FFD682";
+    thumbCtx.fillStyle = t.color || "#FFD682";
     thumbCtx.fillRect(t.x * scale, (t.y - top) * scale, t.w * scale, t.h * scale);
   }
   for (const t of doc.timers) {
@@ -449,7 +449,7 @@ async function serialize(pages) {
       tool: s.tool, color: s.color, w: s.w, t: filtered ? null : s.t, layer: s.layer,
       pts: s.pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round((p.p ?? .5) * 100) / 100]),
     })),
-    tapes: src.tapes.map(({ x, y, w, h, revealed, layer }) => ({ x, y, w, h, revealed, layer })),
+    tapes: src.tapes.map(({ x, y, w, h, color, revealed, layer }) => ({ x, y, w, h, color, revealed, layer })),
     texts: src.texts.map(({ x, y, color, size, font, w, lines, layer }) => ({ x, y, color, size, font, w, lines, layer })),
     images: src.images.map(({ data, x, y, w, h, rot, flipX, flipY, pdfSrcId, pdfPageIndex, pdfBox, pdfWholePage, shapeGen, layer }) => {
       const hasVectorSrc = pdfSrcId != null && pdfSourcesOut[pdfSrcId] != null;

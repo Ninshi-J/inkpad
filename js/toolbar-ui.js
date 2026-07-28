@@ -84,8 +84,8 @@ function buildToolButtons(host) {
   const dot = document.createElement("span"); dot.id = "widthDot";
   const rng = document.createElement("input");
   rng.type = "range"; rng.min = 0; rng.max = PEN_SLIDER_STEPS; rng.value = widthToSliderPos(V.width);
-  rng.title = `Pen width: ${V.width}px ( [ ] )`;
-  rng.oninput = () => { V.width = sliderPosToWidth(+rng.value); syncUI(); };
+  rng.title = `${TOOL_NAMES[V.lastWidthTool]} width: ${V.width}px ( [ ] )`;
+  rng.oninput = () => { setToolWidth(V.lastWidthTool, sliderPosToWidth(+rng.value)); syncUI(); };
   rng.id = "widthRange";
   g3.append(dot, rng);
   host.appendChild(g3);
@@ -133,12 +133,19 @@ function btn(html, fn, title) {
   return b;
 }
 function setTool(t) {
-  if (drag) return; 
+  if (drag) return;
   if (t !== V.tool) V.prevTool = V.tool;
   V.tool = t;
   if (t === "pen" || t === "hl" || t === "text") {
     V.lastColorTool = t;
-    V.colorHex = V.colorByTool[t] ?? V.colorHex; 
+    V.colorHex = V.colorByTool[t] ?? V.colorHex;
+  }
+  if (t === "pen" || t === "hl") {
+    V.lastWidthTool = t;
+    V.width = V.widthByTool[t] ?? V.width;
+  }
+  if (t === "eraserStroke" || t === "eraserPartial") {
+    V.eraserSize = V.eraserSizeByTool[t] ?? V.eraserSize;
   }
   if (t !== "lasso") clearSelection();
   if (t !== "text") commitTextEdit();

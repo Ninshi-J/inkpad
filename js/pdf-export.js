@@ -264,7 +264,8 @@ async function exportPdf(pages) {
 
     for (const t of doc.tapes) {
       if (t.del || t.revealed || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
-      page.drawRectangle({ x: X(t.x), y: Y(t.y + t.h), width: t.w * PT, height: t.h * PT, color: rgb(1, 0.84, 0.51) });
+      const [tr, tg, tb] = hexToRgb01(t.color || "#FFD682");
+      page.drawRectangle({ x: X(t.x), y: Y(t.y + t.h), width: t.w * PT, height: t.h * PT, color: rgb(tr, tg, tb) });
     }
   }
 
@@ -412,7 +413,7 @@ async function buildPageSvg(srcP) {
 
   for (const t of doc.tapes) {
     if (t.del || t.revealed || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
-    body += `<rect x="${t.x}" y="${t.y - top}" width="${t.w}" height="${t.h}" fill="#FFD682"/>\n`;
+    body += `<rect x="${t.x}" y="${t.y - top}" width="${t.w}" height="${t.h}" fill="${t.color || "#FFD682"}"/>\n`;
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n` +

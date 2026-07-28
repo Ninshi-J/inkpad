@@ -3,7 +3,7 @@ const clipboard = { items: [], crop: null, pasteCount: 0 };
 
 function cloneForClipboard(kind, ref) {
   if (kind === "stroke") return { kind, tool: ref.tool, color: ref.color, w: ref.w, layer: ref.layer, pts: ref.pts.map(p => ({ ...p })) };
-  if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, layer: ref.layer };
+  if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, color: ref.color, layer: ref.layer };
   if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, lines: ref.lines.slice(), layer: ref.layer };
   if (kind === "timer") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, mode: ref.mode, durationMs: ref.durationMs, layer: ref.layer };
   return {
@@ -173,7 +173,7 @@ function insertClipboardWithOffset(dx, dy) {
       copy.bb = strokeBB(copy);
       doc.strokes.push(copy);
     } else if (it.kind === "tape") {
-      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, revealed: false, del: false, layer };
+      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, color: it.color, revealed: false, del: false, layer };
       doc.tapes.push(copy);
     } else if (it.kind === "text") {
       copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, lines: it.lines.slice(), del: false, layer };
@@ -274,7 +274,7 @@ async function loadStamps() {
 // images for file save/export.
 function stampableClone(kind, ref) {
   if (kind === "stroke") return { kind, tool: ref.tool, color: ref.color, w: ref.w, pts: ref.pts.map(p => ({ ...p })) };
-  if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h };
+  if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, color: ref.color };
   if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, lines: ref.lines.slice() };
   if (kind === "timer") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, mode: ref.mode, durationMs: ref.durationMs };
   return {
@@ -323,7 +323,7 @@ function renderSelectionThumbnail(items, bounds, thumbW = 220) {
   }
   for (const { kind, ref } of items) {
     if (kind !== "tape") continue;
-    tctx.fillStyle = "#FFD682";
+    tctx.fillStyle = ref.color || "#FFD682";
     tctx.fillRect((ref.x - ox) * sc, (ref.y - oy) * sc, ref.w * sc, ref.h * sc);
   }
   tctx.textBaseline = "top";
@@ -375,7 +375,7 @@ function instantiateStampItems(items, dx, dy) {
       copy = { tool: it.tool, color: it.color, w: it.w, del: false, t: null, layer, pts: it.pts.map(p => ({ x: p.x + dx, y: p.y + dy, p: p.p })) };
       copy.bb = strokeBB(copy); doc.strokes.push(copy);
     } else if (it.kind === "tape") {
-      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, revealed: false, del: false, layer };
+      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, color: it.color, revealed: false, del: false, layer };
       doc.tapes.push(copy);
     } else if (it.kind === "text") {
       copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, lines: it.lines.slice(), del: false, layer };

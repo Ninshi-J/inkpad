@@ -702,37 +702,136 @@
   </div>
 
   <form method="dialog" style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 20px;">
-    <button type="button" title="Defaults for graph font size, grid thickness, and placed size" onclick="openShapeDefaultsDlg()" style="margin-right: auto;">⚙ Defaults</button>
+    <button type="button" title="Defaults for graph font size, grid thickness, and placed size" onclick="openSettingsDlg('shapes')" style="margin-right: auto;">⚙ Defaults</button>
     <button type="button" onclick="$('shapeImporterDlg').close()">Cancel</button>
     <button type="button" id="insertShapeBtn" onclick="generateAndInsertMathShape()" style="background: var(--accent); color: white; border-color: var(--accent);">Insert Shape</button>
   </form>
 </dialog>
 
-<dialog id="shapeDefaultsDlg" style="max-width: 380px; width: min(380px, 92vw);">
-  <h2 style="margin-top:0;">⚙ Graph &amp; Shape Defaults</h2>
-  <p style="color:var(--ink-soft); font-size:12.5px; margin-top:-6px;">Applied the next time you open the Math Shape Importer.</p>
-  <div class="shape-form-grid" style="grid-template-columns: 1fr;">
-    <div class="shape-field">
-      <label>Default graph axis font size: <span id="sdGraphFontVal">20</span>px</label>
-      <input type="range" id="sdGraphFontSize" min="9" max="36" step="1" value="20" oninput="$('sdGraphFontVal').textContent = this.value">
+<dialog id="settingsDlg" style="max-width: 620px; width: min(620px, 94vw);">
+  <h2 style="margin-top:0;">⚙ Settings &amp; Defaults</h2>
+  <p style="color:var(--ink-soft); font-size:12.5px; margin-top:-6px;">Device-wide defaults — not tied to any one notebook, same as the keyboard shortcuts.</p>
+  <div class="settings-body">
+    <div class="settings-nav">
+      <button type="button" class="settings-nav-btn" data-cat="pen">✏️ Pen &amp; Highlighter</button>
+      <button type="button" class="settings-nav-btn" data-cat="eraser">🧽 Eraser</button>
+      <button type="button" class="settings-nav-btn" data-cat="text">🔤 Text</button>
+      <button type="button" class="settings-nav-btn" data-cat="tape">🟨 Tape</button>
+      <button type="button" class="settings-nav-btn" data-cat="timer">⏱ Timer &amp; Stopwatch</button>
+      <button type="button" class="settings-nav-btn" data-cat="shapes">📐 Shapes &amp; Graphs</button>
     </div>
-    <div class="shape-field">
-      <label>Default graph grid thickness: <span id="sdGraphGridVal">2</span>px</label>
-      <input type="range" id="sdGraphGridThickness" min="0.5" max="4" step="0.5" value="2" oninput="$('sdGraphGridVal').textContent = this.value">
-    </div>
-    <div class="shape-field">
-      <label>Default graph size: <span id="sdGraphSizeVal">31</span>% of page</label>
-      <input type="range" id="sdGraphSizeFrac" min="15" max="50" step="1" value="31" oninput="$('sdGraphSizeVal').textContent = this.value">
-    </div>
-    <div class="shape-field">
-      <label>Default shape size: <span id="sdShapeSizeVal">25</span>% of page</label>
-      <input type="range" id="sdShapeSizeFrac" min="15" max="50" step="1" value="25" oninput="$('sdShapeSizeVal').textContent = this.value">
+    <div class="settings-content">
+      <div class="settings-pane" data-cat="pen">
+        <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+          <div class="shape-field">
+            <label>Pen thickness: <span id="stPenWidthVal">3</span>px</label>
+            <input type="range" id="stPenWidth" min="0.25" max="16" step="0.25" value="3" oninput="$('stPenWidthVal').textContent = this.value">
+          </div>
+          <div class="shape-field">
+            <label>Default pen color</label>
+            <input type="color" id="stPenColor" value="#2a2a2a">
+          </div>
+          <div class="shape-field">
+            <label>Highlighter thickness: <span id="stHlWidthVal">3</span>px</label>
+            <input type="range" id="stHlWidth" min="0.25" max="16" step="0.25" value="3" oninput="$('stHlWidthVal').textContent = this.value">
+          </div>
+          <div class="shape-field">
+            <label>Default highlighter color</label>
+            <input type="color" id="stHlColor" value="#ffd53d">
+          </div>
+        </div>
+      </div>
+      <div class="settings-pane" data-cat="eraser">
+        <p style="color:var(--ink-soft); font-size:12px; margin:0 0 10px;">The whole-stroke and partial erasers keep their own separate size, since they erase differently.</p>
+        <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+          <div class="shape-field">
+            <label>Eraser (whole stroke) size: <span id="stEraserStrokeSizeVal">12</span>px</label>
+            <input type="range" id="stEraserStrokeSize" min="4" max="48" step="1" value="12" oninput="$('stEraserStrokeSizeVal').textContent = this.value">
+          </div>
+          <div class="shape-field">
+            <label>Partial eraser size: <span id="stEraserPartialSizeVal">12</span>px</label>
+            <input type="range" id="stEraserPartialSize" min="4" max="48" step="1" value="12" oninput="$('stEraserPartialSizeVal').textContent = this.value">
+          </div>
+        </div>
+      </div>
+      <div class="settings-pane" data-cat="text">
+        <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+          <div class="shape-field">
+            <label>Default font</label>
+            <select id="stTextFont"></select>
+          </div>
+          <div class="shape-field">
+            <label>Default size: <span id="stTextSizeVal">20</span>px</label>
+            <input type="range" id="stTextSize" min="8" max="72" step="1" value="20" oninput="$('stTextSizeVal').textContent = this.value">
+          </div>
+          <div class="shape-field">
+            <label>Default color</label>
+            <input type="color" id="stTextColor" value="#2a2a2a">
+          </div>
+        </div>
+      </div>
+      <div class="settings-pane" data-cat="tape">
+        <p style="color:var(--ink-soft); font-size:12px; margin:0 0 10px;">Also used when you click (rather than drag) with the Tape tool.</p>
+        <div class="shape-form-grid" style="grid-template-columns: 1fr 1fr;">
+          <div class="shape-field">
+            <label>Default width: <span id="stTapeWVal">140</span>px</label>
+            <input type="range" id="stTapeW" min="30" max="400" step="5" value="140" oninput="$('stTapeWVal').textContent = this.value">
+          </div>
+          <div class="shape-field">
+            <label>Default height: <span id="stTapeHVal">32</span>px</label>
+            <input type="range" id="stTapeH" min="14" max="200" step="2" value="32" oninput="$('stTapeHVal').textContent = this.value">
+          </div>
+        </div>
+        <div class="shape-field" style="margin-top: 12px;">
+          <label>Default color</label>
+          <input type="color" id="stTapeColor" value="#ffd682">
+        </div>
+      </div>
+      <div class="settings-pane" data-cat="timer">
+        <div class="shape-form-grid" style="grid-template-columns: 1fr 1fr;">
+          <div class="shape-field">
+            <label>Chip width: <span id="stTimerWVal">130</span>px</label>
+            <input type="range" id="stTimerW" min="80" max="300" step="5" value="130" oninput="$('stTimerWVal').textContent = this.value">
+          </div>
+          <div class="shape-field">
+            <label>Chip height: <span id="stTimerHVal">20</span>px</label>
+            <input type="range" id="stTimerH" min="14" max="60" step="1" value="20" oninput="$('stTimerHVal').textContent = this.value">
+          </div>
+        </div>
+        <div class="shape-field" style="margin-top: 12px;">
+          <label>Default countdown duration (pre-fills the duration prompt)</label>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <input type="number" id="stTimerMin" min="0" max="180" step="1" value="5" style="width: 70px;"> <span>min</span>
+            <input type="number" id="stTimerSec" min="0" max="59" step="1" value="0" style="width: 70px;"> <span>sec</span>
+          </div>
+        </div>
+      </div>
+      <div class="settings-pane" data-cat="shapes">
+        <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+          <div class="shape-field">
+            <label>Default graph axis font size: <span id="sdGraphFontVal">20</span>px</label>
+            <input type="range" id="sdGraphFontSize" min="9" max="36" step="1" value="20" oninput="$('sdGraphFontVal').textContent = this.value">
+          </div>
+          <div class="shape-field">
+            <label>Default graph grid thickness: <span id="sdGraphGridVal">2</span>px</label>
+            <input type="range" id="sdGraphGridThickness" min="0.5" max="4" step="0.5" value="2" oninput="$('sdGraphGridVal').textContent = this.value">
+          </div>
+          <div class="shape-field">
+            <label>Default graph size: <span id="sdGraphSizeVal">31</span>% of page</label>
+            <input type="range" id="sdGraphSizeFrac" min="15" max="50" step="1" value="31" oninput="$('sdGraphSizeVal').textContent = this.value">
+          </div>
+          <div class="shape-field">
+            <label>Default shape size: <span id="sdShapeSizeVal">25</span>% of page</label>
+            <input type="range" id="sdShapeSizeFrac" min="15" max="50" step="1" value="25" oninput="$('sdShapeSizeVal').textContent = this.value">
+          </div>
+        </div>
+      </div>
     </div>
   </div>
   <form method="dialog" style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 18px;">
-    <button type="button" onclick="restoreShapeDefaults()" style="margin-right: auto;">Restore defaults</button>
-    <button type="button" onclick="$('shapeDefaultsDlg').close()">Cancel</button>
-    <button type="button" onclick="saveShapeDefaultsFromDialog()" style="background: var(--accent); color: white; border-color: var(--accent);">Save</button>
+    <button type="button" onclick="restoreActiveSettingsCategory()" style="margin-right: auto;">Restore this category's defaults</button>
+    <button type="button" onclick="$('settingsDlg').close()">Cancel</button>
+    <button type="button" onclick="saveSettingsDlg()" style="background: var(--accent); color: white; border-color: var(--accent);">Save</button>
   </form>
 </dialog>
 
@@ -905,6 +1004,7 @@
   <button type="button" id="fmDriveManage">Manage Drive backups…</button>
   <label class="fm-check"><input type="checkbox" id="fmDriveAutoSync"> Auto-sync to Drive</label>
   <label class="fm-check"><input type="checkbox" id="fmPencilOnly"> Only draw with a stylus</label>
+  <button type="button" id="fmSettings">⚙ Settings…</button>
 </div>
 <script src="js/state.js"></script>
 <script src="js/history.js"></script>
@@ -918,6 +1018,7 @@
 <script src="js/images.js"></script>
 <script src="js/shape-tools.js"></script>
 <script src="js/shape-svg.js"></script>
+<script src="js/settings-ui.js"></script>
 <script src="js/dialogs.js"></script>
 <script src="js/pages-pdf.js"></script>
 <script src="js/storage.js"></script>

@@ -128,6 +128,12 @@ const V = { // view state
   // each color-bearing tool remembers its own last-used color independently
   colorByTool: { pen: "#2A2A2A", hl: "#FFD53D", text: "#2A2A2A" },
   lastColorTool: "pen",
+  // pen and the highlighter each remember their own thickness (they used to share `width`
+  // outright — see setToolWidth/setTool) — width/eraserSize above stay as the CURRENT tool's
+  // value (kept in sync on every tool switch), same dual role V.colorHex already plays for
+  // colorByTool.
+  widthByTool: { pen: 3, hl: 3 }, lastWidthTool: "pen",
+  eraserSizeByTool: { eraserStroke: 12, eraserPartial: 12 },
   textFont: "sans", textSize: 20, // remembered for the next NEW text box
 };
 
@@ -205,11 +211,111 @@ function loadTextDefaults() {
     }
   } catch (_) {}
 }
+// Sets a specific tool's remembered color without disturbing V.lastColorTool (which tool is
+// "active for color" right now) — setColor() always writes to whichever tool that is, which
+// isn't safe to reuse from the settings dialog (e.g. setting the highlighter's default color
+// while the pen is the active tool would otherwise silently overwrite the pen's color instead).
+function setToolDefaultColor(tool, hex) {
+  V.colorByTool[tool] = hex;
+  if (V.lastColorTool === tool) V.colorHex = hex;
+  try { localStorage.setItem("inkpad.colorByTool", JSON.stringify(V.colorByTool)); } catch (_) {}
+  scheduleSettingsSave();
+  syncUI();
+}
+// Sets a specific tool's remembered width without disturbing V.lastWidthTool (mirrors
+// setToolDefaultColor's relationship to V.lastColorTool) — used by the settings dialog to set
+// e.g. the highlighter's thickness while the pen is the active tool.
+function setToolWidth(tool, w) {
+  V.widthByTool[tool] = w;
+  if (V.lastWidthTool === tool) V.width = w;
+  savePenDefaults();
+}
+// Same idea for the two erasers — unlike width there's no "current tool" mirror ambiguity to
+// worry about here (nothing outside the eraser tools themselves ever reads V.eraserSize), so
+// this can just always write straight through.
+function setEraserToolSize(tool, size) {
+  V.eraserSizeByTool[tool] = size;
+  if (V.tool === tool) V.eraserSize = size;
+  saveEraserDefaults();
+}
+// Pen/highlighter width and eraser size were previously pure in-memory V fields with no
+// persistence at all (reset to their hardcoded initial values on every reload) — these follow
+// the exact same device/user-level save-on-change pattern saveTextDefaults() already uses.
+// Pen and highlighter used to share one plain `width` value; each now remembers its own.
+function savePenDefaults() {
+  try { localStorage.setItem("inkpad.penDefaults", JSON.stringify({ widthByTool: V.widthByTool })); } catch (_) {}
+  scheduleSettingsSave();
+}
+function loadPenDefaults() {
+  try {
+    const j = JSON.parse(localStorage.getItem("inkpad.penDefaults") || "null");
+    if (j && j.widthByTool && typeof j.widthByTool === "object") {
+      for (const t of ["pen", "hl"]) if (Number.isFinite(j.widthByTool[t]) && j.widthByTool[t] > 0) V.widthByTool[t] = j.widthByTool[t];
+    } else if (j && Number.isFinite(j.width) && j.width > 0) {
+      // Pre-split save (single shared width) — seed both tools from it rather than losing it.
+      V.widthByTool.pen = V.widthByTool.hl = j.width;
+    }
+    V.width = V.widthByTool[V.lastWidthTool];
+  } catch (_) {}
+}
+// The two erasers ("whole stroke" and "partial") used to share one plain `eraserSize` value;
+// each now remembers its own, same split as pen/highlighter above.
+function saveEraserDefaults() {
+  try { localStorage.setItem("inkpad.eraserDefaults", JSON.stringify({ sizeByTool: V.eraserSizeByTool })); } catch (_) {}
+  scheduleSettingsSave();
+}
+function loadEraserDefaults() {
+  try {
+    const j = JSON.parse(localStorage.getItem("inkpad.eraserDefaults") || "null");
+    if (j && j.sizeByTool && typeof j.sizeByTool === "object") {
+      for (const t of ["eraserStroke", "eraserPartial"]) if (Number.isFinite(j.sizeByTool[t]) && j.sizeByTool[t] > 0) V.eraserSizeByTool[t] = j.sizeByTool[t];
+    } else if (j && Number.isFinite(j.size) && j.size > 0) {
+      // Pre-split save (single shared size) — seed both tools from it rather than losing it.
+      V.eraserSizeByTool.eraserStroke = V.eraserSizeByTool.eraserPartial = j.size;
+    }
+    if (V.tool === "eraserStroke" || V.tool === "eraserPartial") V.eraserSize = V.eraserSizeByTool[V.tool];
+  } catch (_) {}
+}
+
+/* ---------------- tape defaults (device/user-level, like shapeDefaults/the keymap — not tied
+   to any one notebook). Tape has no drag-to-size click-to-place path today the way timer chips
+   do; a plain click with the tape tool (see "tapeMaybe" in input.js) now places one at this
+   default size instead of doing nothing. */
+const TAPE_DEFAULTS_FALLBACK = { w: 140, h: 32, color: "#FFD682" };
+let tapeDefaults = { ...TAPE_DEFAULTS_FALLBACK };
+function loadTapeDefaults() {
+  tapeDefaults = { ...TAPE_DEFAULTS_FALLBACK };
+  try {
+    const j = JSON.parse(localStorage.getItem("inkpad.tapeDefaults") || "null");
+    if (j && typeof j === "object") Object.assign(tapeDefaults, j);
+  } catch (_) {}
+}
+function saveTapeDefaults() {
+  try { localStorage.setItem("inkpad.tapeDefaults", JSON.stringify(tapeDefaults)); } catch (_) {}
+  scheduleSettingsSave();
+}
+
+/* ---------------- timer/stopwatch chip defaults (device/user-level) — the placed chip's size
+   (previously the hardcoded TIMER_OBJ_W/H constants) and the duration a new countdown's
+   duration-picker dialog starts pre-filled with. */
+const TIMER_OBJ_DEFAULTS_FALLBACK = { w: 130, h: 20, durationMs: 300000 };
+let timerObjDefaults = { ...TIMER_OBJ_DEFAULTS_FALLBACK };
+function loadTimerObjDefaults() {
+  timerObjDefaults = { ...TIMER_OBJ_DEFAULTS_FALLBACK };
+  try {
+    const j = JSON.parse(localStorage.getItem("inkpad.timerObjDefaults") || "null");
+    if (j && typeof j === "object") Object.assign(timerObjDefaults, j);
+  } catch (_) {}
+}
+function saveTimerObjDefaults() {
+  try { localStorage.setItem("inkpad.timerObjDefaults", JSON.stringify(timerObjDefaults)); } catch (_) {}
+  scheduleSettingsSave();
+}
 
 /* ---------------- document model ---------------- */
 const doc = {
   strokes: [],  // {tool:'pen'|'hl', color, w, pts:[{x,y,p}], t:audioMs|null, del, bb}
-  tapes: [],    // {x,y,w,h, revealed, del}
+  tapes: [],    // {x,y,w,h, color, revealed, del} — color absent on tapes created before it existed
   texts: [],    // {x,y, color, size, lines:[], del}
   images: [],   // {img:HTMLImageElement, data:dataURL, x,y,w,h, del}
   // A timer ("down") counts down from durationMs and chimes at zero; a stopwatch ("up") just

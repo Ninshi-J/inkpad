@@ -46,7 +46,7 @@ function syncUI() {
     wd.style.background = V.colorHex;
   }
   const wr = host.querySelector("#widthRange");
-  if (wr) { wr.value = widthToSliderPos(V.width); wr.title = `Pen width: ${V.width}px ( [ ] )`; }
+  if (wr) { wr.value = widthToSliderPos(V.width); wr.title = `${TOOL_NAMES[V.lastWidthTool]} width: ${V.width}px ( [ ] )`; }
   SB.classList.toggle("hidden", !V.sidebar);
   LP.classList.toggle("hidden", !V.layersPanel);
   const mmWasHidden = MM.classList.contains("hidden");
@@ -65,6 +65,10 @@ loadPalette();
 loadColorByTool();
 loadTextDefaults();
 loadShapeDefaults();
+loadPenDefaults();
+loadEraserDefaults();
+loadTapeDefaults();
+loadTimerObjDefaults();
 V.colorHex = V.colorByTool[V.lastColorTool] ?? V.colorHex;
 refreshHelp();
 buildToolButtons(TB);

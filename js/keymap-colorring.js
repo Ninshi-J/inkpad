@@ -53,10 +53,13 @@ function cycleColor(dir) {
   setColor(pal[n]);
 }
 function adjustSize(d) {
-  if (V.tool.startsWith("eraser")) V.eraserSize = Math.max(4, Math.min(48, V.eraserSize + d * 2));
-  // Multiplicative (not additive) step, matching the slider's exponential scale — keeps each
-  // keypress a meaningful relative change whether you're nudging a hairline or a thick line.
-  else V.width = Math.max(PEN_MIN_W, Math.min(PEN_MAX_W, Math.round(V.width * Math.pow(1.25, d) * 100) / 100));
+  if (V.tool.startsWith("eraser")) {
+    setEraserToolSize(V.tool, Math.max(4, Math.min(48, V.eraserSize + d * 2)));
+  } else {
+    // Multiplicative (not additive) step, matching the slider's exponential scale — keeps each
+    // keypress a meaningful relative change whether you're nudging a hairline or a thick line.
+    setToolWidth(V.lastWidthTool, Math.max(PEN_MIN_W, Math.min(PEN_MAX_W, Math.round(V.width * Math.pow(1.25, d) * 100) / 100)));
+  }
   needsDraw = true; syncUI();
 }
 
@@ -178,6 +181,7 @@ function wireFileMenu() {
   $("fmExport").onclick = () => { closeFileMenu(); openExportDialog(); };
   $("fmSave").onclick = () => { closeFileMenu(); saveFile(); };
   $("fmOpen").onclick = () => { closeFileMenu(); $("fileOpen").click(); };
+  $("fmSettings").onclick = () => { closeFileMenu(); openSettingsDlg(); };
 
   loadPencilOnlyPref();
   const pencilChk = $("fmPencilOnly");
