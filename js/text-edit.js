@@ -49,13 +49,12 @@ function startTextEdit(x, y, existing) {
   let t = existing;
   if (!t) {
     for (const q of doc.texts) {
-      const b = textBB(q);
-      if (!q.del && x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1) { t = q; break; }
+      if (!q.del && isLayerVisible(q.layer) && textHitTest(q, x, y)) { t = q; break; }
     }
   }
   editingTextBefore = (t && !t.fresh) ? snapshotItem("text", t) : null;
   if (!t) {
-    t = { x, y, color: V.colorHex, size: V.textSize, font: V.textFont, w: null, lines: [], del: false, fresh: true };
+    t = { x, y, color: V.colorHex, size: V.textSize, font: V.textFont, w: null, lines: [], del: false, fresh: true, layer: currentLayerId() };
     doc.texts.push(t);
   }
   editingText = t;

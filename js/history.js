@@ -10,6 +10,11 @@ function applyEntry(e, dir) { // dir: -1 undo, +1 redo
       e.items.forEach(it => shiftObject(it.ref, it.kind, dx, dy));
       break;
     }
+    case "replaceShape": {
+      const snap = undoing ? e.before : e.after;
+      e.ref.data = snap.data; e.ref.img = snap.img; e.ref.shapeGen = snap.shapeGen;
+      break;
+    }
     case "clearShape": {
       e.imgChanges.forEach(c => {
         c.ref.data = undoing ? c.beforeData : c.afterData;

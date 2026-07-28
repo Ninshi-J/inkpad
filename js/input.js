@@ -71,7 +71,7 @@ cv.addEventListener("pointerdown", e => {
       curStroke = {
         tool: V.tool, color: V.colorHex, w: V.width,
         pts: [{ x: w.x, y: w.y, p: w.p }],
-        t: audio.rec ? recNowMs() : null, del: false, bb: null,
+        t: audio.rec ? recNowMs() : null, del: false, bb: null, layer: currentLayerId(),
       };
       drag = { mode: "draw", pEma: w.p };
       lastMoveT = performance.now();
@@ -294,7 +294,7 @@ function endPointer(e) {
       const x = Math.min(drag.x0, w.x), y = Math.min(drag.y0, w.y);
       const tw = Math.abs(w.x - drag.x0), th = Math.abs(w.y - drag.y0);
       if (tw > 10 && th > 8) {
-        const t = { x, y, w: tw, h: th, revealed: false, del: false };
+        const t = { x, y, w: tw, h: th, revealed: false, del: false, layer: currentLayerId() };
         doc.tapes.push(t);
         pushUndo({ op: "add", items: [{ kind: "tape", ref: t }] });
         bumpPages(y + th); markDirty();
@@ -544,7 +544,7 @@ function distToSeg(px, py, a, b) {
 function strokeAt(x, y, r = 8) {
   for (let i = doc.strokes.length - 1; i >= 0; i--) {
     const s = doc.strokes[i];
-    if (s.del) continue;
+    if (s.del || !isLayerVisible(s.layer)) continue;
     if (x < s.bb.x0 - r || x > s.bb.x1 + r || y < s.bb.y0 - r || y > s.bb.y1 + r) continue;
     for (let j = 0; j + 1 < s.pts.length; j++)
       if (distToSeg(x, y, s.pts[j], s.pts[j + 1]) < r + s.w) return s;
@@ -554,7 +554,7 @@ function strokeAt(x, y, r = 8) {
 function tapeAt(x, y) {
   for (let i = doc.tapes.length - 1; i >= 0; i--) {
     const t = doc.tapes[i];
-    if (!t.del && x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) return t;
+    if (!t.del && isLayerVisible(t.layer) && x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) return t;
   }
   return null;
 }
@@ -566,7 +566,7 @@ const TIMER_OBJ_W = 130, TIMER_OBJ_H = 42;
 function timerObjAt(x, y) {
   for (let i = doc.timers.length - 1; i >= 0; i--) {
     const t = doc.timers[i];
-    if (!t.del && x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) return t;
+    if (!t.del && isLayerVisible(t.layer) && x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) return t;
   }
   return null;
 }
@@ -598,7 +598,7 @@ async function createTimerObjAt(cx, cy, mode) {
     durationMs = ms;
   }
   const w = TIMER_OBJ_W, h = TIMER_OBJ_H;
-  const t = { x: cx - w / 2, y: cy - h / 2, w, h, mode, durationMs, running: false, baseMs: 0, startWall: null, del: false };
+  const t = { x: cx - w / 2, y: cy - h / 2, w, h, mode, durationMs, running: false, baseMs: 0, startWall: null, del: false, layer: currentLayerId() };
   doc.timers.push(t);
   pushUndo({ op: "add", items: [{ kind: "timer", ref: t }] });
   bumpPages(t.y + t.h); markDirty(); needsDraw = true;
@@ -669,7 +669,7 @@ function splitStrokeByTest(s, insideTest) {
 function erasePartialAt(x, y) {
   const R = V.eraserSize;
   for (const s of [...doc.strokes]) {
-    if (s.del) continue;
+    if (s.del || !isLayerVisible(s.layer)) continue;
     const pad = R + s.w * 2 + 4;
     if (x < s.bb.x0 - pad || x > s.bb.x1 + pad || y < s.bb.y0 - pad || y > s.bb.y1 + pad) continue;
     const cut = p => Math.hypot(p.x - x, p.y - y) <= R + halfWidth(s, p.p);
@@ -706,7 +706,7 @@ function finishLassoSplit(poly) {
   const picked = [];
   const inside = p => pointInPoly(p.x, p.y, poly);
   for (const s of [...doc.strokes]) {
-    if (s.del) continue;
+    if (s.del || !isLayerVisible(s.layer)) continue;
     const { insideRuns, outsideRuns } = splitStrokeByTest(s, inside);
     if (!insideRuns.length) continue;
     if (!outsideRuns.length) { picked.push({ kind: "stroke", ref: s }); continue; }
@@ -742,7 +742,7 @@ function finishLasso(partial) {
     markDirty(); 
   } else {
     for (const s of doc.strokes) {
-      if (s.del) continue;
+      if (s.del || !isLayerVisible(s.layer)) continue;
       let inN = 0, tot = 0;
       const step = Math.max(1, Math.floor(s.pts.length / 14));
       for (let i = 0; i < s.pts.length; i += step) { tot++; if (pointInPoly(s.pts[i].x, s.pts[i].y, poly)) inN++; }
@@ -750,15 +750,16 @@ function finishLasso(partial) {
     }
   }
   for (const t of doc.tapes)
-    if (!t.del && pointInPoly(t.x + t.w / 2, t.y + t.h / 2, poly)) sel.items.push({ kind: "tape", ref: t });
+    if (!t.del && isLayerVisible(t.layer) && pointInPoly(t.x + t.w / 2, t.y + t.h / 2, poly)) sel.items.push({ kind: "tape", ref: t });
   for (const t of doc.texts) {
+    if (t.del || !isLayerVisible(t.layer)) continue;
     const b = textBB(t);
-    if (!t.del && pointInPoly((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, poly)) sel.items.push({ kind: "text", ref: t });
+    if (pointInPoly((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, poly)) sel.items.push({ kind: "text", ref: t });
   }
   for (const im of doc.images)
-    if (!im.del && pointInPoly(im.x + im.w / 2, im.y + im.h / 2, poly)) sel.items.push({ kind: "image", ref: im });
+    if (!im.del && isLayerVisible(im.layer) && pointInPoly(im.x + im.w / 2, im.y + im.h / 2, poly)) sel.items.push({ kind: "image", ref: im });
   for (const t of doc.timers)
-    if (!t.del && pointInPoly(t.x + t.w / 2, t.y + t.h / 2, poly)) sel.items.push({ kind: "timer", ref: t });
+    if (!t.del && isLayerVisible(t.layer) && pointInPoly(t.x + t.w / 2, t.y + t.h / 2, poly)) sel.items.push({ kind: "timer", ref: t });
 }
 
 function pickObjectAt(x, y) {
@@ -766,15 +767,14 @@ function pickObjectAt(x, y) {
   if (t) return { kind: "tape", ref: t };
   for (let i = doc.texts.length - 1; i >= 0; i--) {
     const q = doc.texts[i];
-    if (q.del) continue;
-    const b = textBB(q);
-    if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) return { kind: "text", ref: q };
+    if (q.del || !isLayerVisible(q.layer)) continue;
+    if (textHitTest(q, x, y)) return { kind: "text", ref: q };
   }
   const s = strokeAt(x, y);
   if (s) return { kind: "stroke", ref: s };
   for (let i = doc.images.length - 1; i >= 0; i--) {
     const im = doc.images[i];
-    if (!im.del && pointInImage(im, x, y)) return { kind: "image", ref: im };
+    if (!im.del && isLayerVisible(im.layer) && pointInImage(im, x, y)) return { kind: "image", ref: im };
   }
   const tm = timerObjAt(x, y);
   if (tm) return { kind: "timer", ref: tm };

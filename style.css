@@ -23,7 +23,7 @@ body {
 
 /* ---------- layout ---------- */
 #app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
-#main { display: grid; grid-template-columns: auto auto 1fr; min-height: 0; position: relative; }
+#main { display: grid; grid-template-columns: auto auto 1fr auto; min-height: 0; position: relative; }
 #canvasWrap { grid-column: 3; position: relative; min-width: 0; overflow: hidden; }
 canvas#board { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
 
@@ -90,6 +90,42 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
   overflow-y: auto; padding: 14px 14px 20px;
 }
 #sidebar.hidden { display: none; }
+
+/* ---------- layers panel ---------- */
+#layersPanel {
+  grid-column: 4;
+  width: 240px; background: var(--chrome); border-left: 1px solid var(--line);
+  overflow-y: auto; padding: 14px 14px 20px; display: flex; flex-direction: column;
+}
+#layersPanel.hidden { display: none; }
+#layersPanel h3 {
+  font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-soft); margin: 2px 0 10px; display: flex; align-items: center; justify-content: space-between;
+}
+#layersPanel h3 button { border: none; background: none; color: var(--ink-soft); cursor: pointer; font-size: 13px; padding: 0 2px; }
+.layer-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.layer-row {
+  display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 6px;
+  border: 1px solid transparent; cursor: pointer;
+}
+.layer-row:hover { background: var(--chrome-2); }
+.layer-row.active { border-color: var(--accent); background: var(--accent-soft); }
+.layer-row .layer-vis {
+  border: none; background: none; cursor: pointer; font-size: 14px; width: 20px; flex: none;
+  opacity: 1;
+}
+.layer-row.layer-hidden .layer-vis { opacity: .35; }
+.layer-row .layer-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12.5px;
+}
+.layer-row.layer-hidden .layer-name { color: var(--ink-soft); font-style: italic; }
+.layer-row .layer-actions { display: none; flex: none; gap: 2px; }
+.layer-row:hover .layer-actions { display: flex; }
+.layer-row .layer-actions button {
+  border: none; background: none; color: var(--ink-soft); cursor: pointer; font-size: 12px; padding: 0 2px;
+}
+.layer-row .layer-actions button:hover { color: var(--ink); }
 
 /* ---------- minimap rail ---------- */
 #mmRail {

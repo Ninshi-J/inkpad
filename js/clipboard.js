@@ -2,14 +2,16 @@
 const clipboard = { items: [], crop: null, pasteCount: 0 };
 
 function cloneForClipboard(kind, ref) {
-  if (kind === "stroke") return { kind, tool: ref.tool, color: ref.color, w: ref.w, pts: ref.pts.map(p => ({ ...p })) };
-  if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h };
-  if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, lines: ref.lines.slice() };
+  if (kind === "stroke") return { kind, tool: ref.tool, color: ref.color, w: ref.w, layer: ref.layer, pts: ref.pts.map(p => ({ ...p })) };
+  if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, layer: ref.layer };
+  if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, lines: ref.lines.slice(), layer: ref.layer };
+  if (kind === "timer") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, mode: ref.mode, durationMs: ref.durationMs, layer: ref.layer };
   return {
     kind, img: ref.img, data: ref.data, x: ref.x, y: ref.y, w: ref.w, h: ref.h,
     rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY,
     pdfPage: ref.pdfPage, pdfFit: ref.pdfFit, renderPxPerUnit: ref.renderPxPerUnit,
     pdfSrcId: ref.pdfSrcId, pdfPageIndex: ref.pdfPageIndex, pdfBox: ref.pdfBox, pdfWholePage: ref.pdfWholePage,
+    shapeGen: ref.shapeGen, layer: ref.layer,
   };
 }
 
@@ -165,21 +167,28 @@ function insertClipboardWithOffset(dx, dy) {
   const added = [];
   for (const it of clipboard.items) {
     let copy;
+    const layer = resolveLayerId(it.layer);
     if (it.kind === "stroke") {
-      copy = { tool: it.tool, color: it.color, w: it.w, del: false, t: null, pts: it.pts.map(p => ({ x: p.x + dx, y: p.y + dy, p: p.p })) };
+      copy = { tool: it.tool, color: it.color, w: it.w, del: false, t: null, layer, pts: it.pts.map(p => ({ x: p.x + dx, y: p.y + dy, p: p.p })) };
       copy.bb = strokeBB(copy);
       doc.strokes.push(copy);
     } else if (it.kind === "tape") {
-      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, revealed: false, del: false };
+      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, revealed: false, del: false, layer };
       doc.tapes.push(copy);
     } else if (it.kind === "text") {
-      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, lines: it.lines.slice(), del: false };
+      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, lines: it.lines.slice(), del: false, layer };
       doc.texts.push(copy);
+    } else if (it.kind === "timer") {
+      // Pastes a fresh, stopped timer — never carries over a running/startWall state from the
+      // copy, which would otherwise reference a stale wall-clock instant.
+      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, mode: it.mode, durationMs: it.durationMs, running: false, baseMs: 0, startWall: null, del: false, layer };
+      doc.timers.push(copy);
     } else {
       copy = {
-        img: it.img, data: it.data, x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, rot: it.rot, flipX: it.flipX, flipY: it.flipY, del: false, _pdfBusy: false,
+        img: it.img, data: it.data, x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, rot: it.rot, flipX: it.flipX, flipY: it.flipY, del: false, _pdfBusy: false, layer,
         pdfPage: it.pdfPage, pdfFit: it.pdfFit, renderPxPerUnit: it.renderPxPerUnit,
         pdfSrcId: it.pdfSrcId, pdfPageIndex: it.pdfPageIndex, pdfBox: it.pdfBox, pdfWholePage: it.pdfWholePage,
+        ...(it.shapeGen ? { shapeGen: it.shapeGen } : {}),
       };
       doc.images.push(copy);
     }
@@ -189,7 +198,7 @@ function insertClipboardWithOffset(dx, dy) {
     const c = clipboard.crop;
     const copy = {
       img: c.img, data: c.data, x: c.x + dx, y: c.y + dy, w: c.w, h: c.h, rot: 0, flipX: false, flipY: false, del: false, _pdfBusy: false,
-      pdfSrcId: c.pdfSrcId, pdfPageIndex: c.pdfPageIndex, pdfBox: c.pdfBox,
+      pdfSrcId: c.pdfSrcId, pdfPageIndex: c.pdfPageIndex, pdfBox: c.pdfBox, layer: currentLayerId(),
     };
     doc.images.push(copy);
     added.push({ kind: "image", ref: copy });
@@ -240,6 +249,7 @@ function duplicateSelection() {
       copy.bb = strokeBB(copy); doc.strokes.push(copy);
     } else if (kind === "tape") { copy = { ...ref, x: ref.x + 20, y: ref.y + 20 }; doc.tapes.push(copy); }
     else if (kind === "text") { copy = { ...ref, x: ref.x + 20, y: ref.y + 20, lines: ref.lines.slice() }; doc.texts.push(copy); }
+    else if (kind === "timer") { copy = { ...ref, x: ref.x + 20, y: ref.y + 20, running: false, baseMs: 0, startWall: null }; doc.timers.push(copy); }
     else { copy = { ...ref, x: ref.x + 20, y: ref.y + 20, _pdfBusy: false }; doc.images.push(copy); }
     added.push({ kind, ref: copy });
   }
@@ -266,7 +276,11 @@ function stampableClone(kind, ref) {
   if (kind === "stroke") return { kind, tool: ref.tool, color: ref.color, w: ref.w, pts: ref.pts.map(p => ({ ...p })) };
   if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h };
   if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, lines: ref.lines.slice() };
-  return { kind, data: ref.data, x: ref.x, y: ref.y, w: ref.w, h: ref.h, rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY };
+  if (kind === "timer") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, mode: ref.mode, durationMs: ref.durationMs };
+  return {
+    kind, data: ref.data, x: ref.x, y: ref.y, w: ref.w, h: ref.h, rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY,
+    ...(ref.shapeGen ? { shapeGen: ref.shapeGen } : {}),
+  };
 }
 // Rasterizes an arbitrary {kind,ref} item list into a standalone thumbnail — same per-kind
 // drawing as renderPageThumbnail(), but driven by a supplied item list + bounds instead of a
@@ -351,22 +365,30 @@ function stampItemsBounds(items) {
 // dataURL survived storage.
 function instantiateStampItems(items, dx, dy) {
   const added = [];
+  // Stamps are library-wide, reusable in any notebook — a source layer id from wherever the
+  // stamp was originally saved means nothing here, so every inserted item just lands on
+  // whichever layer is active in THIS notebook right now, same as any other freshly-placed object.
+  const layer = currentLayerId();
   for (const it of items) {
     let copy;
     if (it.kind === "stroke") {
-      copy = { tool: it.tool, color: it.color, w: it.w, del: false, t: null, pts: it.pts.map(p => ({ x: p.x + dx, y: p.y + dy, p: p.p })) };
+      copy = { tool: it.tool, color: it.color, w: it.w, del: false, t: null, layer, pts: it.pts.map(p => ({ x: p.x + dx, y: p.y + dy, p: p.p })) };
       copy.bb = strokeBB(copy); doc.strokes.push(copy);
     } else if (it.kind === "tape") {
-      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, revealed: false, del: false };
+      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, revealed: false, del: false, layer };
       doc.tapes.push(copy);
     } else if (it.kind === "text") {
-      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, lines: it.lines.slice(), del: false };
+      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, lines: it.lines.slice(), del: false, layer };
       doc.texts.push(copy);
+    } else if (it.kind === "timer") {
+      copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, mode: it.mode, durationMs: it.durationMs, running: false, baseMs: 0, startWall: null, del: false, layer };
+      doc.timers.push(copy);
     } else {
       const img = new Image();
       img.onload = () => { needsDraw = true; mmCache.clear(); };
       img.src = it.data;
-      copy = { img, data: it.data, x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, rot: it.rot || 0, flipX: !!it.flipX, flipY: !!it.flipY, del: false, _pdfBusy: false };
+      copy = { img, data: it.data, x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, rot: it.rot || 0, flipX: !!it.flipX, flipY: !!it.flipY, del: false, _pdfBusy: false, layer };
+      if (it.shapeGen) copy.shapeGen = it.shapeGen;
       doc.images.push(copy);
     }
     added.push({ kind: it.kind, ref: copy });

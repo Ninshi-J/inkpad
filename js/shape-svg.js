@@ -31,12 +31,6 @@ function buildMathShapeSVG() {
     const gridThickness = parseFloat($("planeGridThickness").value) || 2;
     const bgEnabled = $("planeBgEnabled").checked;
     const bgColor = $("planeBgColor").value || "#ffffff";
-    const pad = 40;
-    const graphW = size - pad * 2;
-    const graphH = size - pad * 2;
-    const mapX = val => pad + ((val - xMin) / (xMax - xMin)) * graphW;
-    const mapY = val => pad + ((yMax - val) / (yMax - yMin)) * graphH;
-
     // Increments are user-settable now; guard against pathologically fine steps (huge ranges,
     // tiny increments) blowing up rendering by auto-coarsening while still covering the full range.
     const maxGridLines = 200;
@@ -48,6 +42,19 @@ function buildMathShapeSVG() {
     const xTicks = ticksFor(xMin, xMax, xStep);
     const yTicks = ticksFor(yMin, yMax, yStep);
 
+    const pad = 40;
+    // Left margin must fit the widest y-axis number — triple-digit labels (e.g. "100") were
+    // getting clipped off the canvas edge at the old fixed 40px pad.
+    const maxYLabelChars = yTicks.length ? Math.max(...yTicks.map(v => fmtNum(v).length)) : 1;
+    const padLeft = Math.min(size / 2 - 20, Math.max(pad, Math.ceil(maxYLabelChars * axisFontSize * 0.62) + 18));
+    const graphW = size - padLeft - pad;
+    const graphH = size - pad * 2;
+    const mapX = val => padLeft + ((val - xMin) / (xMax - xMin)) * graphW;
+    const mapY = val => pad + ((yMax - val) / (yMax - yMin)) * graphH;
+    // Vertical offset for x-axis tick numbers scales with font size so larger labels
+    // still clear the axis line instead of overlapping it.
+    const xTickOffset = Math.round(axisFontSize * 0.85) + 8;
+
     let innerSvg = "";
     if (drawGrid) {
       innerSvg += `<!-- Sub-grid structures -->\n`;
@@ -57,14 +64,14 @@ function buildMathShapeSVG() {
       }
       for (const y of yTicks) {
         const cy = mapY(y);
-        innerSvg += `  <line x1="${pad}" y1="${cy}" x2="${size-pad}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
+        innerSvg += `  <line x1="${padLeft}" y1="${cy}" x2="${size-pad}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
     }
     const originX = mapX(0); const originY = mapY(0);
-    innerSvg += `<!-- Master Axis -->\n  <line x1="${pad}" y1="${originY}" x2="${size-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
+    innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${size-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
     innerSvg += `  <line x1="${originX}" y1="${pad}" x2="${originX}" y2="${size-pad}" stroke="black" stroke-width="2"/>\n`;
     for (const x of xTicks) {
-      innerSvg += `  <text x="${mapX(x)}" y="${originY + 20}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
+      innerSvg += `  <text x="${mapX(x)}" y="${originY + xTickOffset}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
     }
     for (const y of yTicks) {
       innerSvg += `  <text x="${originX - 10}" y="${mapY(y) + 4}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="end">${fmtNum(y)}</text>\n`;
@@ -73,7 +80,7 @@ function buildMathShapeSVG() {
     // Clips plotted curves to the grid box — without it, steep functions (e.g. y=6x) compute
     // pixel coordinates far outside the box and the line spills into the margin/legend instead
     // of stopping at the axes.
-    innerSvg += `  <defs><clipPath id="plotClip"><rect x="${pad}" y="${pad}" width="${graphW}" height="${graphH}"/></clipPath></defs>\n`;
+    innerSvg += `  <defs><clipPath id="plotClip"><rect x="${padLeft}" y="${pad}" width="${graphW}" height="${graphH}"/></clipPath></defs>\n`;
     const fnLines = $("planeFunctions").value.split("\n").map(l => l.trim()).filter(Boolean);
     let legendY = pad + legendFontSize;
     fnLines.forEach((line, idx) => {
@@ -82,8 +89,8 @@ function buildMathShapeSVG() {
         const fn = compileExpr(line);
         const d = buildFunctionPathD(fn, mapX, mapY, xMin, xMax, yMin, yMax);
         if (d) innerSvg += `  <path d="${d}" fill="none" stroke="${color}" stroke-width="2" clip-path="url(#plotClip)"/>\n`;
-        innerSvg += `  <rect x="${pad + 4}" y="${legendY - legendFontSize + 2}" width="${legendFontSize}" height="${legendFontSize}" fill="${color}"/>\n`;
-        innerSvg += `  <text x="${pad + legendFontSize + 8}" y="${legendY}" font-family="ui-monospace, monospace" font-size="${legendFontSize}" fill="#333">${escapeXml(line)}</text>\n`;
+        innerSvg += `  <rect x="${padLeft + 4}" y="${legendY - legendFontSize + 2}" width="${legendFontSize}" height="${legendFontSize}" fill="${color}"/>\n`;
+        innerSvg += `  <text x="${padLeft + legendFontSize + 8}" y="${legendY}" font-family="ui-monospace, monospace" font-size="${legendFontSize}" fill="#333">${escapeXml(line)}</text>\n`;
         legendY += legendFontSize + 6;
       } catch (err) {
         fnErrors.push(`Line ${idx + 1} ("${line}"): ${err.message}`);
@@ -107,12 +114,6 @@ function buildMathShapeSVG() {
     const xAxisLabel = $("pmAxisXLabel").value.trim() || "x";
     const yAxisLabel = $("pmAxisYLabel").value.trim() || "y";
     const showLegend = $("pmShowLegend").checked;
-    const pad = 40;
-    const graphW = size - pad * 2;
-    const graphH = size - pad * 2;
-    const mapX = val => pad + ((val - xMin) / (xMax - xMin)) * graphW;
-    const mapY = val => pad + ((yMax - val) / (yMax - yMin)) * graphH;
-
     const maxGridLines = 200;
     let xStep = Math.max(0.0001, parseFloat($("pmXStep").value) || 1);
     let yStep = Math.max(0.0001, parseFloat($("pmYStep").value) || 1);
@@ -122,34 +123,63 @@ function buildMathShapeSVG() {
     const xTicks = ticksFor(xMin, xMax, xStep);
     const yTicks = ticksFor(yMin, yMax, yStep);
 
+    const pad = 40;
+    const axisLabelSize = axisFontSize + 2;
+    // Long custom axis labels (e.g. "Distance (d km)") don't fit in the old compact positions —
+    // a "y" beside its arrowhead, an "x" past the x-axis arrowhead. Anything longer than the old
+    // 6-char limit switches to a title-style layout instead: x-axis label centered below the tick
+    // numbers, y-axis label rotated in a reserved strip along the left edge. Short labels (the
+    // "x"/"y" default) keep the original compact look untouched.
+    const wideAxisLabels = labelAxes && (xAxisLabel.length > 6 || yAxisLabel.length > 6);
+    // Left margin must fit the widest y-axis number — triple-digit labels (e.g. "100") were
+    // getting clipped off the canvas edge at the old fixed 40px pad.
+    const maxYLabelChars = yTicks.length ? Math.max(...yTicks.map(v => fmtNum(v).length)) : 1;
+    const tickPadLeft = Math.min(size / 2 - 20, Math.max(pad, Math.ceil(maxYLabelChars * axisFontSize * 0.62) + 18));
+    const yLabelStripW = wideAxisLabels ? axisLabelSize + 16 : 0;
+    const padLeft = tickPadLeft + yLabelStripW;
+    // Vertical offset for x-axis tick numbers scales with font size so larger labels
+    // still clear the axis line instead of overlapping it.
+    const xTickOffset = Math.round(axisFontSize * 0.85) + 8;
+    const padBottom = wideAxisLabels ? Math.max(pad, xTickOffset + axisLabelSize + 14) : pad;
+    const graphW = size - padLeft - pad;
+    const graphH = size - pad - padBottom;
+    const mapX = val => padLeft + ((val - xMin) / (xMax - xMin)) * graphW;
+    const mapY = val => pad + ((yMax - val) / (yMax - yMin)) * graphH;
+
     let innerSvg = "";
     if (drawGrid) {
       innerSvg += `<!-- Sub-grid structures -->\n`;
       for (const x of xTicks) {
         const cx = mapX(x);
-        innerSvg += `  <line x1="${cx}" y1="${pad}" x2="${cx}" y2="${size-pad}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
+        innerSvg += `  <line x1="${cx}" y1="${pad}" x2="${cx}" y2="${size-padBottom}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
       for (const y of yTicks) {
         const cy = mapY(y);
-        innerSvg += `  <line x1="${pad}" y1="${cy}" x2="${size-pad}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
+        innerSvg += `  <line x1="${padLeft}" y1="${cy}" x2="${size-pad}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
     }
     const originX = mapX(0); const originY = mapY(0);
-    innerSvg += `<!-- Master Axis -->\n  <line x1="${pad}" y1="${originY}" x2="${size-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
-    innerSvg += `  <line x1="${originX}" y1="${pad}" x2="${originX}" y2="${size-pad}" stroke="black" stroke-width="2"/>\n`;
+    innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${size-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
+    innerSvg += `  <line x1="${originX}" y1="${pad}" x2="${originX}" y2="${size-padBottom}" stroke="black" stroke-width="2"/>\n`;
     // Arrowheads on all four axis ends, matching the number-line tool's arrow style.
     innerSvg += `  <path d="M ${size-pad} ${originY} L ${size-pad-12} ${originY-6} L ${size-pad-12} ${originY+6} Z" fill="black"/>\n`;
-    innerSvg += `  <path d="M ${pad} ${originY} L ${pad+12} ${originY-6} L ${pad+12} ${originY+6} Z" fill="black"/>\n`;
+    innerSvg += `  <path d="M ${padLeft} ${originY} L ${padLeft+12} ${originY-6} L ${padLeft+12} ${originY+6} Z" fill="black"/>\n`;
     innerSvg += `  <path d="M ${originX} ${pad} L ${originX-6} ${pad+12} L ${originX+6} ${pad+12} Z" fill="black"/>\n`;
-    innerSvg += `  <path d="M ${originX} ${size-pad} L ${originX-6} ${size-pad-12} L ${originX+6} ${size-pad-12} Z" fill="black"/>\n`;
+    innerSvg += `  <path d="M ${originX} ${size-padBottom} L ${originX-6} ${size-padBottom-12} L ${originX+6} ${size-padBottom-12} Z" fill="black"/>\n`;
     for (const x of xTicks) {
-      innerSvg += `  <text x="${mapX(x)}" y="${originY + 20}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
+      innerSvg += `  <text x="${mapX(x)}" y="${originY + xTickOffset}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
     }
     for (const y of yTicks) {
       innerSvg += `  <text x="${originX - 10}" y="${mapY(y) + 4}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="end">${fmtNum(y)}</text>\n`;
     }
-    if (labelAxes) {
-      const axisLabelSize = axisFontSize + 2;
+    if (labelAxes && wideAxisLabels) {
+      const yLabelX = yLabelStripW / 2 + 4;
+      const yLabelY = (pad + (size - padBottom)) / 2;
+      innerSvg += `  <text x="${yLabelX}" y="${yLabelY}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="middle" transform="rotate(-90 ${yLabelX} ${yLabelY})">${escapeXml(yAxisLabel)}</text>\n`;
+      const xLabelX = (padLeft + (size - pad)) / 2;
+      const xLabelY = (size - padBottom) + xTickOffset + axisLabelSize - 2;
+      innerSvg += `  <text x="${xLabelX}" y="${xLabelY}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="middle">${escapeXml(xAxisLabel)}</text>\n`;
+    } else if (labelAxes) {
       // "y" sits on the y-axis, above its arrowhead; "x" sits outside the plot, past the x-axis arrowhead.
       innerSvg += `  <text x="${size - pad + 10}" y="${originY + 5}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="start">${escapeXml(xAxisLabel)}</text>\n`;
       innerSvg += `  <text x="${originX}" y="${pad - 12}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="middle">${escapeXml(yAxisLabel)}</text>\n`;
@@ -158,7 +188,7 @@ function buildMathShapeSVG() {
     // Clips plotted curves to the grid box — without it, steep functions (e.g. y=6x) compute
     // pixel coordinates far outside the box and the line spills into the margin/legend instead
     // of stopping at the axes.
-    innerSvg += `  <defs><clipPath id="plotClip"><rect x="${pad}" y="${pad}" width="${graphW}" height="${graphH}"/></clipPath></defs>\n`;
+    innerSvg += `  <defs><clipPath id="plotClip"><rect x="${padLeft}" y="${pad}" width="${graphW}" height="${graphH}"/></clipPath></defs>\n`;
     const fnRows = Array.from(document.querySelectorAll("#pmFnList .eq-row"));
     let legendY = pad + legendFontSize;
     fnRows.forEach((row, idx) => {
@@ -173,8 +203,8 @@ function buildMathShapeSVG() {
         if (d) innerSvg += `  <path d="${d}" fill="none" stroke="${color}" stroke-width="2" clip-path="url(#plotClip)"/>\n`;
         if (showLegend) {
           const legendText = customLabel || (labelAxes ? `${yAxisLabel} = ${expr}` : expr);
-          innerSvg += `  <rect x="${pad + 4}" y="${legendY - legendFontSize + 2}" width="${legendFontSize}" height="${legendFontSize}" fill="${color}"/>\n`;
-          innerSvg += `  <text x="${pad + legendFontSize + 8}" y="${legendY}" font-family="ui-monospace, monospace" font-size="${legendFontSize}" fill="#333">${escapeXml(legendText)}</text>\n`;
+          innerSvg += `  <rect x="${padLeft + 4}" y="${legendY - legendFontSize + 2}" width="${legendFontSize}" height="${legendFontSize}" fill="${color}"/>\n`;
+          innerSvg += `  <text x="${padLeft + legendFontSize + 8}" y="${legendY}" font-family="ui-monospace, monospace" font-size="${legendFontSize}" fill="#333">${escapeXml(legendText)}</text>\n`;
           legendY += legendFontSize + 6;
         }
       } catch (err) {
@@ -198,12 +228,6 @@ function buildMathShapeSVG() {
     const xAxisLabel = $("q1AxisXLabel").value.trim() || "x";
     const yAxisLabel = $("q1AxisYLabel").value.trim() || "y";
     const showLegend = $("q1ShowLegend").checked;
-    const pad = 40;
-    const graphW = size - pad * 2;
-    const graphH = size - pad * 2;
-    const mapX = val => pad + ((val - xMin) / (xMax - xMin)) * graphW;
-    const mapY = val => pad + ((yMax - val) / (yMax - yMin)) * graphH;
-
     const maxGridLines = 200;
     let xStep = Math.max(0.0001, parseFloat($("q1XStep").value) || 1);
     let yStep = Math.max(0.0001, parseFloat($("q1YStep").value) || 1);
@@ -213,33 +237,64 @@ function buildMathShapeSVG() {
     const xTicks = ticksFor(xMin, xMax, xStep);
     const yTicks = ticksFor(yMin, yMax, yStep);
 
+    const pad = 40;
+    const axisLabelSize = axisFontSize + 2;
+    // Long custom axis labels (e.g. "Distance (d km)") don't fit in the old compact positions —
+    // a "y" beside its arrowhead, an "x" past the x-axis arrowhead. Anything longer than the old
+    // 6-char limit switches to a title-style layout instead: x-axis label centered below the tick
+    // numbers, y-axis label rotated in a reserved strip along the left edge. Short labels (the
+    // "x"/"y" default) keep the original compact look untouched.
+    const wideAxisLabels = labelAxes && (xAxisLabel.length > 6 || yAxisLabel.length > 6);
+    // Left margin must fit the widest y-axis number — triple-digit labels (e.g. "100") were
+    // getting clipped off the canvas edge at the old fixed 40px pad. Quadrant-1 graphs hit this
+    // constantly since the origin (and therefore every y-axis label) is always pinned to the
+    // left edge, unlike the 4-quadrant tools where the origin can sit further from the edge.
+    const maxYLabelChars = yTicks.length ? Math.max(...yTicks.map(v => fmtNum(v).length)) : 1;
+    const tickPadLeft = Math.min(size / 2 - 20, Math.max(pad, Math.ceil(maxYLabelChars * axisFontSize * 0.62) + 18));
+    const yLabelStripW = wideAxisLabels ? axisLabelSize + 16 : 0;
+    const padLeft = tickPadLeft + yLabelStripW;
+    // Vertical offset for x-axis tick numbers scales with font size so larger labels
+    // still clear the axis line instead of overlapping it.
+    const xTickOffset = Math.round(axisFontSize * 0.85) + 8;
+    const padBottom = wideAxisLabels ? Math.max(pad, xTickOffset + axisLabelSize + 14) : pad;
+    const graphW = size - padLeft - pad;
+    const graphH = size - pad - padBottom;
+    const mapX = val => padLeft + ((val - xMin) / (xMax - xMin)) * graphW;
+    const mapY = val => pad + ((yMax - val) / (yMax - yMin)) * graphH;
+
     let innerSvg = "";
     if (drawGrid) {
       innerSvg += `<!-- Sub-grid structures -->\n`;
       for (const x of xTicks) {
         const cx = mapX(x);
-        innerSvg += `  <line x1="${cx}" y1="${pad}" x2="${cx}" y2="${size-pad}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
+        innerSvg += `  <line x1="${cx}" y1="${pad}" x2="${cx}" y2="${size-padBottom}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
       for (const y of yTicks) {
         const cy = mapY(y);
-        innerSvg += `  <line x1="${pad}" y1="${cy}" x2="${size-pad}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
+        innerSvg += `  <line x1="${padLeft}" y1="${cy}" x2="${size-pad}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
     }
     const originX = mapX(0); const originY = mapY(0);
-    innerSvg += `<!-- Master Axis -->\n  <line x1="${pad}" y1="${originY}" x2="${size-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
-    innerSvg += `  <line x1="${originX}" y1="${pad}" x2="${originX}" y2="${size-pad}" stroke="black" stroke-width="2"/>\n`;
+    innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${size-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
+    innerSvg += `  <line x1="${originX}" y1="${pad}" x2="${originX}" y2="${size-padBottom}" stroke="black" stroke-width="2"/>\n`;
     // Only the positive ends get arrowheads — the origin sits at the box's bottom-left corner,
     // so there's no negative direction to point into.
     innerSvg += `  <path d="M ${size-pad} ${originY} L ${size-pad-12} ${originY-6} L ${size-pad-12} ${originY+6} Z" fill="black"/>\n`;
     innerSvg += `  <path d="M ${originX} ${pad} L ${originX-6} ${pad+12} L ${originX+6} ${pad+12} Z" fill="black"/>\n`;
     for (const x of xTicks) {
-      innerSvg += `  <text x="${mapX(x)}" y="${originY + 20}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
+      innerSvg += `  <text x="${mapX(x)}" y="${originY + xTickOffset}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
     }
     for (const y of yTicks) {
       innerSvg += `  <text x="${originX - 10}" y="${mapY(y) + 4}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="end">${fmtNum(y)}</text>\n`;
     }
-    if (labelAxes) {
-      const axisLabelSize = axisFontSize + 2;
+    if (labelAxes && wideAxisLabels) {
+      const yLabelX = yLabelStripW / 2 + 4;
+      const yLabelY = (pad + (size - padBottom)) / 2;
+      innerSvg += `  <text x="${yLabelX}" y="${yLabelY}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="middle" transform="rotate(-90 ${yLabelX} ${yLabelY})">${escapeXml(yAxisLabel)}</text>\n`;
+      const xLabelX = (padLeft + (size - pad)) / 2;
+      const xLabelY = (size - padBottom) + xTickOffset + axisLabelSize - 2;
+      innerSvg += `  <text x="${xLabelX}" y="${xLabelY}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="middle">${escapeXml(xAxisLabel)}</text>\n`;
+    } else if (labelAxes) {
       innerSvg += `  <text x="${size - pad + 10}" y="${originY + 5}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="start">${escapeXml(xAxisLabel)}</text>\n`;
       innerSvg += `  <text x="${originX}" y="${pad - 12}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="middle">${escapeXml(yAxisLabel)}</text>\n`;
     }
@@ -247,7 +302,7 @@ function buildMathShapeSVG() {
     // Clips plotted curves to the grid box — without it, steep functions (e.g. y=6x) compute
     // pixel coordinates far outside the box and the line spills into the margin/legend instead
     // of stopping at the axes.
-    innerSvg += `  <defs><clipPath id="plotClip"><rect x="${pad}" y="${pad}" width="${graphW}" height="${graphH}"/></clipPath></defs>\n`;
+    innerSvg += `  <defs><clipPath id="plotClip"><rect x="${padLeft}" y="${pad}" width="${graphW}" height="${graphH}"/></clipPath></defs>\n`;
     const fnRowsQ1 = Array.from(document.querySelectorAll("#q1FnList .eq-row"));
     let legendYQ1 = pad + legendFontSize;
     fnRowsQ1.forEach((row, idx) => {
@@ -262,8 +317,8 @@ function buildMathShapeSVG() {
         if (d) innerSvg += `  <path d="${d}" fill="none" stroke="${color}" stroke-width="2" clip-path="url(#plotClip)"/>\n`;
         if (showLegend) {
           const legendText = customLabel || (labelAxes ? `${yAxisLabel} = ${expr}` : expr);
-          innerSvg += `  <rect x="${pad + 4}" y="${legendYQ1 - legendFontSize + 2}" width="${legendFontSize}" height="${legendFontSize}" fill="${color}"/>\n`;
-          innerSvg += `  <text x="${pad + legendFontSize + 8}" y="${legendYQ1}" font-family="ui-monospace, monospace" font-size="${legendFontSize}" fill="#333">${escapeXml(legendText)}</text>\n`;
+          innerSvg += `  <rect x="${padLeft + 4}" y="${legendYQ1 - legendFontSize + 2}" width="${legendFontSize}" height="${legendFontSize}" fill="${color}"/>\n`;
+          innerSvg += `  <text x="${padLeft + legendFontSize + 8}" y="${legendYQ1}" font-family="ui-monospace, monospace" font-size="${legendFontSize}" fill="#333">${escapeXml(legendText)}</text>\n`;
           legendYQ1 += legendFontSize + 6;
         }
       } catch (err) {
@@ -999,8 +1054,14 @@ function buildMathShapeSVG() {
 
 function generateAndInsertMathShape() {
   const { svgString, labelSpecs, srcBox } = buildMathShapeSVG();
+  const target = editingShapeTarget; // capture before .close() clears it (see shape-tools.js)
+  const genParams = captureShapeGenParams(); // null for non-graph shapes — not re-editable
   $("shapeImporterDlg").close();
-  beginShapePlacement(svgString, labelSpecs, srcBox);
+  if (target) {
+    replaceGeneratedShape(target, svgString, genParams);
+  } else {
+    beginShapePlacement(svgString, labelSpecs, srcBox, genParams);
+  }
 }
 
 function togglePlaneFnHelp(id = "planeFnHelp") {

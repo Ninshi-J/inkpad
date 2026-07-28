@@ -16,7 +16,7 @@ function addImageFromDataURL(data, atX, atY) {
     const im = {
       img, data,
       x: atX ?? 40, y: atY ?? (V.scroll + 40),
-      w, h, del: false,
+      w, h, del: false, layer: currentLayerId(),
     };
     doc.images.push(im);
     pushUndo({ op: "add", items: [{ kind: "image", ref: im }] });
@@ -27,19 +27,25 @@ function addImageFromDataURL(data, atX, atY) {
 }
 // Instead of dropping a generated shape at a fixed spot (which could land on top of existing
 // content), a ghost preview follows the cursor until the user clicks the canvas to place it.
-let pendingPlacement = null; // { img, dataUrl, w, h, labelSpecs, srcBox }
-function beginShapePlacement(svgString, labelSpecs, srcBox) {
+let pendingPlacement = null; // { img, dataUrl, w, h, labelSpecs, srcBox, genParams }
+function beginShapePlacement(svgString, labelSpecs, srcBox, genParams) {
   const dataUrl = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
   const img = new Image();
   img.onload = () => {
-    // Capped at 1/4 of the page in both dimensions (never enlarged) — these are typically viewed
-    // zoomed in on a fraction of the page, so a shape sized near the full page width overflows
-    // that view and, without the page-bounds clamp below, can spill past the page edge entirely.
-    const maxW = pageW() * 0.25, maxH = pageH() * 0.25;
+    // Capped at a fraction of the page in both dimensions (never enlarged) — these are typically
+    // viewed zoomed in on a fraction of the page, so a shape sized near the full page width
+    // overflows that view and, without the page-bounds clamp below, can spill past the page edge
+    // entirely. Coordinate-plane graphs (the only shapes with no srcBox — they place the whole
+    // generated SVG rather than a cropped-and-labeled region) get a larger default cap: they carry
+    // axis numbers/labels that need to stay legible, unlike a plain triangle or solid.
+    // Both fractions are user-configurable — see shapeDefaults (shape-tools.js) / the
+    // "⚙ Defaults" button in the Math Shape Importer.
+    const sizeFrac = srcBox ? shapeDefaults.shapeSizeFrac : shapeDefaults.graphSizeFrac;
+    const maxW = pageW() * sizeFrac, maxH = pageH() * sizeFrac;
     let w = img.naturalWidth, h = img.naturalHeight;
     const scale = Math.min(1, maxW / w, maxH / h);
     if (scale < 1) { w *= scale; h *= scale; }
-    pendingPlacement = { img, dataUrl, w, h, labelSpecs, srcBox };
+    pendingPlacement = { img, dataUrl, w, h, labelSpecs, srcBox, genParams };
     needsDraw = true;
   };
   img.src = dataUrl;
@@ -55,7 +61,10 @@ function finalizePendingPlacement(x, y) {
   const margin = 8;
   x = Math.max(margin, Math.min(x, dims.w - p.w - margin));
   y = Math.max(pageTop + margin, Math.min(y, pageTop + dims.h - p.h - margin));
-  const im = { img: p.img, data: p.dataUrl, x, y, w: p.w, h: p.h, del: false };
+  const im = { img: p.img, data: p.dataUrl, x, y, w: p.w, h: p.h, del: false, layer: currentLayerId() };
+  // Only a graph (no srcBox — see beginShapePlacement) carries its generating params forward,
+  // which is what makes it re-editable later (see editGeneratedShape in shape-tools.js).
+  if (!p.srcBox && p.genParams) im.shapeGen = p.genParams;
   doc.images.push(im);
   const items = [{ kind: "image", ref: im }];
   if (p.labelSpecs && p.labelSpecs.length) {
@@ -70,7 +79,7 @@ function finalizePendingPlacement(x, y) {
       const t = {
         x: x + (spec.x - p.srcBox.x) * scale - text.length * size * 0.28, y: y + (spec.y - p.srcBox.y) * scale,
         color: "#000000", size,
-        lines: [text], del: false,
+        lines: [text], del: false, layer: im.layer,
       };
       doc.texts.push(t);
       items.push({ kind: "text", ref: t });

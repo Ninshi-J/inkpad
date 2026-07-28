@@ -196,6 +196,7 @@ function currentSettingsSnapshot() {
     textFont: V.textFont, textSize: V.textSize, colorByTool: V.colorByTool,
     timerMode: timer.mode, timerDurationMs: timer.durationMs,
     shapeCategory: localStorage.getItem("inkpad.shapeCategory") || null,
+    shapeDefaults,
   };
 }
 function applySettingsSnapshot(s) {
@@ -213,7 +214,8 @@ function applySettingsSnapshot(s) {
   if (s.timerMode === "up" || s.timerMode === "down") timer.mode = s.timerMode;
   if (Number.isFinite(s.timerDurationMs) && s.timerDurationMs > 0) timer.durationMs = s.timerDurationMs;
   if (s.shapeCategory) try { localStorage.setItem("inkpad.shapeCategory", s.shapeCategory); } catch (_) {}
-  savePalette(); saveKeymap(); saveTextDefaults(); saveTimerPrefs();
+  if (s.shapeDefaults && typeof s.shapeDefaults === "object") Object.assign(shapeDefaults, s.shapeDefaults);
+  savePalette(); saveKeymap(); saveTextDefaults(); saveTimerPrefs(); saveShapeDefaults();
   try { localStorage.setItem("inkpad.colorByTool", JSON.stringify(V.colorByTool)); } catch (_) {}
 }
 let settingsSaveTimer = null;
@@ -242,7 +244,10 @@ async function loadSettingsFromDisk() {
 /* ---------------- notebook/folder library ---------------- */
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 function defaultDocSettings() {
-  return { paper: "a4", landscape: false, template: "blank", ruleSp: 34, gridSp: 28, outline: true, pages: 1, pageStyles: {}, shapePrefs: {} };
+  return {
+    paper: "a4", landscape: false, template: "blank", ruleSp: 34, gridSp: 28, outline: true, pages: 1,
+    pageStyles: {}, shapePrefs: {}, layers: defaultLayers(), activeLayer: "base",
+  };
 }
 // Resolves the doc settings a brand-new notebook in this folder should start with, by walking the
 // folder's ancestor chain (nearest first) and taking each of the 6 fields below from the nearest

@@ -51,10 +51,147 @@ const SHAPE_CATEGORY_DEFAULT = { "2d": "triangle", "3d": "cube", tools: "plane" 
 // Keeps whatever type was last selected if it already belongs to that category (so re-opening the
 // same tab picks up where you left off), otherwise falls back to that category's first shape.
 function openShapeDialog(category) {
+  editingShapeTarget = null; // fresh "insert new shape" flow, not editing a placed one
+  $("insertShapeBtn").textContent = "Insert Shape";
   $("shapeImporterDlg").showModal();
   applyShapePrefsToDialog();
+  applyShapeDefaultsToImporter();
   const current = $("shapeTypeSelect").value;
   selectShapeType(SHAPE_CATEGORY[current] === category ? current : SHAPE_CATEGORY_DEFAULT[category]);
+}
+
+/* ---------------- editing an already-placed graph ----------------
+   Only the three coordinate-plane graph tools (plane, planeMath, planeQ1) support this — they're
+   the only shapes placed as a single self-contained image with no separate auto-generated text
+   labels (see labelSpecs elsewhere in this file): every other shape type (triangle, solids, the
+   fraction tool, ...) drops independent, freely movable/editable doc.texts alongside the image,
+   and once placed there's no reliable way to tell which of those the user has since repositioned
+   or hand-edited — regenerating could silently discard or duplicate that work. A plain graph image
+   has no such ambiguity, so re-editing it is just "swap the image, same spot, same size." */
+const SHAPE_GEN_FIELD_CONTAINERS = { plane: "planeFields", planeMath: "planeMathFields", planeQ1: "planeQ1Fields" };
+const SHAPE_GEN_FN_LIST_IDS = { planeMath: "pmFnList", planeQ1: "q1FnList" };
+let editingShapeTarget = null; // the doc.images ref currently being re-edited, or null for a fresh insert
+// Snapshots every field inside the current graph type's own fields container (plus its dynamic
+// function-list rows, for planeMath/planeQ1) so the dialog can be reopened pre-filled later.
+// Returns null for any non-graph shape type — those aren't re-editable (see comment above).
+function captureShapeGenParams() {
+  const type = $("shapeTypeSelect").value;
+  const containerId = SHAPE_GEN_FIELD_CONTAINERS[type];
+  if (!containerId) return null;
+  const fields = {};
+  $(containerId).querySelectorAll("input[id], select[id], textarea[id]").forEach(el => {
+    fields[el.id] = el.type === "checkbox" ? el.checked : el.value;
+  });
+  const listId = SHAPE_GEN_FN_LIST_IDS[type] || null;
+  const fnRows = listId ? Array.from($(listId).querySelectorAll(".eq-row")).map(row => ({
+    expr: row.querySelector(".eq-expr").value,
+    label: row.querySelector(".eq-label").value,
+    enabled: row.querySelector(".eq-enabled").checked,
+  })) : [];
+  return { type, fields, listId, fnRows };
+}
+// Inverse of captureShapeGenParams() — pre-fills the dialog from a previously-saved snapshot.
+function applyShapeGenParams(gen) {
+  if (!gen) return;
+  selectShapeType(gen.type);
+  for (const [id, val] of Object.entries(gen.fields)) {
+    const el = $(id);
+    if (!el) continue;
+    if (el.type === "checkbox") el.checked = !!val; else el.value = val;
+  }
+  if (gen.listId) {
+    $(gen.listId).innerHTML = "";
+    gen.fnRows.forEach(r => addEqRow(gen.listId, r.expr, r.label, r.enabled));
+  }
+  // Re-derive fields' own disabled/enabled visual state (normally an onchange side effect of
+  // the checkbox that gates them) since setting .checked directly above doesn't fire it.
+  if (gen.type === "planeMath") toggleAxisLabelInputs("pmLabelAxes", "pmAxisXLabel", "pmAxisYLabel");
+  if (gen.type === "planeQ1") toggleAxisLabelInputs("q1LabelAxes", "q1AxisXLabel", "q1AxisYLabel");
+  renderShapePreview();
+}
+// Opens the importer pre-filled with the graph's own generating values (stored on the image at
+// placement time — see finalizePendingPlacement in images.js). Regenerating replaces this same
+// image in place instead of starting a new click-to-place — see generateAndInsertMathShape().
+function editGeneratedShape(im) {
+  if (!im.shapeGen) return;
+  editingShapeTarget = im;
+  $("shapeImporterDlg").showModal();
+  applyShapeGenParams(im.shapeGen);
+  $("insertShapeBtn").textContent = "Update Graph";
+}
+// However the dialog closes (Cancel, Escape, backdrop click, or a real generate), the "editing a
+// placed shape" state shouldn't survive past it — generateAndInsertMathShape() below captures
+// editingShapeTarget into a local before calling .close(), so this firing mid-generate is safe.
+$("shapeImporterDlg").addEventListener("close", () => { editingShapeTarget = null; });
+// Swaps an already-placed graph's rendered image (and its regenerable params) in place — same
+// x/y/w/h, same rot/flip, nothing else on the page touched. Mirrors clearShapeFromImage's pattern
+// of mutating the existing doc.images ref's img/data in place rather than replacing the object,
+// so the current selection and any other reference to it stay valid across the edit.
+function replaceGeneratedShape(im, svgString, genParams) {
+  const dataUrl = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
+  const img = new Image();
+  const before = { data: im.data, img: im.img, shapeGen: im.shapeGen };
+  img.onload = () => {
+    im.data = dataUrl; im.img = img; im.shapeGen = genParams;
+    pushUndo({ op: "replaceShape", ref: im, before, after: { data: dataUrl, img, shapeGen: genParams } });
+    markDirty(); needsDraw = true; mmCache.clear();
+  };
+  img.src = dataUrl;
+}
+
+/* ---------------- shape/graph defaults (device/user-level, like the keymap — not tied to any
+   one notebook) — the placed size fraction, plus each graph tool's starting font size and grid
+   thickness. Persisted in localStorage and mirrored into the same settings snapshot as
+   keymap/palette/text defaults (see currentSettingsSnapshot/applySettingsSnapshot in storage.js),
+   so it follows a teacher between devices the same way those already do. */
+const SHAPE_DEFAULTS_FALLBACK = { graphFontSize: 20, graphGridThickness: 2, graphSizeFrac: 0.3125, shapeSizeFrac: 0.25 };
+let shapeDefaults = { ...SHAPE_DEFAULTS_FALLBACK };
+function loadShapeDefaults() {
+  shapeDefaults = { ...SHAPE_DEFAULTS_FALLBACK };
+  try {
+    const j = JSON.parse(localStorage.getItem("inkpad.shapeDefaults") || "null");
+    if (j && typeof j === "object") Object.assign(shapeDefaults, j);
+  } catch (_) {}
+}
+function saveShapeDefaults() {
+  try { localStorage.setItem("inkpad.shapeDefaults", JSON.stringify(shapeDefaults)); } catch (_) {}
+  scheduleSettingsSave();
+}
+// Pre-fills each of the three graph tools' own font-size/grid-thickness fields with the saved
+// defaults — called once per dialog open, same timing as applyShapePrefsToDialog(). Only those
+// two fields are seeded this way (the axis min/max/step ranges are per-diagram content, not a
+// "default" a teacher would want to reuse across unrelated graphs).
+function applyShapeDefaultsToImporter() {
+  for (const prefix of ["plane", "pm", "q1"]) {
+    const fontEl = $(`${prefix}FontSize`), gridEl = $(`${prefix}GridThickness`);
+    if (fontEl) { fontEl.value = shapeDefaults.graphFontSize; const v = $(`${prefix}FontVal`); if (v) v.textContent = fontEl.value; }
+    if (gridEl) { gridEl.value = shapeDefaults.graphGridThickness; const v = $(`${prefix}GridThickVal`); if (v) v.textContent = gridEl.value; }
+  }
+}
+function openShapeDefaultsDlg() {
+  $("sdGraphFontSize").value = shapeDefaults.graphFontSize; $("sdGraphFontVal").textContent = shapeDefaults.graphFontSize;
+  $("sdGraphGridThickness").value = shapeDefaults.graphGridThickness; $("sdGraphGridVal").textContent = shapeDefaults.graphGridThickness;
+  const graphPct = Math.round(shapeDefaults.graphSizeFrac * 100);
+  $("sdGraphSizeFrac").value = graphPct; $("sdGraphSizeVal").textContent = graphPct;
+  const shapePct = Math.round(shapeDefaults.shapeSizeFrac * 100);
+  $("sdShapeSizeFrac").value = shapePct; $("sdShapeSizeVal").textContent = shapePct;
+  $("shapeDefaultsDlg").showModal();
+}
+function saveShapeDefaultsFromDialog() {
+  shapeDefaults = {
+    graphFontSize: parseInt($("sdGraphFontSize").value) || SHAPE_DEFAULTS_FALLBACK.graphFontSize,
+    graphGridThickness: parseFloat($("sdGraphGridThickness").value) || SHAPE_DEFAULTS_FALLBACK.graphGridThickness,
+    graphSizeFrac: (parseFloat($("sdGraphSizeFrac").value) || SHAPE_DEFAULTS_FALLBACK.graphSizeFrac * 100) / 100,
+    shapeSizeFrac: (parseFloat($("sdShapeSizeFrac").value) || SHAPE_DEFAULTS_FALLBACK.shapeSizeFrac * 100) / 100,
+  };
+  saveShapeDefaults();
+  $("shapeDefaultsDlg").close();
+  applyShapeDefaultsToImporter();
+  renderShapePreview();
+}
+function restoreShapeDefaults() {
+  shapeDefaults = { ...SHAPE_DEFAULTS_FALLBACK };
+  openShapeDefaultsDlg();
 }
 
 // Per-notebook shape-dialog checkbox prefs (e.g. "show side labels") — saved in

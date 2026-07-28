@@ -48,6 +48,7 @@ function syncUI() {
   const wr = host.querySelector("#widthRange");
   if (wr) { wr.value = widthToSliderPos(V.width); wr.title = `Pen width: ${V.width}px ( [ ] )`; }
   SB.classList.toggle("hidden", !V.sidebar);
+  LP.classList.toggle("hidden", !V.layersPanel);
   const mmWasHidden = MM.classList.contains("hidden");
   MM.classList.toggle("hidden", !V.minimap);
   if (mmWasHidden && V.minimap) resizeMinimap(); // was display:none, so it had no size to observe
@@ -63,6 +64,7 @@ loadKeymap();
 loadPalette();
 loadColorByTool();
 loadTextDefaults();
+loadShapeDefaults();
 V.colorHex = V.colorByTool[V.lastColorTool] ?? V.colorHex;
 refreshHelp();
 buildToolButtons(TB);

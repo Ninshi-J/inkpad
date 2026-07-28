@@ -64,12 +64,38 @@ const HL_ALPHA = 0.38;
 const LASER_MS = 900;
 const SHAPE_HOLD_MS = 650;
 
+// A notebook always starts with exactly one layer — "base" is a stable literal id (not genId())
+// so a fresh notebook's activeLayer can point at it deterministically; layers created later via
+// the panel get a genId() like everything else in the library.
+function defaultLayers() { return [{ id: "base", name: "Layer 1", visible: true }]; }
+
 const S = { // document settings (saved)
   paper: "a4", landscape: false, template: "blank",
   ruleSp: 34, gridSp: 28, outline: true, pages: 1,
   pageStyles: {}, // page index -> { template, ruleSp, gridSp, outline, landscape } overrides; each falls back to the document default when unset
   shapePrefs: {}, // checkbox id -> checked, for the math-shape dialog (e.g. "show side labels") — per notebook, so a Y9 and a Y7 notebook can keep different defaults
+  layers: defaultLayers(), // [{id, name, visible}] — every stroke/text/image/tape/timer carries a `layer` id pointing into this list
+  activeLayer: "base", // which layer new objects get created on
 };
+// Resolves S.activeLayer defensively — falls back to the first layer if the active one was
+// deleted (or, for a notebook saved before layers existed, is simply absent).
+function currentLayerId() {
+  if (S.layers && S.layers.some(l => l.id === S.activeLayer)) return S.activeLayer;
+  return (S.layers && S.layers[0] && S.layers[0].id) || "base";
+}
+// An object whose layer isn't found at all (shouldn't normally happen once migration has run,
+// see deserialize()) defaults to visible rather than disappearing outright.
+function isLayerVisible(layerId) {
+  if (!S.layers || !S.layers.length) return true;
+  const l = S.layers.find(x => x.id === layerId);
+  return !l || l.visible !== false;
+}
+// Used by paste/duplicate-into-stamp paths: keeps a copied object on its original layer when
+// that layer still exists here, falling back to the active layer when it doesn't — e.g. a stamp
+// or clipboard item created in a different notebook, whose layer ids mean nothing in this one.
+function resolveLayerId(id) {
+  return (id && S.layers.some(l => l.id === id)) ? id : currentLayerId();
+}
 // Resolves the effective ruling for a given page, honoring any per-page overrides.
 function pageStyle(p) {
   const o = S.pageStyles && S.pageStyles[p];
@@ -98,7 +124,7 @@ function sliderPosToWidth(pos) {
 
 const V = { // view state
   zoom: 1, scroll: 0, scrollX: 0, tool: "pen", colorHex: "#2A2A2A", width: 3, eraserSize: 12,
-  ruler: false, sidebar: true, minimap: true, popped: false, prevTool: "hl",
+  ruler: false, sidebar: true, minimap: true, layersPanel: false, popped: false, prevTool: "hl",
   // each color-bearing tool remembers its own last-used color independently
   colorByTool: { pen: "#2A2A2A", hl: "#FFD53D", text: "#2A2A2A" },
   lastColorTool: "pen",
@@ -217,6 +243,7 @@ const $ = id => document.getElementById(id);
 const wrap = $("canvasWrap"), cv = $("board"), ctx = cv.getContext("2d");
 const TB = $("toolbar"), SB = $("sidebar"), PAL = $("palette"), PALB = $("paletteBody");
 const MM = $("mmRail"), mmCv = $("mmCanvas"), mmCtx = mmCv.getContext("2d");
+const LP = $("layersPanel");
 const textEdit = $("textEdit");
 let CW = 0, CH = 0, DPR = 1;
 

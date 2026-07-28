@@ -45,6 +45,7 @@ function buildToolButtons(host) {
     btn("Panel", () => { V.sidebar = !V.sidebar; syncUI(); }, "Toggle side panel (F2)"),
     btn(V.popped ? "Dock" : "Pop out", togglePopout, "Float the tools (F3)"),
     btn("Overview", () => { V.minimap = !V.minimap; syncUI(); }, "Toggle document overview rail (F4)"),
+    btn("Layers", () => { V.layersPanel = !V.layersPanel; syncUI(); renderLayersPanel(); }, "Toggle the layers panel"),
   );
   host.appendChild(gPanel);
   host.appendChild(sep());

@@ -182,7 +182,7 @@ async function exportPdf(pages) {
     page.pushOperators(setLineCap(1), setLineJoin(1));
 
     for (const im of doc.images) {
-      if (im.del) continue;
+      if (im.del || !isLayerVisible(im.layer)) continue;
       const imgP = Math.max(0, Math.min(S.pages - 1, Math.floor(im.y / stride())));
       if (imgP !== srcP) continue;
       let embedded = im.pdfSrcId != null ? await getEmbeddedPage(im) : null;
@@ -194,7 +194,7 @@ async function exportPdf(pages) {
 
     for (const pass of ["hl", "pen"]) {
       for (const s of doc.strokes) {
-        if (s.del || s.tool !== pass || s.pts.length < 2) continue;
+        if (s.del || s.tool !== pass || s.pts.length < 2 || !isLayerVisible(s.layer)) continue;
         if (s.pts[0].y < top || s.pts[0].y >= bot) continue;
         const [r, g, b] = hexToRgb01(s.color);
         if (pass === "hl") {
@@ -224,7 +224,7 @@ async function exportPdf(pages) {
     }
 
     for (const t of doc.texts) {
-      if (t.del || t.y < top || t.y >= bot) continue;
+      if (t.del || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
       const [r, g, b] = hexToRgb01(t.color);
       const font = pdfFontFor(t);
       const paras = (t.lines.length ? t.lines : [""]).map(sanitizeForWinAnsi);
@@ -263,7 +263,7 @@ async function exportPdf(pages) {
     }
 
     for (const t of doc.tapes) {
-      if (t.del || t.revealed || t.y < top || t.y >= bot) continue;
+      if (t.del || t.revealed || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
       page.drawRectangle({ x: X(t.x), y: Y(t.y + t.h), width: t.w * PT, height: t.h * PT, color: rgb(1, 0.84, 0.51) });
     }
   }
@@ -391,7 +391,7 @@ async function buildPageSvg(srcP) {
   let body = `<rect x="0" y="0" width="${dims.w}" height="${dims.h}" fill="#fff"/>\n`;
 
   for (const im of doc.images) {
-    if (im.del) continue;
+    if (im.del || !isLayerVisible(im.layer)) continue;
     const imgP = Math.max(0, Math.min(S.pages - 1, Math.floor(im.y / stride())));
     if (imgP !== srcP) continue;
     body += svgImageEl(im, top);
@@ -399,19 +399,19 @@ async function buildPageSvg(srcP) {
 
   for (const pass of ["hl", "pen"]) {
     for (const s of doc.strokes) {
-      if (s.del || s.tool !== pass || s.pts.length < 2) continue;
+      if (s.del || s.tool !== pass || s.pts.length < 2 || !isLayerVisible(s.layer)) continue;
       if (s.pts[0].y < top || s.pts[0].y >= bot) continue;
       body += svgStrokeEl(s, top);
     }
   }
 
   for (const t of doc.texts) {
-    if (t.del || t.y < top || t.y >= bot) continue;
+    if (t.del || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
     body += await svgTextEl(t, top);
   }
 
   for (const t of doc.tapes) {
-    if (t.del || t.revealed || t.y < top || t.y >= bot) continue;
+    if (t.del || t.revealed || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
     body += `<rect x="${t.x}" y="${t.y - top}" width="${t.w}" height="${t.h}" fill="#FFD682"/>\n`;
   }
 

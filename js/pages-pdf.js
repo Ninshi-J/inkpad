@@ -206,6 +206,7 @@ async function importPdfFiles(files) {
       w: c.w, h: c.h, del: false,
       pdfPage: c.page, pdfFit: c.fit, renderPxPerUnit: 2,
       pdfSrcId: c.pdfSrcId, pdfPageIndex: c.pdfPageIndex, pdfBox: c.pdfBox, pdfWholePage: true,
+      layer: currentLayerId(),
     };
     newImages.push(im);
     added.push({ kind: "image", ref: im });
@@ -306,7 +307,7 @@ function renderPageThumbnail(p, thumbW, asCanvas) {
   const top = p * stride(), bot = top + stride();
 
   for (const im of doc.images) {
-    if (im.del || im.y + im.h < top || im.y > bot) continue;
+    if (im.del || im.y + im.h < top || im.y > bot || !isLayerVisible(im.layer)) continue;
     if (im.rot || im.flipX || im.flipY) {
       thumbCtx.save();
       thumbCtx.translate((im.x + im.w / 2) * scale, (im.y + im.h / 2 - top) * scale);
@@ -320,7 +321,7 @@ function renderPageThumbnail(p, thumbW, asCanvas) {
   }
   for (const pass of ["hl", "pen"]) {
     for (const s of doc.strokes) {
-      if (s.del || s.tool !== pass || !s.pts.length) continue;
+      if (s.del || s.tool !== pass || !s.pts.length || !isLayerVisible(s.layer)) continue;
       if (s.pts[0].y < top || s.pts[0].y >= bot) continue;
       thumbCtx.save();
       thumbCtx.globalAlpha = pass === "hl" ? 0.4 : 1;
@@ -337,19 +338,19 @@ function renderPageThumbnail(p, thumbW, asCanvas) {
     }
   }
   for (const t of doc.tapes) {
-    if (t.del || t.revealed || t.y < top || t.y >= bot) continue;
+    if (t.del || t.revealed || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
     thumbCtx.fillStyle = "#FFD682";
     thumbCtx.fillRect(t.x * scale, (t.y - top) * scale, t.w * scale, t.h * scale);
   }
   for (const t of doc.timers) {
-    if (t.del || t.y < top || t.y >= bot) continue;
+    if (t.del || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
     thumbCtx.fillStyle = "#D5E8E5"; thumbCtx.strokeStyle = "#0F766E"; thumbCtx.lineWidth = 1;
     thumbCtx.fillRect(t.x * scale, (t.y - top) * scale, t.w * scale, t.h * scale);
     thumbCtx.strokeRect(t.x * scale, (t.y - top) * scale, t.w * scale, t.h * scale);
   }
   thumbCtx.textBaseline = "top";
   for (const t of doc.texts) {
-    if (t.del || t.y < top || t.y >= bot) continue;
+    if (t.del || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
     thumbCtx.fillStyle = t.color;
     thumbCtx.font = `${Math.max(6, t.size * scale)}px ${fontCss(t)}`;
     wrappedLines(t).forEach((ln, i) => thumbCtx.fillText(ln, t.x * scale, (t.y - top + i * t.size * 1.3) * scale));
@@ -445,12 +446,12 @@ async function serialize(pages) {
   return JSON.stringify({
     v: 1, settings: { ...S, pages: src.pageCount },
     strokes: src.strokes.map(s => ({
-      tool: s.tool, color: s.color, w: s.w, t: filtered ? null : s.t,
+      tool: s.tool, color: s.color, w: s.w, t: filtered ? null : s.t, layer: s.layer,
       pts: s.pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round((p.p ?? .5) * 100) / 100]),
     })),
-    tapes: src.tapes.map(({ x, y, w, h, revealed }) => ({ x, y, w, h, revealed })),
-    texts: src.texts.map(({ x, y, color, size, font, w, lines }) => ({ x, y, color, size, font, w, lines })),
-    images: src.images.map(({ data, x, y, w, h, rot, flipX, flipY, pdfSrcId, pdfPageIndex, pdfBox, pdfWholePage }) => {
+    tapes: src.tapes.map(({ x, y, w, h, revealed, layer }) => ({ x, y, w, h, revealed, layer })),
+    texts: src.texts.map(({ x, y, color, size, font, w, lines, layer }) => ({ x, y, color, size, font, w, lines, layer })),
+    images: src.images.map(({ data, x, y, w, h, rot, flipX, flipY, pdfSrcId, pdfPageIndex, pdfBox, pdfWholePage, shapeGen, layer }) => {
       const hasVectorSrc = pdfSrcId != null && pdfSourcesOut[pdfSrcId] != null;
       // A whole-page PDF import doesn't need its rendered raster preview saved too once the
       // original PDF bytes are being saved right alongside it — that preview gets regenerated
@@ -462,6 +463,8 @@ async function serialize(pages) {
         ...(skipRaster ? {} : { data }),
         x, y, w, h, rot: rot || 0, flipX: !!flipX, flipY: !!flipY,
         ...(hasVectorSrc ? { pdfSrcId, pdfPageIndex, pdfBox, pdfWholePage: !!pdfWholePage } : {}),
+        ...(shapeGen ? { shapeGen } : {}),
+        layer,
       };
     }),
     // Never persisted as "running" — baseMs is frozen to whatever it's currently elapsed (even
@@ -469,7 +472,7 @@ async function serialize(pages) {
     // startWall (a performance.now() anchor) is meaningless across a reload so it's dropped entirely.
     timers: src.timers.map(t => ({
       x: t.x, y: t.y, w: t.w, h: t.h, mode: t.mode, durationMs: t.durationMs,
-      baseMs: t.running ? timerObjElapsedMs(t) : t.baseMs,
+      baseMs: t.running ? timerObjElapsedMs(t) : t.baseMs, layer: t.layer,
     })),
     audio: segs,
     ...(Object.keys(pdfSourcesOut).length ? { pdfSources: pdfSourcesOut } : {}),
@@ -487,9 +490,10 @@ function deserialize(json) {
   const d = JSON.parse(json);
   S.pageStyles = {}; // reset before merge — older/other files may not carry this key at all
   S.shapePrefs = {}; // same — notebooks saved before this existed have no key for it at all
+  S.layers = null; S.activeLayer = null; // same — otherwise a save with no layers key would inherit whatever notebook was open before this one, instead of falling back to defaultLayers() below
   Object.assign(S, d.settings || {});
   doc.strokes = (d.strokes || []).map(s => {
-    const ns = { tool: s.tool, color: s.color, w: s.w, t: s.t ?? null, del: false, pts: s.pts.map(a => ({ x: a[0], y: a[1], p: a[2] ?? 0.5 })) };
+    const ns = { tool: s.tool, color: s.color, w: s.w, t: s.t ?? null, layer: s.layer, del: false, pts: s.pts.map(a => ({ x: a[0], y: a[1], p: a[2] ?? 0.5 })) };
     ns.bb = strokeBB(ns); return ns;
   });
   doc.tapes = (d.tapes || []).map(t => ({ ...t, del: false }));
@@ -515,7 +519,8 @@ function deserialize(json) {
       img.onload = () => { needsDraw = true; mmCache.clear(); };
       img.src = i.data;
     }
-    const im = { img, data: i.data || null, x: i.x, y: i.y, w: i.w, h: i.h, rot: i.rot || 0, flipX: !!i.flipX, flipY: !!i.flipY, del: false };
+    const im = { img, data: i.data || null, x: i.x, y: i.y, w: i.w, h: i.h, rot: i.rot || 0, flipX: !!i.flipX, flipY: !!i.flipY, layer: i.layer, del: false };
+    if (i.shapeGen) im.shapeGen = i.shapeGen;
     if (i.pdfSrcId != null && srcIdRemap[i.pdfSrcId] != null) {
       im.pdfSrcId = srcIdRemap[i.pdfSrcId];
       im.pdfPageIndex = i.pdfPageIndex;
@@ -524,6 +529,19 @@ function deserialize(json) {
     }
     doc.images.push(im);
   }
+
+  // Migration: a notebook saved before layers existed (no S.layers at all, since Object.assign
+  // above only overwrites keys the save actually has), or one whose active/object layer id no
+  // longer exists (a deleted layer, or a foreign id from a stamp/paste sourced from a different
+  // notebook), gets normalized onto a real layer here rather than silently going invisible.
+  if (!Array.isArray(S.layers) || !S.layers.length) S.layers = defaultLayers();
+  if (!S.activeLayer || !S.layers.some(l => l.id === S.activeLayer)) S.activeLayer = S.layers[0].id;
+  const fallbackLayerId = S.layers[0].id;
+  const validLayerIds = new Set(S.layers.map(l => l.id));
+  for (const arr of [doc.strokes, doc.tapes, doc.texts, doc.images, doc.timers]) {
+    for (const o of arr) if (!validLayerIds.has(o.layer)) o.layer = fallbackLayerId;
+  }
+
   audio.segments.forEach(s => URL.revokeObjectURL(s.url));
   audio.segments = []; audio.totalMs = 0; audio.posMs = 0;
   for (const a of (d.audio || [])) {
@@ -537,7 +555,7 @@ function deserialize(json) {
   undoStack = []; redoStack = []; clearSelection();
   V.scroll = 0; dirty = false;
   mmCache.clear();
-  needsDraw = true; syncUI(); syncStatus(); rebuildSidebar();
+  needsDraw = true; syncUI(); syncStatus(); rebuildSidebar(); renderLayersPanel();
   restorePdfLiveLinks();
 }
 // Re-links whole-page PDF images to a live pdf.js page (same as right after import), using the

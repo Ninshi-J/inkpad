@@ -29,6 +29,7 @@
       <div id="hScrollTrack"><div id="hScrollThumb"></div></div>
       <div id="vScrollTrack"><div id="vScrollThumb"></div></div>
     </div>
+    <div id="layersPanel" class="hidden"></div>
   </div>
   <div id="status">
     <span id="stTool">Pen</span>
@@ -247,8 +248,8 @@
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
         <input type="checkbox" id="pmLabelAxes" checked onchange="toggleAxisLabelInputs('pmLabelAxes','pmAxisXLabel','pmAxisYLabel')"> Label Axes
       </label>
-      <input type="text" id="pmAxisXLabel" value="x" maxlength="6" placeholder="x" style="width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;">
-      <input type="text" id="pmAxisYLabel" value="y" maxlength="6" placeholder="y" style="width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;">
+      <input type="text" id="pmAxisXLabel" value="x" maxlength="30" placeholder="x, or e.g. Time (t hours)" style="width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;">
+      <input type="text" id="pmAxisYLabel" value="y" maxlength="30" placeholder="y, or e.g. Distance (d km)" style="width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;">
     </div>
     <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-top:8px;">
       <input type="checkbox" id="pmShowLegend" checked> Show Legend
@@ -314,8 +315,8 @@
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
         <input type="checkbox" id="q1LabelAxes" checked onchange="toggleAxisLabelInputs('q1LabelAxes','q1AxisXLabel','q1AxisYLabel')"> Label Axes
       </label>
-      <input type="text" id="q1AxisXLabel" value="x" maxlength="6" placeholder="x" style="width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;">
-      <input type="text" id="q1AxisYLabel" value="y" maxlength="6" placeholder="y" style="width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;">
+      <input type="text" id="q1AxisXLabel" value="x" maxlength="30" placeholder="x, or e.g. Time (t hours)" style="width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;">
+      <input type="text" id="q1AxisYLabel" value="y" maxlength="30" placeholder="y, or e.g. Distance (d km)" style="width:100%; padding:4px 6px; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;">
     </div>
     <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-top:8px;">
       <input type="checkbox" id="q1ShowLegend" checked> Show Legend
@@ -700,9 +701,38 @@
     <div id="shapePreview"></div>
   </div>
 
-  <form method="dialog" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px;">
+  <form method="dialog" style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 20px;">
+    <button type="button" title="Defaults for graph font size, grid thickness, and placed size" onclick="openShapeDefaultsDlg()" style="margin-right: auto;">⚙ Defaults</button>
     <button type="button" onclick="$('shapeImporterDlg').close()">Cancel</button>
-    <button type="button" onclick="generateAndInsertMathShape()" style="background: var(--accent); color: white; border-color: var(--accent);">Insert Shape</button>
+    <button type="button" id="insertShapeBtn" onclick="generateAndInsertMathShape()" style="background: var(--accent); color: white; border-color: var(--accent);">Insert Shape</button>
+  </form>
+</dialog>
+
+<dialog id="shapeDefaultsDlg" style="max-width: 380px; width: min(380px, 92vw);">
+  <h2 style="margin-top:0;">⚙ Graph &amp; Shape Defaults</h2>
+  <p style="color:var(--ink-soft); font-size:12.5px; margin-top:-6px;">Applied the next time you open the Math Shape Importer.</p>
+  <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+    <div class="shape-field">
+      <label>Default graph axis font size: <span id="sdGraphFontVal">20</span>px</label>
+      <input type="range" id="sdGraphFontSize" min="9" max="36" step="1" value="20" oninput="$('sdGraphFontVal').textContent = this.value">
+    </div>
+    <div class="shape-field">
+      <label>Default graph grid thickness: <span id="sdGraphGridVal">2</span>px</label>
+      <input type="range" id="sdGraphGridThickness" min="0.5" max="4" step="0.5" value="2" oninput="$('sdGraphGridVal').textContent = this.value">
+    </div>
+    <div class="shape-field">
+      <label>Default graph size: <span id="sdGraphSizeVal">31</span>% of page</label>
+      <input type="range" id="sdGraphSizeFrac" min="15" max="50" step="1" value="31" oninput="$('sdGraphSizeVal').textContent = this.value">
+    </div>
+    <div class="shape-field">
+      <label>Default shape size: <span id="sdShapeSizeVal">25</span>% of page</label>
+      <input type="range" id="sdShapeSizeFrac" min="15" max="50" step="1" value="25" oninput="$('sdShapeSizeVal').textContent = this.value">
+    </div>
+  </div>
+  <form method="dialog" style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 18px;">
+    <button type="button" onclick="restoreShapeDefaults()" style="margin-right: auto;">Restore defaults</button>
+    <button type="button" onclick="$('shapeDefaultsDlg').close()">Cancel</button>
+    <button type="button" onclick="saveShapeDefaultsFromDialog()" style="background: var(--accent); color: white; border-color: var(--accent);">Save</button>
   </form>
 </dialog>
 
@@ -895,6 +925,7 @@
 <script src="js/pdf-export.js"></script>
 <script src="js/toolbar-ui.js"></script>
 <script src="js/sidebar.js"></script>
+<script src="js/layers-ui.js"></script>
 <script src="js/random-tools.js"></script>
 <script src="js/timer.js"></script>
 <script src="js/keymap-colorring.js"></script>

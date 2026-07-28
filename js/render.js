@@ -22,6 +22,19 @@ function textBB(t) {
   if (t.w) wMax = Math.min(wMax, t.w);
   return { x0: t.x - 3, y0: t.y - 3, x1: t.x + wMax + 6, y1: t.y + lines.length * t.size * 1.3 + 4 };
 }
+// Hit-tests a click against a text object's actual rendered line, not its full bounding box —
+// with a manually-widened wrap box (or short text in general), the box's empty space used to be
+// just as clickable as the text itself, making text boxes trigger-happy to select/enter-edit.
+function textHitTest(t, x, y) {
+  const lines = wrappedLines(t);
+  measureCtx.font = `${t.size}px ${fontCss(t)}`;
+  const lineH = t.size * 1.3;
+  const pad = 4;
+  if (y < t.y - pad || y > t.y + lines.length * lineH + pad) return false;
+  const row = Math.min(lines.length - 1, Math.max(0, Math.floor((y - t.y) / lineH)));
+  const lnW = Math.max(measureCtx.measureText(lines[row] || "").width, t.size * 0.3);
+  return x >= t.x - pad && x <= t.x + lnW + pad;
+}
 
 /* ============================================================================
    Rendering — antialiased variable-width ink on a high-DPI canvas
@@ -109,7 +122,7 @@ function line(x0, y0, x1, y1) { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(
 
 function strokeVisible(s) {
   const top = V.scroll, bot = V.scroll + CH / V.zoom;
-  return !s.del && s.bb && s.bb.y1 >= top && s.bb.y0 <= bot;
+  return !s.del && s.bb && s.bb.y1 >= top && s.bb.y0 <= bot && isLayerVisible(s.layer);
 }
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, p: (a.p + b.p) / 2 }; }
 
@@ -204,7 +217,7 @@ function drawStrokes(kind) {
 function drawImages() {
   const top = V.scroll, bot = V.scroll + CH / V.zoom;
   for (const im of doc.images) {
-    if (im.del || im.y > bot || im.y + im.h < top) continue;
+    if (im.del || im.y > bot || im.y + im.h < top || !isLayerVisible(im.layer)) continue;
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
     if (im.rot || im.flipX || im.flipY) {
       const ccx = sx(im.x + im.w / 2), ccy = sy(im.y + im.h / 2);
@@ -222,7 +235,7 @@ function drawImages() {
 
 function drawTexts() {
   for (const t of doc.texts) {
-    if (t.del || t.hidden) continue;
+    if (t.del || t.hidden || !isLayerVisible(t.layer)) continue;
     ctx.font = `${t.size * V.zoom}px ${fontCss(t)}`;
     // fontBoundingBoxAscent/Descent are measured relative to whatever textBaseline is CURRENTLY
     // set, not as absolute font metrics -- has to be read under "alphabetic" (ascent measured up
@@ -261,7 +274,7 @@ function drawTexts() {
 
 function drawTapes() {
   for (const t of doc.tapes) {
-    if (t.del) continue;
+    if (t.del || !isLayerVisible(t.layer)) continue;
     const x = sx(t.x), y = sy(t.y), w = t.w * V.zoom, h = t.h * V.zoom;
     if (!t.revealed) {
       ctx.fillStyle = "#FFD682";
@@ -286,7 +299,7 @@ function roundRect(x, y, w, h, r) {
 function timerObjResetWidth(t) { return Math.min(24, t.w * 0.28); }
 function drawTimerObjs() {
   for (const t of doc.timers) {
-    if (t.del) continue;
+    if (t.del || !isLayerVisible(t.layer)) continue;
     const x = sx(t.x), y = sy(t.y), w = t.w * V.zoom, h = t.h * V.zoom;
     const ms = t.mode === "down" ? timerObjRemainingMs(t) : timerObjElapsedMs(t);
     const done = t.mode === "down" && !t.running && t.durationMs > 0 && timerObjElapsedMs(t) >= t.durationMs;
@@ -417,7 +430,7 @@ function shapeHasImageTarget() {
   return doc.images.some(im => !im.del && imageOverlapsRect(im, b.x0, b.y0, b.x1, b.y1));
 }
 
-function buildSelToolbarContent(showItems, showShape) {
+function buildSelToolbarContent(showItems, showShape, editableImage) {
   const host = $("selToolbar");
   host.innerHTML = "";
   const mk = (label, fn, title) => {
@@ -434,6 +447,10 @@ function buildSelToolbarContent(showItems, showShape) {
     sepEl();
     mk("⧉", () => duplicateSelection(), "Duplicate (Ctrl+D)");
     mk("✕", () => deleteSelection(), "Delete");
+    if (editableImage) {
+      sepEl();
+      mk("✎ Edit", () => editGeneratedShape(editableImage), "Re-open this graph in the Math Shape Importer, same spot & size");
+    }
   }
   if (showShape) {
     if (showItems) sepEl();
@@ -441,7 +458,10 @@ function buildSelToolbarContent(showItems, showShape) {
     mk("🧹 Clear", () => clearShapeSelection(), "Clear this region");
   }
 }
-function buildSelToolbar() { buildSelToolbarContent(sel.items.length > 0, sel.shape && shapeHasImageTarget()); }
+function selEditableImage() {
+  return sel.items.length === 1 && sel.items[0].kind === "image" && sel.items[0].ref.shapeGen ? sel.items[0].ref : null;
+}
+function buildSelToolbar() { buildSelToolbarContent(sel.items.length > 0, sel.shape && shapeHasImageTarget(), selEditableImage()); }
 
 let selToolbarSig = "";
 function positionSelToolbar() {
@@ -449,8 +469,9 @@ function positionSelToolbar() {
   const showItems = sel.items.length > 0;
   const showShape = !!(sel.shape && shapeHasImageTarget());
   if ((!showItems && !showShape) || drag) { host.classList.remove("open"); return; }
-  const sig = `${showItems}|${showShape}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
-  if (sig !== selToolbarSig) { selToolbarSig = sig; buildSelToolbarContent(showItems, showShape); }
+  const editableImage = selEditableImage();
+  const sig = `${showItems}|${showShape}|${!!editableImage}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
+  if (sig !== selToolbarSig) { selToolbarSig = sig; buildSelToolbarContent(showItems, showShape, editableImage); }
   const b = selBounds() || shapeBounds(sel.shape);
   if (!b) { host.classList.remove("open"); return; }
   const left = (sx(b.x0) + sx(b.x1)) / 2;
