@@ -203,32 +203,58 @@ function buildTextFmtBar() {
   const sep1 = document.createElement("div"); sep1.className = "tfb-sep"; bar.appendChild(sep1);
 
   const sizeWrap = document.createElement("div"); sizeWrap.className = "tfb-size";
-  const SIZE_TITLE = "Font size — drag, type a value, or scroll over either control to nudge it";
+  const SIZE_TITLE = "Font size — drag, type a value, scroll to nudge it, or Ctrl+Enter to finish";
   const sizeRng = document.createElement("input");
   sizeRng.type = "range"; sizeRng.min = 8; sizeRng.max = 120; sizeRng.value = editingText.size;
   sizeRng.title = SIZE_TITLE;
   const sizeNum = document.createElement("input");
-  sizeNum.type = "number"; sizeNum.min = 6; sizeNum.max = 400; sizeNum.step = 1;
+  sizeNum.type = "number"; sizeNum.min = 1; sizeNum.max = 400; sizeNum.step = 1;
   sizeNum.value = editingText.size;
   sizeNum.title = SIZE_TITLE;
-  const clampSize = v => Math.max(6, Math.min(400, Math.round(v)));
-  // The range only covers a sane everyday span (8–120) — typing a bigger value still works via
-  // the number box, it just won't drag the slider thumb past its own end.
-  const syncSizeControls = v => { sizeNum.value = v; if (v >= +sizeRng.min && v <= +sizeRng.max) sizeRng.value = v; };
-  sizeRng.oninput = () => { const v = clampSize(+sizeRng.value); syncSizeControls(v); applyTextFmt({ size: v }); };
+  const clampSize = v => Math.max(1, Math.min(400, Math.round(v)));
+  // Only nudges the slider thumb — never overwrites the number box's own text. Typing "15"
+  // fires an input event after the "1" too, and forcing the box to display the clamped value
+  // right then (e.g. snapping a bare "1" up to some higher minimum) would stomp the "1" before
+  // the "5" keystroke ever lands, making it impossible to type any value whose leading digit(s)
+  // alone fall outside the allowed range.
+  const syncSlider = v => { if (v >= +sizeRng.min && v <= +sizeRng.max) sizeRng.value = v; };
+  sizeRng.oninput = () => { const v = clampSize(+sizeRng.value); syncSlider(v); sizeNum.value = v; applyTextFmt({ size: v }); };
   sizeNum.addEventListener("input", () => {
-    if (sizeNum.value === "") return; // mid-edit (e.g. just cleared it to retype) — don't commit yet
-    const v = clampSize(+sizeNum.value);
-    syncSizeControls(v);
+    const raw = sizeNum.value;
+    if (raw === "" || raw === "-") return; // mid-edit (e.g. cleared it to retype) — don't commit yet
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    const v = clampSize(n);
+    syncSlider(v);
     applyTextFmt({ size: v });
   });
-  // Leaving the box empty/invalid and clicking away shouldn't silently leave the text un-sized —
-  // snap the displayed number back to whatever size is actually still in effect.
-  sizeNum.addEventListener("blur", () => { sizeNum.value = editingText.size; });
+  // Leaving the box empty/invalid/out-of-range and clicking away shouldn't silently leave the
+  // text mis-sized — reformat the displayed number to whatever size is actually still in effect.
+  // Committing (Ctrl+Enter, or clicking away entirely) closes the box first and clears
+  // editingText before this blur fires, so there may be nothing left to reformat against.
+  sizeNum.addEventListener("blur", () => { if (editingText) sizeNum.value = editingText.size; });
+  sizeNum.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      // Same "I'm done" shortcut as the text box itself, usable without first clicking back
+      // into the text to reach it.
+      e.preventDefault();
+      commitTextEdit();
+    }
+  });
   const onSizeWheel = e => {
+    if (!editingText) return;
     e.preventDefault();
+    // Stop this at the toolbar — canvasWrap has its own unconditional wheel handler (pan/zoom)
+    // that doesn't check e.defaultPrevented, so without this a scroll meant for the size control
+    // also scrolls/zooms the page underneath it. stopPropagation() also means it never reaches the
+    // bar-level "busy" listener below, so the busy flag is set right here instead.
+    e.stopPropagation();
+    textFmtBarBusy = true;
+    clearTimeout(textFmtBarWheelTimer);
+    textFmtBarWheelTimer = setTimeout(() => { textFmtBarBusy = false; }, 250);
     const v = clampSize(editingText.size + (e.deltaY < 0 ? 1 : -1));
-    syncSizeControls(v);
+    syncSlider(v);
+    sizeNum.value = v;
     applyTextFmt({ size: v });
   };
   sizeRng.addEventListener("wheel", onSizeWheel, { passive: false });
@@ -260,13 +286,33 @@ function buildTextFmtBar() {
 }
 function positionTextFmtBar() {
   const bar = $("textFmtBar");
-  const left = textEdit.offsetLeft + textEdit.offsetWidth / 2;
+  // canvasWrap clips anything outside it (overflow: hidden) — without clamping, a box near the
+  // left/right edge of the screen centers the bar partway off the visible area, leaving it
+  // unreachable until the box is moved or the view is zoomed out.
+  const half = bar.offsetWidth / 2;
+  let left = textEdit.offsetLeft + textEdit.offsetWidth / 2;
+  left = Math.max(half + 4, Math.min(wrap.clientWidth - half - 4, left));
   const above = textEdit.offsetTop - 44;
-  const top = above > 4 ? above : textEdit.offsetTop + textEdit.offsetHeight + 8;
+  let top = above > 4 ? above : textEdit.offsetTop + textEdit.offsetHeight + 8;
+  top = Math.max(4, Math.min(wrap.clientHeight - bar.offsetHeight - 4, top));
   bar.style.left = Math.round(left) + "px";
   bar.style.top = Math.round(top) + "px";
 }
 function hideTextFmtBar() { $("textFmtBar").classList.remove("open"); }
+// Set while any control inside the toolbar (currently: the size slider/number box) is being
+// actively dragged or scrolled — see the frame() loop in render.js, which skips re-centering the
+// bar during this window so a width-changing edit (e.g. the size slider) can't shift the bar out
+// from under the very control the user is dragging. The wheel side is armed directly in
+// onSizeWheel (its own stopPropagation() would otherwise keep a bar-level wheel listener from
+// ever seeing the event); this listener only needs to cover pointer drags on the slider thumb.
+let textFmtBarBusy = false;
+let textFmtBarWheelTimer = null;
+(() => {
+  const bar = $("textFmtBar");
+  bar.addEventListener("pointerdown", () => { textFmtBarBusy = true; });
+  addEventListener("pointerup", () => { textFmtBarBusy = false; });
+  addEventListener("pointercancel", () => { textFmtBarBusy = false; });
+})();
 
 /* ---------------- text box resize handle ---------------- */
 function positionTextResizeHandle() {

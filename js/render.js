@@ -666,10 +666,12 @@ function frame() {
   if (audio.playing || audio.rec) { needsDraw = true; syncStatus(); }
   if (tickTimerObjs()) needsDraw = true;
   positionSelToolbar();
-  // While actively dragging the resize handle, the format toolbar (font/size/color) stays put
-  // instead of re-centering itself over the box on every frame as the width changes under it —
-  // it snaps back to its correct centered position the instant the drag ends.
-  if (editingText) { if (!textResizeDrag) positionTextFmtBar(); positionTextResizeHandle(); }
+  // While actively dragging the resize handle, OR while a control inside the format toolbar
+  // itself is being dragged (the size slider changes the box's width, which would otherwise
+  // re-center the bar out from under the very thumb the user is dragging), the toolbar stays put
+  // instead of re-centering itself over the box every frame — it snaps back to its correct
+  // centered position the instant the interaction ends.
+  if (editingText) { if (!textResizeDrag && !textFmtBarBusy) positionTextFmtBar(); positionTextResizeHandle(); }
   requestAnimationFrame(frame);
 }
 
