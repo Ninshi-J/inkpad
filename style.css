@@ -280,6 +280,15 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
   background: #fff; cursor: pointer; color: var(--ink); line-height: 1;
 }
 #textFmtBar .tfb-math:hover, #textFmtBar .tfb-math.active { background: var(--accent-soft); border-color: var(--accent); }
+#textFmtBar .tfb-fmt { display: flex; gap: 3px; }
+#textFmtBar .tfb-fmt button {
+  font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; cursor: pointer; color: var(--ink); line-height: 1; min-width: 24px;
+}
+#textFmtBar .tfb-fmt button:hover { background: var(--chrome-2); }
+#textFmtBar .tfb-fmt-b { font-weight: 700; }
+#textFmtBar .tfb-fmt-i { font-style: italic; }
+#textFmtBar .tfb-fmt-u { text-decoration: underline; }
 
 /* Math-snippet inserter, opened from #textFmtBar's "∑" button — a static (not per-open-rebuilt)
    fixed-position popup, same click-outside-to-close mechanics as #fileMenu/#colorPop. Deliberately

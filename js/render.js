@@ -233,10 +233,15 @@ function drawImages() {
   }
 }
 
+// Builds a canvas font string for a text object's base font at a given bold/italic combination --
+// used by drawTexts() to switch fonts per formatting run without duplicating this each time.
+function textRunFont(t, bold, italic) {
+  return `${italic ? "italic " : ""}${bold ? "700 " : ""}${t.size * V.zoom}px ${fontCss(t)}`;
+}
 function drawTexts() {
   for (const t of doc.texts) {
     if (t.del || t.hidden || !isLayerVisible(t.layer)) continue;
-    ctx.font = `${t.size * V.zoom}px ${fontCss(t)}`;
+    ctx.font = textRunFont(t, false, false);
     // fontBoundingBoxAscent/Descent are measured relative to whatever textBaseline is CURRENTLY
     // set, not as absolute font metrics -- has to be read under "alphabetic" (ascent measured up
     // from the real baseline) before switching to "top" for the actual fillText/drawImage calls
@@ -246,16 +251,35 @@ function drawTexts() {
     ctx.textBaseline = "top";
     wrappedLines(t).forEach((ln, i) => {
       const y = sy(t.y + i * t.size * 1.3);
-      if (!lineHasMath(ln)) { ctx.fillStyle = t.color; ctx.fillText(ln, sx(t.x), y); return; }
+      if (!lineHasMath(ln) && !lineHasFormatting(ln)) {
+        ctx.font = textRunFont(t, false, false);
+        ctx.fillStyle = t.color;
+        ctx.fillText(ln, sx(t.x), y);
+        return;
+      }
       let x = sx(t.x);
       for (const run of splitMathRuns(ln)) {
         if (run.text !== undefined) {
-          ctx.fillStyle = t.color;
-          ctx.fillText(run.text, x, y);
-          x += ctx.measureText(run.text).width;
+          for (const fr of splitFormatRuns(run.text)) {
+            ctx.font = textRunFont(t, fr.bold, fr.italic);
+            ctx.fillStyle = t.color;
+            ctx.fillText(fr.text, x, y);
+            const w = ctx.measureText(fr.text).width;
+            if (fr.underline) {
+              // Canvas has no native underline -- a manual stroke just below the descender line,
+              // scaled with font size so it doesn't look like a hairline on large text or a thick
+              // slab on small text.
+              ctx.strokeStyle = t.color;
+              ctx.lineWidth = Math.max(1, t.size * V.zoom * 0.06);
+              const uy = y + ascent + t.size * V.zoom * 0.1;
+              line(x, uy, x + w, uy);
+            }
+            x += w;
+          }
           continue;
         }
-        const span = getMathSpan(run.math, t.size, t.color);
+        ctx.font = textRunFont(t, false, false); // reset -- a preceding formatted run may have left bold/italic set
+        const span = getMathSpan(run.math, mathSizePx(t.size), t.color);
         if (span && span.img && !span.failed) {
           const dw = span.w * V.zoom, dh = span.h * V.zoom;
           ctx.drawImage(span.img, x, y + ascent + span.baselineOffset * V.zoom, dw, dh);

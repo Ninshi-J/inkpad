@@ -46,6 +46,14 @@ let pencilOnly = false;
 function loadPencilOnlyPref() { pencilOnly = localStorage.getItem("inkpad.pencilOnly") === "1"; }
 function savePencilOnlyPref() { try { localStorage.setItem("inkpad.pencilOnly", pencilOnly ? "1" : "0"); } catch (_) {} }
 
+// Same device/user-preference reasoning as pencilOnly above. On by default (matches how the app
+// already behaved before this toggle existed) -- turning it off makes every stroke a flat medium
+// width regardless of actual stylus pressure (see evtWorld(), js/input.js), for anyone who finds
+// pressure-varying line width inconsistent or just doesn't want it.
+let pressureEnabled = true;
+function loadPressurePref() { pressureEnabled = localStorage.getItem("inkpad.pressureEnabled") !== "0"; }
+function savePressurePref() { try { localStorage.setItem("inkpad.pressureEnabled", pressureEnabled ? "1" : "0"); } catch (_) {} }
+
 function cycleColor(dir) {
   const pal = paletteFor(V.tool);
   const i = pal.indexOf(V.colorHex);
@@ -187,6 +195,11 @@ function wireFileMenu() {
   const pencilChk = $("fmPencilOnly");
   pencilChk.checked = pencilOnly;
   pencilChk.onchange = () => { pencilOnly = pencilChk.checked; savePencilOnlyPref(); };
+
+  loadPressurePref();
+  const pressureChk = $("fmPressureEnabled");
+  pressureChk.checked = pressureEnabled;
+  pressureChk.onchange = () => { pressureEnabled = pressureChk.checked; savePressurePref(); };
 }
 
 let remapping = null;

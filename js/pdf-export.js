@@ -52,14 +52,26 @@ async function exportPdf(pages) {
 
   const pdfDoc = await PDFDocument.create();
   const helv = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  // All three of these are standard 14 PDF fonts — no embedding cost, always available in any
-  // PDF viewer — so it's cheap to have all of them ready rather than embedding on first use.
+  // All of these are standard 14 PDF fonts — no embedding cost, always available in any PDF
+  // viewer — so it's cheap to have every bold/italic variant ready rather than embedding on
+  // first use. Keyed [family][bold][italic] so pdfFontFor() below can pick the right one for
+  // whatever a [b]/[i] run (see splitFormatRuns, js/math-typeset.js) needs.
   const pdfFonts = {
-    Helvetica: helv,
-    TimesRoman: await pdfDoc.embedFont(StandardFonts.TimesRoman),
-    Courier: await pdfDoc.embedFont(StandardFonts.Courier),
+    Helvetica: {
+      false: { false: helv, true: await pdfDoc.embedFont(StandardFonts.HelveticaOblique) },
+      true: { false: await pdfDoc.embedFont(StandardFonts.HelveticaBold), true: await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique) },
+    },
+    TimesRoman: {
+      false: { false: await pdfDoc.embedFont(StandardFonts.TimesRoman), true: await pdfDoc.embedFont(StandardFonts.TimesRomanItalic) },
+      true: { false: await pdfDoc.embedFont(StandardFonts.TimesRomanBold), true: await pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic) },
+    },
+    Courier: {
+      false: { false: await pdfDoc.embedFont(StandardFonts.Courier), true: await pdfDoc.embedFont(StandardFonts.CourierOblique) },
+      true: { false: await pdfDoc.embedFont(StandardFonts.CourierBold), true: await pdfDoc.embedFont(StandardFonts.CourierBoldOblique) },
+    },
   };
-  const pdfFontFor = t => pdfFonts[(FONT_STACKS[t.font] || FONT_STACKS[DEFAULT_FONT_KEY]).pdf];
+  const pdfFontFor = (t, bold = false, italic = false) =>
+    pdfFonts[(FONT_STACKS[t.font] || FONT_STACKS[DEFAULT_FONT_KEY]).pdf][bold][italic];
   // Mirrors wrapParagraph()'s greedy word-wrap but measures with pdf-lib's font metrics instead
   // of a canvas context, and operates on the already WinAnsi-sanitized text (the substituted
   // ASCII stand-ins for e.g. "θ" render at a different width than the glyph they replace).
@@ -236,18 +248,32 @@ async function exportPdf(pages) {
         // textBaseline:"top" canvas rendering exactly; + size*ascent converts that top position
         // into this font's actual baseline, which is what PDF text drawing positions from.
         const baseline = t.y + k * t.size * 1.3 + t.size * ascent;
-        if (!lineHasMath(ln)) {
+        if (!lineHasMath(ln) && !lineHasFormatting(ln)) {
           page.drawText(ln, { x: X(t.x), y: Y(baseline), size: t.size * PT, font, color: rgb(r, g, b) });
           continue;
         }
         let curX = t.x; // world-space cursor, same units as t.x
         for (const run of splitMathRuns(ln)) {
           if (run.text !== undefined) {
-            page.drawText(run.text, { x: X(curX), y: Y(baseline), size: t.size * PT, font, color: rgb(r, g, b) });
-            curX += font.widthOfTextAtSize(run.text, t.size);
+            for (const fr of splitFormatRuns(run.text)) {
+              const frFont = pdfFontFor(t, fr.bold, fr.italic);
+              page.drawText(fr.text, { x: X(curX), y: Y(baseline), size: t.size * PT, font: frFont, color: rgb(r, g, b) });
+              const w = frFont.widthOfTextAtSize(fr.text, t.size);
+              if (fr.underline) {
+                // No native underline in pdf-lib's drawText -- a thin rectangle just below the
+                // baseline, same idea as the manual stroke drawTexts() (render.js) already draws
+                // on canvas for the same reason. drawRectangle anchors its bottom-left corner with
+                // height extending toward smaller world-y (up the page), so the anchor needs to be
+                // the stroke's BOTTOM edge in world space (baseline + offset + thickness), not its top.
+                const thickness = Math.max(0.6, t.size * 0.05);
+                const strokeBottomWorld = baseline + t.size * 0.08 + thickness;
+                page.drawRectangle({ x: X(curX), y: Y(strokeBottomWorld), width: w * PT, height: thickness * PT, color: rgb(r, g, b) });
+              }
+              curX += w;
+            }
             continue;
           }
-          const span = await getMathSpanAsync(run.math, t.size, t.color);
+          const span = await getMathSpanAsync(run.math, mathSizePx(t.size), t.color);
           if (span && span.dataURL && !span.failed) {
             const pngImg = await getMathPdfImage(span);
             const imgBottomWorld = baseline + span.baselineOffset + span.h;
@@ -361,18 +387,23 @@ async function svgTextEl(t, top) {
     const ln = lines[k];
     if (!ln) continue;
     const baseline = t.y - top + k * t.size * 1.3 + t.size * ascent;
-    if (!lineHasMath(ln)) {
+    if (!lineHasMath(ln) && !lineHasFormatting(ln)) {
       out += `<text x="${t.x}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(ln)}</text>\n`;
       continue;
     }
     let curX = t.x;
     for (const run of splitMathRuns(ln)) {
       if (run.text !== undefined) {
-        out += `<text x="${curX}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(run.text)}</text>\n`;
-        curX += measureCtx.measureText(run.text).width;
+        for (const fr of splitFormatRuns(run.text)) {
+          const style = `${fr.bold ? ' font-weight="bold"' : ""}${fr.italic ? ' font-style="italic"' : ""}${fr.underline ? ' text-decoration="underline"' : ""}`;
+          out += `<text x="${curX}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}"${style}>${escapeXml(fr.text)}</text>\n`;
+          measureCtx.font = `${fr.italic ? "italic " : ""}${fr.bold ? "bold " : ""}${t.size}px ${fontCss(t)}`;
+          curX += measureCtx.measureText(fr.text).width;
+        }
         continue;
       }
-      const span = await getMathSpanAsync(run.math, t.size, t.color);
+      measureCtx.font = `${t.size}px ${fontCss(t)}`; // reset -- a preceding formatted run may have left bold/italic set
+      const span = await getMathSpanAsync(run.math, mathSizePx(t.size), t.color);
       if (span && span.dataURL && !span.failed) {
         const imgTop = baseline + span.baselineOffset;
         out += `<image href="${span.dataURL}" xlink:href="${span.dataURL}" x="${curX}" y="${imgTop}" width="${span.w}" height="${span.h}"/>\n`;

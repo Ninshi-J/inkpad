@@ -5,7 +5,11 @@ function evtPos(e) {
 }
 function evtWorld(e) {
   const { px, py } = evtPos(e);
-  return { x: wx(px), y: wy(py), p: e.pressure && e.pressure > 0 ? e.pressure : 0.5 };
+  // With pressureEnabled off (File menu), every point reports the same neutral 0.5 regardless of
+  // actual stylus pressure -- same fallback value already used for pressure-less input (mouse,
+  // touch), which is what makes those draw at a flat medium width today.
+  const p = pressureEnabled && e.pressure && e.pressure > 0 ? e.pressure : 0.5;
+  return { x: wx(px), y: wy(py), p };
 }
 
 cv.addEventListener("pointerdown", e => {

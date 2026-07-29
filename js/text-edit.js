@@ -186,6 +186,38 @@ function applyTextFmt(patch) {
   if (patch.font !== undefined || patch.size !== undefined) { syncTextEditAutoWidth(); syncTextEditRows(); }
   needsDraw = true;
 }
+// Bold/italic/underline — toggled by wrapping/unwrapping "[b]"/"[i]"/"[u]" tags around the
+// current selection (see splitFormatRuns in js/math-typeset.js for how these get parsed back out
+// for rendering). With no selection -- including the common "textbox is still empty" case, since
+// an empty box trivially has no selection either -- an empty tag pair is inserted at the cursor
+// instead, so whatever gets typed next lands inside it already formatted, same idea as clicking
+// Bold in a word processor before typing rather than after.
+function toggleInlineFormat(tag) {
+  if (!editingText) return;
+  const ta = textEdit;
+  const open = `[${tag}]`, close = `[/${tag}]`;
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  if (s === e) {
+    ta.value = ta.value.slice(0, s) + open + close + ta.value.slice(s);
+    ta.selectionStart = ta.selectionEnd = s + open.length;
+  } else {
+    const before = ta.value.slice(Math.max(0, s - open.length), s);
+    const after = ta.value.slice(e, e + close.length);
+    if (before === open && after === close) {
+      // Exactly wrapped already at this boundary -- unwrap rather than nesting another layer.
+      ta.value = ta.value.slice(0, s - open.length) + ta.value.slice(s, e) + ta.value.slice(e + close.length);
+      ta.selectionStart = s - open.length;
+      ta.selectionEnd = e - open.length;
+    } else {
+      const selected = ta.value.slice(s, e);
+      ta.value = ta.value.slice(0, s) + open + selected + close + ta.value.slice(e);
+      ta.selectionStart = s + open.length;
+      ta.selectionEnd = s + open.length + selected.length;
+    }
+  }
+  ta.dispatchEvent(new Event("input"));
+  ta.focus();
+}
 function buildTextFmtBar() {
   const bar = $("textFmtBar");
   bar.innerHTML = "";
@@ -264,6 +296,18 @@ function buildTextFmtBar() {
   bar.appendChild(sizeWrap);
 
   const sep2 = document.createElement("div"); sep2.className = "tfb-sep"; bar.appendChild(sep2);
+
+  const fmtWrap = document.createElement("div"); fmtWrap.className = "tfb-fmt";
+  [["b", "B", "Bold"], ["i", "I", "Italic"], ["u", "U", "Underline"]].forEach(([tag, label, title]) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = `tfb-fmt-${tag}`; b.textContent = label;
+    b.title = `${title} — applies to the selection, or to whatever you type next if nothing's selected`;
+    b.onclick = () => toggleInlineFormat(tag);
+    fmtWrap.appendChild(b);
+  });
+  bar.appendChild(fmtWrap);
+
+  const sep2b = document.createElement("div"); sep2b.className = "tfb-sep"; bar.appendChild(sep2b);
 
   const swWrap = document.createElement("div"); swWrap.className = "tfb-swatches";
   PALETTE.forEach(c => {
