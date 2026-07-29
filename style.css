@@ -275,6 +275,34 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
 #textFmtBar .tfb-swatches { display: flex; gap: 4px; align-items: center; }
 #textFmtBar .swatch { width: 18px; height: 18px; }
 #textFmtBar .tfb-sep { width: 1px; align-self: stretch; margin: 2px 0; background: var(--line); }
+#textFmtBar .tfb-math {
+  font-size: 15px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; cursor: pointer; color: var(--ink); line-height: 1;
+}
+#textFmtBar .tfb-math:hover, #textFmtBar .tfb-math.active { background: var(--accent-soft); border-color: var(--accent); }
+
+/* Math-snippet inserter, opened from #textFmtBar's "∑" button — a static (not per-open-rebuilt)
+   fixed-position popup, same click-outside-to-close mechanics as #fileMenu/#colorPop. Deliberately
+   NOT a <dialog> — showModal() would steal focus from #textEdit, and this needs to stay usable
+   (click a snippet, keep typing) without ending the text-edit session it was opened from. */
+.math-helper {
+  position: fixed; z-index: 43; display: none;
+  background: var(--chrome); border: 1px solid var(--line); border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(50,45,35,.22); padding: 8px 10px;
+  width: 240px; max-height: min(70vh, 480px); overflow-y: auto;
+}
+.math-helper.open { display: block; }
+.math-helper .mh-cat {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .02em;
+  color: var(--ink-soft); margin: 10px 0 5px;
+}
+.math-helper .mh-cat:first-child { margin-top: 0; }
+.math-helper .mh-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.math-helper .mh-grid button {
+  font-size: 14px; padding: 6px 2px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; cursor: pointer; color: var(--ink);
+}
+.math-helper .mh-grid button:hover { background: var(--accent-soft); border-color: var(--accent); }
 
 /* ---------- dialogs ---------- */
 dialog {

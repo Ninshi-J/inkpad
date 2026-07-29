@@ -992,6 +992,51 @@
 <input type="file" id="fileImg" accept="image/*" multiple hidden>
 <input type="file" id="filePdf" accept="application/pdf" multiple hidden>
 <div id="colorPop"></div>
+<div id="mathHelperPanel" class="math-helper">
+  <div class="mh-cat">Fractions &amp; powers</div>
+  <div class="mh-grid">
+    <button type="button" data-tpl="\frac{$1}{}" title="\frac{a}{b}">a⁄b</button>
+    <button type="button" data-tpl="^{$1}" title="x^{n}">x²</button>
+    <button type="button" data-tpl="_{$1}" title="x_{n}">x₁</button>
+    <button type="button" data-tpl="_{$1}^{}" title="x_{i}^{n}">x₁²</button>
+    <button type="button" data-tpl="\sqrt{$1}" title="\sqrt{x}">√x</button>
+    <button type="button" data-tpl="\sqrt[$1]{}" title="\sqrt[n]{x}">ⁿ√x</button>
+  </div>
+  <div class="mh-cat">Operators &amp; comparisons</div>
+  <div class="mh-grid">
+    <button type="button" data-tpl="\cdot" title="\cdot">·</button>
+    <button type="button" data-tpl="\div" title="\div">÷</button>
+    <button type="button" data-tpl="\pm" title="\pm">±</button>
+    <button type="button" data-tpl="\neq" title="\neq">≠</button>
+    <button type="button" data-tpl="\approx" title="\approx">≈</button>
+    <button type="button" data-tpl="\leq" title="\leq">≤</button>
+    <button type="button" data-tpl="\geq" title="\geq">≥</button>
+  </div>
+  <div class="mh-cat">Greek &amp; symbols</div>
+  <div class="mh-grid">
+    <button type="button" data-tpl="\pi" title="\pi">π</button>
+    <button type="button" data-tpl="\theta" title="\theta">θ</button>
+    <button type="button" data-tpl="\alpha" title="\alpha">α</button>
+    <button type="button" data-tpl="\Delta" title="\Delta">Δ</button>
+    <button type="button" data-tpl="\infty" title="\infty">∞</button>
+    <button type="button" data-tpl="^\circ" title="^\circ">°</button>
+  </div>
+  <div class="mh-cat">Calculus</div>
+  <div class="mh-grid">
+    <button type="button" data-tpl="\sum_{$1}^{}" title="\sum_{i=1}^{n}">Σ</button>
+    <button type="button" data-tpl="\prod_{$1}^{}" title="\prod_{i=1}^{n}">Π</button>
+    <button type="button" data-tpl="\int_{$1}^{} \, dx" title="\int_a^b \, dx">∫</button>
+    <button type="button" data-tpl="\lim_{$1 \to }" title="\lim_{x \to a}">lim</button>
+  </div>
+  <div class="mh-cat">Structures</div>
+  <div class="mh-grid">
+    <button type="button" data-tpl="\vec{$1}" title="\vec{v}">v⃗</button>
+    <button type="button" data-tpl="\lvert $1 \rvert" title="\lvert x \rvert">|x|</button>
+    <button type="button" data-tpl="\overline{$1}" title="\overline{AB} — segment AB">A̅B̅</button>
+    <button type="button" data-tpl="\overleftrightarrow{$1}" title="\overleftrightarrow{AB} — line AB">A⟷B</button>
+    <button type="button" data-tpl="\begin{pmatrix} $1 & \\ & \end{pmatrix}" title="2×2 matrix">⌈⌉</button>
+  </div>
+</div>
 <div id="fileMenu" class="tb-menu">
   <button type="button" id="fmImage">Image</button>
   <button type="button" id="fmPdfIn">PDF in</button>

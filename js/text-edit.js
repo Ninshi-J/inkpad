@@ -132,6 +132,7 @@ function closeTextEditUI() {
   textEdit.classList.remove("wrap");
   if (textEditResizeObs) { textEditResizeObs.disconnect(); textEditResizeObs = null; }
   hideTextFmtBar();
+  closeMathHelper();
   textResizeHandleEl.classList.remove("open");
   endTextResizeDrag();
   t.hidden = false;
@@ -282,6 +283,14 @@ function buildTextFmtBar() {
   swWrap.appendChild(colorInp);
   bar.appendChild(swWrap);
 
+  const sep3 = document.createElement("div"); sep3.className = "tfb-sep"; bar.appendChild(sep3);
+
+  const mathBtn = document.createElement("button");
+  mathBtn.className = "tfb-math"; mathBtn.type = "button"; mathBtn.textContent = "∑";
+  mathBtn.title = "Insert math symbols & structures ($...$ via KaTeX)";
+  mathBtn.onclick = e => toggleMathHelper(e.currentTarget);
+  bar.appendChild(mathBtn);
+
   bar.classList.add("open");
 }
 function positionTextFmtBar() {
@@ -299,6 +308,86 @@ function positionTextFmtBar() {
   bar.style.top = Math.round(top) + "px";
 }
 function hideTextFmtBar() { $("textFmtBar").classList.remove("open"); }
+
+/* ---------------- math snippet helper ($...$ via KaTeX, see js/math-typeset.js) ---------------- */
+// True when the cursor sits inside an already-open "$...$" run on its current line -- counts
+// unescaped "$" from the start of that line up to the cursor, same alternating-run logic
+// splitMathRuns() (math-typeset.js) uses to parse a line for rendering, so this always agrees
+// with how the line will actually be interpreted.
+function isCursorInsideMathRun(text, pos) {
+  const lineStart = text.lastIndexOf("\n", pos - 1) + 1;
+  const line = text.slice(lineStart, pos);
+  let count = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "\\" && line[i + 1] === "$") { i++; continue; }
+    if (line[i] === "$") count++;
+  }
+  return count % 2 === 1;
+}
+// Inserts a snippet template at the cursor (replacing any current selection). A template
+// containing "$1" is a "fill this in" construct -- the selected text (if any) becomes its
+// argument and the cursor lands at the very end of the finished snippet, ready to keep typing
+// after it; with no selection, the cursor instead lands at $1's own position, ready to type the
+// argument in. A template without "$1" is a plain symbol, inserted at/in place of the cursor/
+// selection with the cursor landing right after it. Only ONE such position is ever tracked (a
+// plain <textarea> has just one cursor) -- multi-argument constructs like \frac's second argument
+// are left as empty {} for the user to click into themselves.
+function insertMathSnippet(tpl) {
+  if (!editingText) return;
+  const ta = textEdit;
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  const selected = ta.value.slice(s, e);
+  let body, cursorInBody;
+  const idx = tpl.indexOf("$1");
+  if (idx === -1) {
+    body = tpl;
+    cursorInBody = body.length;
+  } else if (selected) {
+    body = tpl.slice(0, idx) + selected + tpl.slice(idx + 2);
+    cursorInBody = body.length;
+  } else {
+    body = tpl.slice(0, idx) + tpl.slice(idx + 2);
+    cursorInBody = idx;
+  }
+  // Only wrap in fresh "$...$" delimiters when not already inside a math run -- pulling up the
+  // helper mid-formula (e.g. to add a fraction inside a bigger expression) should just insert the
+  // raw LaTeX there, not start a nested/separate one.
+  const wrap = !isCursorInsideMathRun(ta.value, s);
+  const insert = wrap ? "$" + body + "$" : body;
+  // Landing at the very end of `body` (nothing left inside this construct to type) lands past the
+  // closing "$" too, not just inside it -- free to continue with plain text right after instead of
+  // being stuck having to add more to the same formula. Landing mid-body (an empty $1 waiting to
+  // be typed into) stays inside the wrap, offset by the opening "$" if one was added.
+  const atEnd = cursorInBody === body.length;
+  const cursorPos = s + (atEnd ? insert.length : (wrap ? 1 : 0) + cursorInBody);
+  ta.value = ta.value.slice(0, s) + insert + ta.value.slice(e);
+  ta.selectionStart = ta.selectionEnd = cursorPos;
+  ta.dispatchEvent(new Event("input"));
+  closeMathHelper();
+  ta.focus();
+}
+function toggleMathHelper(btnEl) {
+  const panel = $("mathHelperPanel");
+  if (panel.classList.contains("open")) { closeMathHelper(); return; }
+  const r = btnEl.getBoundingClientRect();
+  panel.style.left = Math.round(Math.min(r.left, innerWidth - 250)) + "px";
+  panel.style.top = Math.round(r.bottom + 4) + "px";
+  panel.classList.add("open");
+  btnEl.classList.add("active");
+  setTimeout(() => addEventListener("pointerdown", mathHelperOutside, true), 0);
+}
+function closeMathHelper() {
+  $("mathHelperPanel").classList.remove("open");
+  document.querySelectorAll("#textFmtBar .tfb-math.active").forEach(b => b.classList.remove("active"));
+  removeEventListener("pointerdown", mathHelperOutside, true);
+}
+function mathHelperOutside(e) {
+  if (!$("mathHelperPanel").contains(e.target) && !e.target.closest(".tfb-math")) closeMathHelper();
+}
+$("mathHelperPanel").addEventListener("click", e => {
+  const b = e.target.closest("button[data-tpl]");
+  if (b) insertMathSnippet(b.dataset.tpl);
+});
 // Set while any control inside the toolbar (currently: the size slider/number box) is being
 // actively dragged or scrolled — see the frame() loop in render.js, which skips re-centering the
 // bar during this window so a width-changing edit (e.g. the size slider) can't shift the bar out
