@@ -642,6 +642,11 @@ function wireScrollbar(track, thumb, axis, set, max, clampFn) {
 
   let pid = null, grabOffset = 0;
   thumb.addEventListener("pointerdown", e => {
+    // Touch is excluded: these thin (13px) tracks sit right on the canvas edge, so a finger
+    // panning the canvas there (see "only draw with a stylus" mode) would otherwise land on the
+    // scrollbar instead and jump/drag it rather than panning. Mouse and pen still get precise
+    // fine-scroll control.
+    if (e.pointerType === "touch") return;
     e.stopPropagation(); e.preventDefault();
     pid = e.pointerId;
     try { thumb.setPointerCapture(pid); } catch (_) {}
@@ -671,6 +676,7 @@ function wireScrollbar(track, thumb, axis, set, max, clampFn) {
   // Clicking the track itself (not the thumb) jumps straight to that position, thumb centered
   // under the click — standard scrollbar-track behavior.
   track.addEventListener("pointerdown", e => {
+    if (e.pointerType === "touch") return;
     if (e.target === thumb) return;
     const trackRect = track.getBoundingClientRect();
     const span = rectSize(trackRect) - size(thumb);
