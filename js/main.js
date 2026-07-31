@@ -15,8 +15,11 @@ function syncStatus() {
   else if (audio.totalMs) a = `Audio ${fmtT(audio.posMs)} / ${fmtT(audio.totalMs)}`;
   $("stAudio").textContent = a;
   const sv = $("stVideo");
+  const vlevel = videoRecStatusLevel();
   sv.textContent = videoRecStatusText();
-  sv.classList.toggle("live", videoRecActive());
+  sv.classList.toggle("live", vlevel === "live");
+  sv.classList.toggle("warn", vlevel === "warn");
+  sv.title = videoRecStatusTitle();
   sv.style.cursor = videoRecPending() ? "pointer" : "";
   // Only one of these exists at a time (docked vs. popped-out toolbar). Lit here rather
   // than in syncUI() because this is what actually re-runs while a recording is live.
@@ -68,7 +71,12 @@ function syncUI() {
   needsDraw = true;
 }
 
-addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+// A canvas recording — in progress, or finished but not yet downloaded — exists only in
+// memory, so a reload takes it with no way back. Worth the same "are you sure" as unsaved
+// ink, and more urgently: notebooks at least autosave, a lost lesson recording is just gone.
+addEventListener("beforeunload", e => {
+  if (dirty || videoRecActive() || videoRecPending()) { e.preventDefault(); e.returnValue = ""; }
+});
 
 /* ---------------- boot ---------------- */
 loadKeymap();

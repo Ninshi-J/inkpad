@@ -226,6 +226,21 @@ function videoRecStatusText() {
   return "";
 }
 
+// MediaRecorder holds every chunk in memory until stop, so a long recording is real
+// pressure on the tab — and on an iPad, hitting the limit kills the tab and the whole
+// recording with it. Past this the readout goes amber: the size is already on screen,
+// but a number ticking upward means nothing without a point where it starts to matter.
+const VIDEO_SIZE_WARN_BYTES = 500 * 1024 * 1024;
+function videoRecStatusLevel() {
+  if (!vidrec.rec) return "";
+  return vidrec.bytes > VIDEO_SIZE_WARN_BYTES ? "warn" : "live";
+}
+function videoRecStatusTitle() {
+  if (videoRecStatusLevel() === "warn") return "This recording is getting large — consider stopping and saving it, then starting a new one.";
+  if (vidrec.blob) return "Click to reopen the last recording";
+  return "";
+}
+
 /* ---------------- preview / save dialog ---------------- */
 // Same lazy element-reuse wiring as promptDialog (js/dialogs.js) — no boot-time
 // setup needed, handlers are (re)bound each time it opens.
