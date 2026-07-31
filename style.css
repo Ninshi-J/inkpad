@@ -224,6 +224,7 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
 #stPage:hover { color: var(--ink); text-decoration: underline; }
 #recDot { width: 8px; height: 8px; border-radius: 50%; background: var(--record); display: none; animation: pulse 1.1s infinite; }
 @keyframes pulse { 50% { opacity: .25; } }
+#stVideo.live { color: var(--record); font-weight: 600; animation: pulse 1.6s infinite; }
 #savedDot { color: var(--accent); }
 
 /* ---------- text editing overlay ---------- */
@@ -318,6 +319,13 @@ dialog {
   border: 1px solid var(--line); border-radius: 14px; background: var(--chrome);
   color: var(--ink); box-shadow: 0 20px 60px rgba(40,35,25,.3);
   padding: 22px 26px; max-width: 560px; width: min(560px, 92vw);
+  /* Explicit, because the `* { margin: 0 }` reset at the top of this file also hits
+     <dialog> and silently cancels the UA stylesheet's own `margin: auto` — which is
+     the only thing centering a modal in its viewport-sized containing block. Without
+     this every dialog in the app renders jammed into the top-left corner.
+     #shapeImporterDlg/#stampDlg below deliberately re-pin themselves top-right. */
+  margin: auto;
+  max-height: calc(100vh - 32px);
 }
 dialog::backdrop { background: rgba(50,45,35,.35); }
 #shapeImporterDlg, #stampDlg { position: fixed; top: 54px; right: 14px; left: auto; margin: 0; max-height: calc(100vh - 74px); overflow-y: auto; }
@@ -444,7 +452,7 @@ kbd.listening { background: var(--accent-soft); border-color: var(--accent); }
 .pp-thumb .pp-check svg { width: 11px; height: 11px; stroke: #fff; fill: none; stroke-width: 2.5; display: none; }
 .pp-thumb.checked .pp-check svg { display: block; }
 .pp-thumb.empty { opacity: .55; }
-@media (prefers-reduced-motion: reduce) { #recDot { animation: none; } }
+@media (prefers-reduced-motion: reduce) { #recDot, #stVideo.live { animation: none; } }
 
 /* ---------- custom shape importer menu styling ---------- */
 .shape-form-grid {

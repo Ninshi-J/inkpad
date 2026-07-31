@@ -7,9 +7,49 @@ function confirmDialog(title, body, onConfirm, onCancel, opts) {
   okBtn.textContent = (opts && opts.okLabel) || "Delete";
   okBtn.style.background = opts && opts.safe ? "" : "#FBEAEA";
   okBtn.style.borderColor = opts && opts.safe ? "" : "#E3A9A9";
-  $("confirmCancel").onclick = () => { dlg.close(); if (onCancel) onCancel(); };
+  const cancelBtn = $("confirmCancel");
+  // notifyDialog below hides this button; every other caller needs it back.
+  cancelBtn.style.display = opts && opts.hideCancel ? "none" : "";
+  cancelBtn.onclick = () => { dlg.close(); if (onCancel) onCancel(); };
   okBtn.onclick = () => { dlg.close(); onConfirm(); };
   dlg.showModal();
+}
+// One-button message box — the app's own replacement for native alert(). Worth
+// having as more than cosmetics: in an installed PWA (this app's primary shape on
+// iPad, see the platform notes) native alert/confirm/prompt are inconsistently
+// styled and in some standalone contexts suppressed outright, so a message shown
+// that way can simply never reach the user.
+//
+// Queued, because unlike alert() this doesn't block. Several call sites can fire in
+// a row without waiting (importing three PDFs where two fail, a Drive operation
+// reporting an error while a restore dialog is still up), and calling showModal()
+// on the shared #confirmDlg while it's already open throws InvalidStateError —
+// which would lose the message entirely and, worse, throw out of whatever was
+// reporting it.
+let notifyQueue = [];
+let notifyShowing = false;
+function notifyDialog(title, body) {
+  return new Promise(resolve => {
+    notifyQueue.push({ title, body, resolve });
+    drainNotifyQueue();
+  });
+}
+function drainNotifyQueue() {
+  if (notifyShowing || !notifyQueue.length) return;
+  const dlg = $("confirmDlg");
+  // Never barge in on a confirm/prompt that's mid-question — it shares this element,
+  // and someone is awaiting its answer. Come back once it's been dealt with.
+  if (dlg.open) { setTimeout(drainNotifyQueue, 150); return; }
+  const n = notifyQueue.shift();
+  notifyShowing = true;
+  // Listening for "close" rather than using the OK/cancel callbacks catches every
+  // dismissal path, including Escape — which would otherwise wedge the queue shut.
+  dlg.addEventListener("close", () => {
+    notifyShowing = false;
+    n.resolve();
+    drainNotifyQueue();
+  }, { once: true });
+  confirmDialog(n.title, n.body, () => {}, () => {}, { okLabel: "OK", safe: true, hideCancel: true });
 }
 // Same dialog, promise-flavored — for non-destructive yes/no confirmations (e.g. "copy your
 // notebooks into this folder?") where confirmDialog's callback style and "Delete"-red default

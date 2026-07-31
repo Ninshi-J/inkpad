@@ -40,7 +40,7 @@ function hexToRgb01(hex) {
 async function exportPdf(pages) {
   pages = (pages && pages.length) ? pages : Array.from({ length: S.pages }, (_, i) => i);
   let PDFLib;
-  try { PDFLib = await loadPdfLib(); } catch (err) { alert(err.message); return; }
+  try { PDFLib = await loadPdfLib(); } catch (err) { notifyDialog("PDF export unavailable", err.message); return; }
   const {
     PDFDocument, StandardFonts, rgb,
     pushGraphicsState, popGraphicsState, concatTransformationMatrix,

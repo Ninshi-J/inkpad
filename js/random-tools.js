@@ -93,7 +93,7 @@ async function renameRoster() {
 function deleteRoster() {
   const r = activeRoster();
   if (!r) return;
-  if (libRosters.length <= 1) { alert("You need at least one roster — add another before deleting this one."); return; }
+  if (libRosters.length <= 1) { notifyDialog("Can't delete the last roster", "You need at least one roster — add another before deleting this one."); return; }
   confirmDialog(`Delete "${r.name}"?`, "This removes this roster's student list.", async () => {
     libRosters = libRosters.filter(x => x.id !== r.id);
     try { await storeDelete("rosters", r.id); } catch (_) {}

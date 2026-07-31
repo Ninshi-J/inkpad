@@ -336,7 +336,7 @@ function renderSelectionThumbnail(items, bounds, thumbW = 220) {
   return c.toDataURL("image/png");
 }
 async function saveSelectionAsStamp() {
-  if (!sel.items.length) { alert("Select some ink, text, or images first, then save them as a stamp."); return; }
+  if (!sel.items.length) { notifyDialog("Nothing selected", "Select some ink, text, or images first, then save them as a stamp."); return; }
   const bounds = selBounds();
   const name = await promptDialog("Name this stamp", "e.g. Unit Circle", "");
   if (name == null) return;

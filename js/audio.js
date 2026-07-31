@@ -25,7 +25,7 @@ async function toggleRecord() {
     audio.recStartWall = performance.now();
     rec.start();
   } catch (err) {
-    alert("Microphone unavailable: " + err.message);
+    notifyDialog("Microphone unavailable", err.message);
   }
   syncStatus();
 }

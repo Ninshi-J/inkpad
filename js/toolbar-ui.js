@@ -94,7 +94,8 @@ function buildToolButtons(host) {
   const g5 = div("tb-group");
   const recB = btn("● Rec", toggleRecord, "Record audio (F5)"); recB.id = host === TB ? "recBtn" : "recBtn2";
   const playB = btn("▶", togglePlayback, "Play / pause note replay (Space)"); playB.id = host === TB ? "playBtn" : "playBtn2";
-  g5.append(recB, playB);
+  const vidB = btn("🎥", toggleVideoRecord, "Record the canvas as a video, no audio (F6)"); vidB.id = host === TB ? "vidBtn" : "vidBtn2";
+  g5.append(recB, playB, vidB);
   host.appendChild(g5);
   host.appendChild(sep());
 

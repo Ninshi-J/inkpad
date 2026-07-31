@@ -138,7 +138,7 @@ function isPageBlank(p) {
 
 async function importPdfFiles(files) {
   let lib;
-  try { lib = await loadPdfJs(); } catch (err) { alert(err.message); return; }
+  try { lib = await loadPdfJs(); } catch (err) { notifyDialog("PDF import unavailable", err.message); return; }
 
   const candidates = [];
   for (const f of files) {
@@ -169,7 +169,9 @@ async function importPdfFiles(files) {
           page, fit, pdfSrcId: srcId, pdfPageIndex: n - 1, pdfBox: pageBox,
         });
       }
-    } catch (err) { alert(`Could not read ${f.name}: ${err.message}`); }
+    } catch (err) { notifyDialog("Could not read that PDF", `${f.name}
+
+${err.message}`); }
   }
   if (!candidates.length) return;
 
@@ -610,7 +612,7 @@ $("fileOpen").addEventListener("change", e => {
   const f = e.target.files[0]; e.target.value = "";
   if (!f) return;
   const rd = new FileReader();
-  rd.onload = () => { try { deserialize(rd.result); } catch (err) { alert("Could not open file: " + err.message); } };
+  rd.onload = () => { try { deserialize(rd.result); } catch (err) { notifyDialog("Could not open that file", err.message); } };
   rd.readAsText(f);
 });
 

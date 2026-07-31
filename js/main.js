@@ -14,12 +14,23 @@ function syncStatus() {
   else if (audio.playing) a = `Playing ${fmtT(playPosMs())} / ${fmtT(audio.totalMs)}`;
   else if (audio.totalMs) a = `Audio ${fmtT(audio.posMs)} / ${fmtT(audio.totalMs)}`;
   $("stAudio").textContent = a;
+  const sv = $("stVideo");
+  sv.textContent = videoRecStatusText();
+  sv.classList.toggle("live", videoRecActive());
+  sv.style.cursor = videoRecPending() ? "pointer" : "";
+  // Only one of these exists at a time (docked vs. popped-out toolbar). Lit here rather
+  // than in syncUI() because this is what actually re-runs while a recording is live.
+  document.querySelectorAll("#vidBtn, #vidBtn2").forEach(b => b.classList.toggle("active", videoRecActive()));
   $("savedDot").textContent = dirty ? "" : "Saved";
   refreshPageSetupControls();
 }
 
-$("stPage").addEventListener("click", () => {
-  const input = prompt(`Go to page (1-${S.pages}):`, String(curPage() + 1));
+// A finished recording lives only in memory until it's downloaded, so the status
+// readout doubles as the way back into its preview/save dialog after an Escape.
+$("stVideo").addEventListener("click", () => { if (videoRecPending()) openVideoRecDialog(); });
+
+$("stPage").addEventListener("click", async () => {
+  const input = await promptDialog(`Go to page (1–${S.pages})`, "Page number", String(curPage() + 1));
   if (input === null) return;
   const n = parseInt(input, 10);
   if (!Number.isFinite(n)) return;

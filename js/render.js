@@ -713,6 +713,9 @@ function tickTimerObjs() {
 function frame() {
   if (needsDraw) { needsDraw = false; render(); }
   if (audio.playing || audio.rec) { needsDraw = true; syncStatus(); }
+  // Blits the freshly-rendered board into the video capture canvas (and repaints the
+  // status readout once a second, not every frame) — see js/video-record.js.
+  if (tickVideoRecord()) syncStatus();
   if (tickTimerObjs()) needsDraw = true;
   positionSelToolbar();
   // While actively dragging the resize handle, OR while a control inside the format toolbar

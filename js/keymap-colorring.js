@@ -261,12 +261,13 @@ addEventListener("keydown", e => {
     case "home": V.scroll = 0; clampScroll(); schedulePdfUpgrade(); return handled();
     case "end": V.scroll = maxScroll(); clampScroll(); schedulePdfUpgrade(); return handled();
     case "f5": toggleRecord(); return handled();
+    case "f6": toggleVideoRecord(); return handled();
     case " ":
       if (audio.segments.length || audio.rec) { audio.rec ? stopRecord() : togglePlayback(); }
       return handled();
     case "delete": case "backspace":
       if (sel.items.length) deleteSelection();
-      else if (confirm("Clear this page?")) clearCurrentPage();
+      else confirmDialog("Clear this page?", "Removes everything on the current page. This can be undone with Ctrl+Z.", clearCurrentPage, null, { okLabel: "Clear page" });
       return handled();
     case "escape": clearSelection(); return handled();
     case "f1": $("helpDlg").showModal(); return handled();

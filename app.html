@@ -37,6 +37,7 @@
     <span id="stPage" title="Click to jump to a page (Home/End for first/last)">Page 1 of 1</span>
     <span id="recDot"></span>
     <span id="stAudio"></span>
+    <span id="stVideo" title="Click to reopen the last recording"></span>
     <span class="grow"></span>
     <span id="savedDot"></span>
     <span id="stHint">F1 shortcuts</span>
@@ -893,9 +894,20 @@
   </form>
 </dialog>
 
+<dialog id="videoRecDlg" style="max-width:560px;width:min(560px,94vw)">
+  <h2>🎥 Canvas recording</h2>
+  <p style="color:var(--ink-soft);font-size:12.5px;margin-bottom:10px;">Video only — your audio recording (● Rec) stays a separate track on the notebook.</p>
+  <video id="vrPreview" controls playsinline style="width:100%;border-radius:8px;background:#000;display:block"></video>
+  <div id="vrMeta" style="color:var(--ink-soft);font-size:12px;margin-top:8px;"></div>
+  <form method="dialog" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+    <button type="button" id="vrDiscardBtn">Discard</button>
+    <button type="button" id="vrDownloadBtn" style="background:var(--accent-soft);border-color:var(--accent);color:#0B5A54">⬇ Download</button>
+  </form>
+</dialog>
+
 <dialog id="confirmDlg">
   <h2 id="confirmTitle">Are you sure?</h2>
-  <p id="confirmBody" style="color:var(--ink-soft);max-width:440px"></p>
+  <p id="confirmBody" style="color:var(--ink-soft);max-width:440px;white-space:pre-line"></p>
   <form method="dialog" style="display:flex;justify-content:flex-end;gap:8px">
     <button type="button" id="confirmCancel">Cancel</button>
     <button type="button" id="confirmOk">Delete</button>
@@ -1061,6 +1073,7 @@
 <script src="js/clipboard.js"></script>
 <script src="js/text-edit.js"></script>
 <script src="js/audio.js"></script>
+<script src="js/video-record.js"></script>
 <script src="js/images.js"></script>
 <script src="js/shape-tools.js"></script>
 <script src="js/shape-svg.js"></script>

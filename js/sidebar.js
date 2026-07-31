@@ -101,7 +101,11 @@ function rebuildSidebar() {
   $("addPageBtn").onclick = () => { if (S.pages < MAX_PAGES) { S.pages++; V.scroll = maxScroll(); markDirty(); syncUI(); } };
   $("insertPageBtn").onclick = () => { const at = curPage() + 1; insertPageAt(at); V.scroll = at * stride(); clampScroll(); };
   $("clearPageBtn").onclick = clearCurrentPage;
-  $("delPageBtn").onclick = () => { if (confirm(`Delete page ${curPage() + 1}?`)) deleteCurrentPage(); };
+  $("delPageBtn").onclick = () => confirmDialog(
+    `Delete page ${curPage() + 1}?`,
+    "Everything on this page — ink, text, images, tape — goes with it.",
+    deleteCurrentPage,
+  );
   $("importPdfBtn").onclick = () => $("filePdf").click();
   $("deleteDocBtn").onclick = () => confirmDialog(
     "Delete entire document?",
@@ -408,7 +412,8 @@ function refreshHelp() {
     ["1–6", "Preset colors"],
     ["Shift (while drawing)", "Straight line, snapped to horizontal/vertical"],
     ["Wheel / Ctrl+Wheel", "Scroll / zoom at cursor"], ["Ctrl+0", "Reset zoom"],
-    ["PgUp / PgDn", "Jump a page"], ["F5 / Space", "Record / play replay"],
+    ["PgUp / PgDn", "Jump a page"], ["F5 / Space", "Record / play audio replay"],
+    ["F6", "Record the canvas as a video (no audio)"],
     ["Ctrl+Click ink", "Jump audio to stroke"], ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
     ["Ctrl+D", "Duplicate selection"], ["Ctrl+C / Ctrl+V", "Copy / paste selection"],
     ["Ctrl+S / Ctrl+O", "Save / open"],

@@ -41,7 +41,8 @@ let storageWarned = false;
 function warnStorageUnavailable(err) {
   if (storageWarned) return;
   storageWarned = true;
-  alert(
+  notifyDialog(
+    "Notebooks can't be saved",
     "This browser/session won't let InkPad save notebooks persistently, so changes here will be " +
     "lost on reload.\n\n(" + (err && err.message ? err.message : err) + ")"
   );
@@ -95,9 +96,10 @@ let fsWarned = false;
 function warnFsUnavailable(err) {
   if (fsWarned) return;
   fsWarned = true;
-  alert(
-    "Lost access to the connected folder, so changes won't be saved there until you reconnect it " +
-    "from the Files section (this happens if e.g. a USB drive is removed).\n\n(" +
+  notifyDialog(
+    "Lost access to the connected folder",
+    "Changes won't be saved there until you reconnect it from the Files section (this happens if " +
+    "e.g. a USB drive is removed).\n\n(" +
     (err && err.message ? err.message : err) + ")"
   );
 }
@@ -424,7 +426,7 @@ async function reconnectFs() {
   if (!fsPendingHandle) return;
   let perm = "denied";
   try { perm = await fsPendingHandle.requestPermission({ mode: "readwrite" }); } catch (_) {}
-  if (perm !== "granted") { alert("Permission wasn't granted, so that folder stays disconnected."); return; }
+  if (perm !== "granted") { notifyDialog("Folder stays disconnected", "Permission wasn't granted, so that folder stays disconnected."); return; }
   const h = fsPendingHandle; fsPendingHandle = null;
   await flushAutosave();
   await connectToFsHandle(h);
@@ -435,12 +437,12 @@ async function reconnectFs() {
 // fs-folder-to-fs-folder reconnects.
 async function chooseFsFolder() {
   if (!window.showDirectoryPicker) {
-    alert("This browser doesn't support connecting to a folder on disk (Chrome or Edge only). Notebooks will keep saving to browser storage instead.");
+    notifyDialog("Not supported here", "This browser doesn't support connecting to a folder on disk (Chrome or Edge only). Notebooks will keep saving to browser storage instead.");
     return;
   }
   let handle;
   try { handle = await window.showDirectoryPicker({ mode: "readwrite" }); }
-  catch (err) { if (!err || err.name !== "AbortError") alert("Couldn't open the folder picker: " + (err && err.message ? err.message : err)); return; }
+  catch (err) { if (!err || err.name !== "AbortError") notifyDialog("Couldn't open the folder picker", (err && err.message ? err.message : String(err))); return; }
   await flushAutosave();
   await connectToFsHandle(handle);
 }
@@ -448,14 +450,14 @@ async function connectToFsHandle(handle, { silent } = {}) {
   let perm = "denied";
   try { perm = await handle.queryPermission({ mode: "readwrite" }); } catch (_) {}
   if (perm !== "granted" && !silent) { try { perm = await handle.requestPermission({ mode: "readwrite" }); } catch (_) {} }
-  if (perm !== "granted") { if (!silent) alert("Permission to read/write that folder wasn't granted."); return false; }
+  if (perm !== "granted") { if (!silent) notifyDialog("Folder not connected", "Permission to read/write that folder wasn't granted."); return false; }
 
   fsRoot = handle; fsIndexCache = null; fsWarned = false;
   let idx;
   try { idx = await fsLoadIndex(); }
   catch (err) {
     fsRoot = null;
-    if (!silent) alert("Couldn't read that folder: " + (err && err.message ? err.message : err));
+    if (!silent) notifyDialog("Couldn't read that folder", (err && err.message ? err.message : String(err)));
     return false;
   }
 

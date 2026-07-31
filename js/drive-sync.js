@@ -704,8 +704,8 @@ function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
     if (!ok) return;
     try {
       const proceeded = await withDriveInteractive(() => runRestoreWithNewerLocalGuard(force => driveRestoreFolder(f.id, force)));
-      if (proceeded) { alert(`Restored "${f.name}" from Google Drive.`); $("driveRestoreDlg").close(); }
-    } catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
+      if (proceeded) { notifyDialog("Restored from Drive", `"${f.name}" was restored from Google Drive.`); $("driveRestoreDlg").close(); }
+    } catch (err) { notifyDialog("Restore failed", (err && err.message ? err.message : String(err))); }
   };
   const childWrap = document.createElement("div");
   childWrap.className = "lib-children";
@@ -728,8 +728,8 @@ function driveRestoreNotebookRow(nb, depth) {
     if (!ok) return;
     try {
       const proceeded = await withDriveInteractive(() => runRestoreWithNewerLocalGuard(force => driveRestoreSelected([nb.id], null, force)));
-      if (proceeded) { alert(`Restored "${nb.name}" from Google Drive.`); $("driveRestoreDlg").close(); }
-    } catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
+      if (proceeded) { notifyDialog("Restored from Drive", `"${nb.name}" was restored from Google Drive.`); $("driveRestoreDlg").close(); }
+    } catch (err) { notifyDialog("Restore failed", (err && err.message ? err.message : String(err))); }
   };
   return row;
 }
@@ -790,15 +790,15 @@ function driveOrphanRow(file, onRestored) {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Restore "${file.name}"?`, "This wasn't in your current library index — it's a leftover file in Drive (often from a notebook deleted locally before that also cleaned up Drive). Restoring adds it back as a new notebook.", "Restore");
     if (!ok) return;
-    try { await withDriveInteractive(() => driveRestoreOrphanedFile(file)); alert(`Restored "${file.name}" from Google Drive.`); (onRestored || (() => $("driveRestoreDlg").close()))(); }
-    catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
+    try { await withDriveInteractive(() => driveRestoreOrphanedFile(file)); notifyDialog("Restored from Drive", `"${file.name}" was restored from Google Drive.`); (onRestored || (() => $("driveRestoreDlg").close()))(); }
+    catch (err) { notifyDialog("Restore failed", (err && err.message ? err.message : String(err))); }
   };
   deleteBtn.onclick = async e => {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Delete "${file.name}" from Drive?`, "This permanently removes this leftover file from Google Drive (moved to Drive's own Trash). It won't show up here again.", "Delete");
     if (!ok) return;
     try { await withDriveInteractive(() => driveTrashFile(file.id)); row.remove(); }
-    catch (err) { alert("Delete failed: " + (err && err.message ? err.message : err)); return; }
+    catch (err) { notifyDialog("Delete failed", (err && err.message ? err.message : String(err))); return; }
     if (file.notebookId) {
       const entry = { id: file.notebookId, deletedAt: Date.now() };
       libTombstones = libTombstones.filter(t => t.id !== entry.id);
@@ -810,7 +810,7 @@ function driveOrphanRow(file, onRestored) {
 }
 
 async function openDriveRestorePicker() {
-  if (!driveConfigured()) { alert("Google Drive sync isn't set up yet — see the top of js/drive-sync.js for the one-line config."); return; }
+  if (!driveConfigured()) { notifyDialog("Drive sync isn't set up", "Google Drive sync isn't configured yet — see the top of js/drive-sync.js for the one-line config."); return; }
   const tree = $("driveRestoreTree"), status = $("driveRestoreStatus");
   tree.innerHTML = "";
   status.textContent = "Loading your Drive library…";
@@ -902,7 +902,7 @@ function driveManageNotebookRow(nb, folderId) {
   row.querySelector('[data-act=push]').onclick = async e => {
     e.stopPropagation();
     try { await withDriveInteractive(() => driveBackupNotebook(nb, folderId)); await refreshStatus(); }
-    catch (err) { alert("Push failed: " + (err && err.message ? err.message : err)); }
+    catch (err) { notifyDialog("Push failed", (err && err.message ? err.message : String(err))); }
   };
   row.querySelector('[data-act=recheck]').onclick = e => { e.stopPropagation(); withDriveInteractive(refreshStatus); };
   row.querySelector('[data-act=delete]').onclick = async e => {
@@ -917,7 +917,7 @@ function driveManageNotebookRow(nb, folderId) {
       await withDriveInteractive(async () => {
         let id = nb.driveFileId && await driveValidateCachedFileId(nb.driveFileId, folderId) ? nb.driveFileId : null;
         if (!id) { const f = await driveFindNotebookFileByProperty(folderId, nb.id); id = f ? f.id : null; }
-        if (!id) { alert(`"${nb.name}" isn't backed up to Drive right now — nothing to delete.`); return; }
+        if (!id) { notifyDialog("Nothing to delete", `"${nb.name}" isn't backed up to Drive right now.`); return; }
         await driveTrashFile(id);
         // Deliberately clear driveFileId only, not driveSyncedAt -- leaving driveSyncedAt alone keeps
         // the auto-sync loop's dirty check (updatedAt > driveSyncedAt) false, so this doesn't get
@@ -927,14 +927,14 @@ function driveManageNotebookRow(nb, folderId) {
         try { await storePut("notebooks", nb); } catch (_) {}
       });
       await refreshStatus();
-    } catch (err) { alert("Delete failed: " + (err && err.message ? err.message : err)); }
+    } catch (err) { notifyDialog("Delete failed", (err && err.message ? err.message : String(err))); }
   };
   refreshStatus();
   return row;
 }
 
 async function openDriveManageDialog() {
-  if (!driveConfigured()) { alert("Google Drive sync isn't set up yet — see the top of js/drive-sync.js for the one-line config."); return; }
+  if (!driveConfigured()) { notifyDialog("Drive sync isn't set up", "Google Drive sync isn't configured yet — see the top of js/drive-sync.js for the one-line config."); return; }
   const tree = $("driveManageTree"), status = $("driveManageStatus");
   tree.innerHTML = "";
   status.textContent = "Loading…";
@@ -1010,12 +1010,12 @@ async function checkDriveForNewerBackup() {
 }
 
 function wireDriveMenu() {
-  const needsSetup = () => { alert("Google Drive sync isn't set up yet — see the top of js/drive-sync.js for the one-line config."); };
+  const needsSetup = () => { notifyDialog("Drive sync isn't set up", "Google Drive sync isn't configured yet — see the top of js/drive-sync.js for the one-line config."); };
   $("fmDriveBackup").onclick = async () => {
     closeFileMenu();
     if (!driveConfigured()) return needsSetup();
-    try { const pushed = await withDriveInteractive(driveBackupNow); alert(pushed ? "Backed up to Google Drive." : "Already up to date — nothing's changed since the last backup."); }
-    catch (err) { alert("Backup failed: " + (err && err.message ? err.message : err)); }
+    try { const pushed = await withDriveInteractive(driveBackupNow); notifyDialog("Back up to Drive", pushed ? "Backed up to Google Drive." : "Already up to date — nothing's changed since the last backup."); }
+    catch (err) { notifyDialog("Backup failed", (err && err.message ? err.message : String(err))); }
     refreshDriveSignInStatus();
   };
   $("fmDriveRestore").onclick = () => { closeFileMenu(); withDriveInteractive(openDriveRestorePicker); };
@@ -1026,8 +1026,8 @@ function wireDriveMenu() {
     if (!ok) return;
     try {
       const proceeded = await withDriveInteractive(runRestoreEverythingGuard);
-      if (proceeded) { alert("Restored from Google Drive."); $("driveRestoreDlg").close(); }
-    } catch (err) { alert("Restore failed: " + (err && err.message ? err.message : err)); }
+      if (proceeded) { notifyDialog("Restored from Drive", "Your library was restored from Google Drive."); $("driveRestoreDlg").close(); }
+    } catch (err) { notifyDialog("Restore failed", (err && err.message ? err.message : String(err))); }
     refreshDriveSignInStatus();
   };
 
@@ -1040,7 +1040,7 @@ function wireDriveMenu() {
     saveDriveAutoSyncPref();
     if (driveAutoSyncEnabled) {
       startDriveAutoPushLoop();
-      try { await withDriveInteractive(driveBackupNow); } catch (err) { alert("Initial backup failed: " + (err && err.message ? err.message : err)); }
+      try { await withDriveInteractive(driveBackupNow); } catch (err) { notifyDialog("Initial backup failed", (err && err.message ? err.message : String(err))); }
       refreshDriveSignInStatus();
     }
   };

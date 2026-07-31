@@ -116,7 +116,7 @@ async function renameLayer(id) {
 }
 
 function deleteLayer(id) {
-  if (S.layers.length <= 1) { alert("A notebook needs at least one layer — create another before deleting this one."); return; }
+  if (S.layers.length <= 1) { notifyDialog("Can't delete the last layer", "A notebook needs at least one layer — create another before deleting this one."); return; }
   const l = S.layers.find(x => x.id === id);
   if (!l) return;
   const fallback = S.layers.find(x => x.id !== id);
