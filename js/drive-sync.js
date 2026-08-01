@@ -93,11 +93,61 @@ function ensureDriveTokenClient() {
   }
   return driveTokenClient;
 }
+/* GIS `prompt` values, straight from Google's TokenClientConfig reference — the exact meanings
+   matter here and getting them backwards is what made this app prompt constantly:
+     "none"           — never show any UI. The only genuinely silent option.
+     ""               — show UI only the FIRST time the app requests access. Interactive when a
+                        grant is actually needed, invisible once granted.
+     "consent"        — ALWAYS re-show the consent screen, even to a signed-in, already-granted
+                        user. Never appropriate for routine use.
+     "select_account" — always show the account chooser. (Also the default when prompt is omitted.)
+   So: "none" for background checks, "" for genuine user-initiated actions. Nothing here should
+   ever use "consent" — that is a re-authorize action, not a sign-in. */
 function requestDriveToken(prompt) {
   return new Promise((resolve, reject) => {
-    driveTokenClient.callback = resp => resp.error ? reject(resp) : resolve(resp.access_token);
+    driveTokenClient.callback = resp => resp.error ? reject(resp) : resolve(resp);
     driveTokenClient.requestAccessToken({ prompt });
   });
+}
+
+/* Access tokens last about an hour, but this app used to keep them only in a module variable —
+   thrown away on every page load. That made each refresh depend on a fresh silent renewal from
+   Google, which needs a usable third-party session cookie: exactly what Safari's ITP blocks and
+   what Chrome is phasing out. When that renewal fails there's nothing to fall back on, so the
+   next Drive action has to escalate to a visible sign-in.
+   Persisting the token with its expiry means a reload inside the hour needs no contact with
+   Google at all. It is a bearer credential in localStorage, which is a real if modest tradeoff —
+   mitigated by the narrow drive.file scope (only files this app itself created) and by the fact
+   that anything able to read localStorage here could just as easily read the notebooks. */
+const DRIVE_TOKEN_KEY = "inkpad.driveToken";
+const DRIVE_TOKEN_SKEW_MS = 60000; // treat as expired a minute early, so it can't die mid-request
+let driveTokenExpiresAt = 0;
+
+function storeDriveToken(resp) {
+  driveAccessToken = resp.access_token;
+  const ttl = (Number(resp.expires_in) || 3600) * 1000;
+  driveTokenExpiresAt = Date.now() + ttl;
+  try { localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({ t: driveAccessToken, exp: driveTokenExpiresAt })); } catch (_) {}
+  markDriveEverSignedIn();
+  return driveAccessToken;
+}
+function clearStoredDriveToken() {
+  driveAccessToken = null;
+  driveTokenExpiresAt = 0;
+  try { localStorage.removeItem(DRIVE_TOKEN_KEY); } catch (_) {}
+}
+// The still-usable token, or null. Reads through to localStorage so the very first call after a
+// page load picks up a token that's still good rather than going back to Google for one.
+function driveValidToken() {
+  if (!driveAccessToken) {
+    try {
+      const s = JSON.parse(localStorage.getItem(DRIVE_TOKEN_KEY) || "null");
+      if (s && s.t && s.exp) { driveAccessToken = s.t; driveTokenExpiresAt = s.exp; }
+    } catch (_) {}
+  }
+  if (!driveAccessToken) return null;
+  if (Date.now() > driveTokenExpiresAt - DRIVE_TOKEN_SKEW_MS) { clearStoredDriveToken(); return null; }
+  return driveAccessToken;
 }
 // Coalesces silent-token attempts that happen close together into ONE real call to Google instead
 // of one per call site. At boot alone, three independent places can each want a token within
@@ -110,26 +160,29 @@ function requestDriveToken(prompt) {
 // share it instead of each retrying live.
 let driveSilentAttempt = null;
 function driveSilentTokenShared() {
+  const existing = driveValidToken();
+  if (existing) return Promise.resolve(existing); // still-good token: no round trip at all
   if (driveSilentAttempt) return driveSilentAttempt;
   driveSilentAttempt = (async () => {
     await loadGis();
     ensureDriveTokenClient();
-    const token = await requestDriveToken("");
-    driveAccessToken = token;
-    markDriveEverSignedIn();
-    return token;
+    // "none", not "" — see the prompt-value notes above. "" shows a real sign-in window whenever a
+    // grant is needed, so using it here meant the boot-time status check could pop a Google window
+    // on an ordinary page refresh. That was half of the "it keeps asking me to log in" report.
+    return storeDriveToken(await requestDriveToken("none"));
   })();
   driveSilentAttempt.catch(() => {}).finally(() => setTimeout(() => { driveSilentAttempt = null; }, 5000));
   return driveSilentAttempt;
 }
-// Tries a silent token refresh first (works while an earlier grant this session is still valid);
-// only falls back to the interactive Google account picker when that fails AND we're inside a
-// genuine user-initiated action (see driveInteractiveAllowed above). This gate applies even when
-// forceConsent is explicitly requested (used by driveFetch's 401-retry below) -- a cached token
-// that suddenly stops working mid-background-operation must fail quietly too, not force a popup
-// just because that particular call site happened to ask for forceConsent directly.
-async function driveGetToken(forceConsent) {
-  if (!forceConsent) {
+// Reuses a stored/still-valid token, then tries a genuinely silent renewal; only falls back to a
+// prompt-if-needed request when that fails AND we're inside a real user-initiated action (see
+// driveInteractiveAllowed above). That gate applies to the forceInteractive path too (used by
+// driveFetch's 401 retry) -- a token that stops working mid-background-operation must fail quietly
+// rather than force a window just because that call site skipped the silent step.
+// Note "interactive" here means "may show UI if a grant is genuinely needed" -- for an already
+// signed-in, already-granted user it still completes with nothing shown.
+async function driveGetToken(forceInteractive) {
+  if (!forceInteractive) {
     try {
       return await driveSilentTokenShared();
     } catch (err) {
@@ -140,9 +193,11 @@ async function driveGetToken(forceConsent) {
   }
   await loadGis();
   ensureDriveTokenClient();
-  driveAccessToken = await requestDriveToken("consent");
-  markDriveEverSignedIn();
-  return driveAccessToken;
+  // "" — prompt only if a grant is actually needed. This used to be "consent", which forces the
+  // full "InkPad wants access to your Google Drive" screen on EVERY call regardless of being
+  // already signed in and already granted: the other half of the "it keeps asking me to log in"
+  // report, and why it happened on every Back up / Restore / Manage click.
+  return storeDriveToken(await requestDriveToken(""));
 }
 // Silent-only check, used purely to answer "are we signed in right now" (status line, boot check)
 // — unlike driveGetToken(false), this never falls back to the interactive consent popup on
@@ -183,10 +238,11 @@ async function refreshDriveSignInStatus() {
 }
 
 async function driveFetch(url, opts = {}) {
-  const token = driveAccessToken || await driveGetToken(false);
+  const token = driveValidToken() || await driveGetToken(false);
   const withAuth = t => ({ ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${t}` } });
   let res = await fetch(url, withAuth(token));
-  if (res.status === 401) { // token expired mid-session
+  if (res.status === 401) { // rejected despite not being past its expiry — revoked, or clock skew
+    clearStoredDriveToken(); // never retry with, or re-persist, a token Google has just refused
     const fresh = await driveGetToken(true);
     res = await fetch(url, withAuth(fresh));
   }
