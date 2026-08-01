@@ -896,12 +896,20 @@
 
 <dialog id="videoRecDlg" style="max-width:560px;width:min(560px,94vw)">
   <h2>🎥 Canvas recording</h2>
-  <p style="color:var(--ink-soft);font-size:12.5px;margin-bottom:10px;">Video only — your audio recording (● Rec) stays a separate track on the notebook.</p>
-  <video id="vrPreview" controls playsinline style="width:100%;border-radius:8px;background:#000;display:block"></video>
-  <div id="vrMeta" style="color:var(--ink-soft);font-size:12px;margin-top:8px;"></div>
+  <p style="color:var(--ink-soft);font-size:12.5px;margin-bottom:10px;">The microphone is saved as its own file rather than mixed into the video, so it can go straight into transcription software. Both start together, so they stay in sync.</p>
+  <div id="vrVideoRow">
+    <video id="vrPreview" controls playsinline style="width:100%;border-radius:8px;background:#000;display:block"></video>
+    <div id="vrMeta" style="color:var(--ink-soft);font-size:12px;margin-top:8px;"></div>
+  </div>
+  <div id="vrAudioRow" style="margin-top:12px;">
+    <audio id="vrAudioPreview" controls style="width:100%;display:block"></audio>
+    <div id="vrAudioMeta" style="color:var(--ink-soft);font-size:12px;margin-top:6px;"></div>
+  </div>
+  <div id="vrNote" style="color:#B45309;font-size:12px;margin-top:10px;"></div>
   <form method="dialog" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
     <button type="button" id="vrDiscardBtn">Discard</button>
-    <button type="button" id="vrDownloadBtn" style="background:var(--accent-soft);border-color:var(--accent);color:#0B5A54">⬇ Download</button>
+    <button type="button" id="vrDownloadAudioBtn">⬇ Audio only</button>
+    <button type="button" id="vrDownloadBtn" style="background:var(--accent-soft);border-color:var(--accent);color:#0B5A54">⬇ Download both</button>
   </form>
 </dialog>
 

@@ -6,11 +6,17 @@
    fills the frame — no browser chrome, toolbar, or sidebar), live as you write,
    straight to a downloadable video file.
 
-   Deliberately VIDEO ONLY, no audio track. The app already has its own separate
-   audio recorder (js/audio.js, the "● Rec" button) whose recordings stay tied to
-   the notebook and drive stroke-level replay/seeking; mixing a mic into this file
-   would duplicate that and make the two impossible to use independently. The two
-   run happily at the same time — different APIs, no shared state.
+   The microphone is captured too, but into a SEPARATE file — the video track itself
+   carries no audio. That split is deliberate and requested: a standalone audio file
+   feeds straight into transcription software, whereas pulling speech back out of a
+   video means demuxing it first. Both recorders start off the same click and stop
+   together, so the two files share a timeline and line up when recombined.
+
+   Distinct from the "● Rec" button (js/audio.js), which records notebook audio:
+   segmented, timestamped against individual strokes, replayable and seekable inside
+   the app, saved with the notebook. This is a plain single-take mic capture that
+   exists only to accompany the video, and shares none of that machinery — both can
+   run at once without interfering.
 
    Everything here goes through an intermediate capture canvas rather than
    calling cv.captureStream() directly. That costs one cheap per-frame blit and
@@ -49,8 +55,31 @@ const VIDEO_MIME_CANDIDATES = [
   ["video/webm", "webm"],
 ];
 
+/* The microphone is recorded to its OWN file rather than muxed into the video, at the
+   user's explicit request: a standalone audio file drops straight into transcription
+   tools, where a video would have to be demuxed first. The two are started back to
+   back off the same click and stopped together, so the audio still lines up with the
+   video on a shared timeline — separate files, one take.
+
+   Note this is NOT the same thing as the "● Rec" button (js/audio.js). That records
+   notebook audio: segmented, timestamped against individual strokes, replayable and
+   seekable inside the app, saved with the notebook. This is a plain single-take mic
+   capture that exists only to accompany the video, and deliberately shares none of
+   that machinery — the two can run at once without interfering.
+
+   Format preference mirrors the video list: m4a/AAC first (what iPad Safari offers,
+   and accepted by essentially every transcription service), then Opus in webm/ogg. */
+const AUDIO_MIME_CANDIDATES = [
+  ["audio/mp4;codecs=mp4a.40.2", "m4a"],
+  ["audio/mp4", "m4a"],
+  ["audio/webm;codecs=opus", "webm"],
+  ["audio/webm", "webm"],
+  ["audio/ogg;codecs=opus", "ogg"],
+];
+const AUDIO_BITRATE = 128000; // ample for speech; keeps a long lesson's file small
+
 const vidrec = {
-  rec: null,        // live MediaRecorder while recording, null otherwise
+  rec: null,        // live video MediaRecorder while recording, null otherwise
   stream: null,
   canvas: null,     // intermediate fixed-size capture canvas
   cctx: null,
@@ -64,19 +93,36 @@ const vidrec = {
   url: null,
   durationMs: 0,
   lastStatusSec: -1,
+
+  audioRec: null,
+  audioStream: null,
+  audioChunks: [],
+  audioBytes: 0,
+  audioMime: "",
+  audioExt: "",
+  audioBlob: null,
+  audioUrl: null,
+  audioNote: "",    // why there's no audio file, when there isn't one
+  baseName: "",     // shared filename stem for the video/audio pair, fixed at record start
+
+  // Both recorders must have delivered their final data before the dialog can open,
+  // and they stop independently — this counts down the outstanding onstop callbacks.
+  pendingStops: 0,
 };
 
 function videoRecActive() { return !!vidrec.rec; }
 function videoRecElapsedMs() { return vidrec.rec ? performance.now() - vidrec.startWall : 0; }
-function videoRecPending() { return !!vidrec.blob; }
+function videoRecPending() { return !!vidrec.blob || !!vidrec.audioBlob; }
 
-function pickVideoMime() {
+function pickMime(candidates) {
   if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return null;
-  for (const [mime, ext] of VIDEO_MIME_CANDIDATES) {
+  for (const [mime, ext] of candidates) {
     if (MediaRecorder.isTypeSupported(mime)) return { mime, ext };
   }
   return null;
 }
+function pickVideoMime() { return pickMime(VIDEO_MIME_CANDIDATES); }
+function pickAudioMime() { return pickMime(AUDIO_MIME_CANDIDATES); }
 
 // Output dimensions, derived once at record start from the board's current backing
 // store. Even numbers are a hard requirement, not a nicety — see the header note.
@@ -98,7 +144,7 @@ async function toggleVideoRecord() {
   if (vidrec.rec) { stopVideoRecord(); return; }
   // A finished-but-unsaved recording is only held in memory — starting a new one
   // is the single way to lose it, so it's the one case worth confirming.
-  if (vidrec.blob) {
+  if (videoRecPending()) {
     const ok = await confirmDialogAsync(
       "Start a new recording?",
       "Your last recording hasn't been downloaded yet. Starting a new one discards it.",
@@ -107,10 +153,51 @@ async function toggleVideoRecord() {
     if (!ok) return;
     releaseVideoBlob();
   }
-  startVideoRecord();
+  await startVideoRecord();
 }
 
-function startVideoRecord() {
+// Asks for the microphone and gets a recorder ready, WITHOUT starting it. Resolves to
+// null (never throws) if there's no mic, permission is refused, or the browser can't
+// encode audio — none of which should stop the canvas from being recorded.
+async function prepareAudioRecorder() {
+  vidrec.audioNote = "";
+  const picked = pickAudioMime();
+  if (!picked) { vidrec.audioNote = "This browser has no audio format available for recording."; return null; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    vidrec.audioNote = "This browser doesn't allow microphone access here.";
+    return null;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    vidrec.audioNote = err && err.name === "NotAllowedError"
+      ? "Microphone access was blocked, so no audio was recorded."
+      : `Microphone unavailable, so no audio was recorded. (${err && err.message ? err.message : err})`;
+    return null;
+  }
+  try {
+    const rec = new MediaRecorder(stream, { mimeType: picked.mime, audioBitsPerSecond: AUDIO_BITRATE });
+    vidrec.audioStream = stream;
+    vidrec.audioMime = picked.mime;
+    vidrec.audioExt = picked.ext;
+    vidrec.audioChunks = [];
+    vidrec.audioBytes = 0;
+    rec.ondataavailable = e => {
+      if (!e.data || !e.data.size) return;
+      vidrec.audioChunks.push(e.data);
+      vidrec.audioBytes += e.data.size;
+    };
+    rec.onstop = () => settleRecorderStop();
+    return rec;
+  } catch (err) {
+    try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+    vidrec.audioNote = `Couldn't start the audio recorder. (${err && err.message ? err.message : err})`;
+    return null;
+  }
+}
+
+async function startVideoRecord() {
   if (vidrec.rec) return;
   if (!cv.captureStream || !window.MediaRecorder) {
     notifyDialog("Recording unavailable", "This browser can't record the canvas — it's missing MediaRecorder or canvas.captureStream.");
@@ -121,6 +208,11 @@ function startVideoRecord() {
     notifyDialog("Recording unavailable", "This browser has no video format available for recording.");
     return;
   }
+
+  // Mic permission is resolved BEFORE either recorder starts. Doing it the other way
+  // round would let the permission prompt — which can sit there for seconds — run while
+  // the video was already rolling, and the two files would no longer share a start.
+  const audioRec = await prepareAudioRecorder();
 
   const { w, h } = videoOutputSize();
   const c = document.createElement("canvas");
@@ -139,6 +231,7 @@ function startVideoRecord() {
     rec = new MediaRecorder(vidrec.stream, { mimeType: picked.mime, videoBitsPerSecond: VIDEO_BITRATE });
   } catch (err) {
     teardownVideoStream();
+    teardownAudioStream();
     notifyDialog("Recording failed to start", err.message || String(err));
     return;
   }
@@ -148,22 +241,38 @@ function startVideoRecord() {
     vidrec.chunks.push(e.data);
     vidrec.bytes += e.data.size;
   };
-  rec.onstop = finishVideoRecord;
+  rec.onstop = () => settleRecorderStop();
   vidrec.rec = rec;
+  vidrec.audioRec = audioRec;
+  vidrec.pendingStops = audioRec ? 2 : 1;
+  vidrec.baseName = videoFileBaseName();
   vidrec.startWall = performance.now();
   // One chunk per second rather than one giant blob at the end: keeps the live size
   // readout honest, and means a crash mid-recording loses a second, not everything.
+  // Started back to back with nothing awaited between them, so both files begin at
+  // effectively the same instant and stay aligned.
   rec.start(1000);
+  if (audioRec) { try { audioRec.start(1000); } catch (_) { vidrec.audioRec = null; vidrec.pendingStops = 1; } }
   syncStatus();
 }
 
 function stopVideoRecord() {
   if (!vidrec.rec) return;
   vidrec.durationMs = videoRecElapsedMs();
-  const rec = vidrec.rec;
+  const rec = vidrec.rec, arec = vidrec.audioRec;
   vidrec.rec = null; // flip the "recording" state immediately; onstop lands a tick later
-  try { rec.stop(); } catch (_) { finishVideoRecord(); }
+  vidrec.audioRec = null;
+  try { rec.stop(); } catch (_) { settleRecorderStop(); }
+  if (arec) { try { arec.stop(); } catch (_) { settleRecorderStop(); } }
   syncStatus();
+}
+
+// Each recorder calls this once it has handed over its last chunk; the dialog only
+// opens after every outstanding one has, so it never shows a half-finished pair.
+function settleRecorderStop() {
+  if (vidrec.pendingStops > 0) vidrec.pendingStops--;
+  if (vidrec.pendingStops > 0) return;
+  finishVideoRecord();
 }
 
 function teardownVideoStream() {
@@ -175,21 +284,40 @@ function teardownVideoStream() {
   vidrec.cctx = null;
 }
 
+// Releasing the mic tracks is what turns off the browser/OS "this tab is using your
+// microphone" indicator — leaving them live would look like the app kept listening.
+function teardownAudioStream() {
+  if (vidrec.audioStream) {
+    try { vidrec.audioStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+    vidrec.audioStream = null;
+  }
+}
+
 function finishVideoRecord() {
   teardownVideoStream();
-  if (!vidrec.chunks.length) { syncStatus(); return; }
+  teardownAudioStream();
   releaseVideoBlob();
-  vidrec.blob = new Blob(vidrec.chunks, { type: vidrec.mime });
-  vidrec.url = URL.createObjectURL(vidrec.blob);
+  if (vidrec.chunks.length) {
+    vidrec.blob = new Blob(vidrec.chunks, { type: vidrec.mime });
+    vidrec.url = URL.createObjectURL(vidrec.blob);
+  }
+  if (vidrec.audioChunks.length) {
+    vidrec.audioBlob = new Blob(vidrec.audioChunks, { type: vidrec.audioMime });
+    vidrec.audioUrl = URL.createObjectURL(vidrec.audioBlob);
+  }
   vidrec.chunks = [];
+  vidrec.audioChunks = [];
   syncStatus();
-  openVideoRecDialog();
+  if (videoRecPending()) openVideoRecDialog();
 }
 
 function releaseVideoBlob() {
   if (vidrec.url) { try { URL.revokeObjectURL(vidrec.url); } catch (_) {} }
+  if (vidrec.audioUrl) { try { URL.revokeObjectURL(vidrec.audioUrl); } catch (_) {} }
   vidrec.url = null;
   vidrec.blob = null;
+  vidrec.audioUrl = null;
+  vidrec.audioBlob = null;
 }
 
 /* Copies the board into the fixed-size capture canvas, letterboxed and centered.
@@ -221,8 +349,14 @@ function tickVideoRecord() {
 }
 
 function videoRecStatusText() {
-  if (vidrec.rec) return `⏺ Video ${fmtT(videoRecElapsedMs())} · ${fmtBytes(vidrec.bytes)}`;
-  if (vidrec.blob) return `🎥 Ready · ${fmtBytes(vidrec.blob.size)}`;
+  if (vidrec.rec) {
+    const mic = vidrec.audioRec ? " 🎙" : "";
+    return `⏺ Video${mic} ${fmtT(videoRecElapsedMs())} · ${fmtBytes(vidrec.bytes + vidrec.audioBytes)}`;
+  }
+  if (videoRecPending()) {
+    const total = (vidrec.blob ? vidrec.blob.size : 0) + (vidrec.audioBlob ? vidrec.audioBlob.size : 0);
+    return `🎥 Ready · ${fmtBytes(total)}`;
+  }
   return "";
 }
 
@@ -233,11 +367,11 @@ function videoRecStatusText() {
 const VIDEO_SIZE_WARN_BYTES = 500 * 1024 * 1024;
 function videoRecStatusLevel() {
   if (!vidrec.rec) return "";
-  return vidrec.bytes > VIDEO_SIZE_WARN_BYTES ? "warn" : "live";
+  return vidrec.bytes + vidrec.audioBytes > VIDEO_SIZE_WARN_BYTES ? "warn" : "live";
 }
 function videoRecStatusTitle() {
   if (videoRecStatusLevel() === "warn") return "This recording is getting large — consider stopping and saving it, then starting a new one.";
-  if (vidrec.blob) return "Click to reopen the last recording";
+  if (videoRecPending()) return "Click to reopen the last recording";
   return "";
 }
 
@@ -245,14 +379,39 @@ function videoRecStatusTitle() {
 // Same lazy element-reuse wiring as promptDialog (js/dialogs.js) — no boot-time
 // setup needed, handlers are (re)bound each time it opens.
 function openVideoRecDialog() {
-  if (!vidrec.blob) return;
+  if (!videoRecPending()) return;
   const dlg = $("videoRecDlg");
   const v = $("vrPreview");
-  v.src = vidrec.url;
-  $("vrMeta").textContent =
-    `${fmtT(vidrec.durationMs)} · ${fmtBytes(vidrec.blob.size)} · ${vidrec.w}×${vidrec.h} · ${vidrec.ext.toUpperCase()}`;
-  const stopPreview = () => { try { v.pause(); } catch (_) {} v.removeAttribute("src"); };
-  $("vrDownloadBtn").onclick = () => { downloadVideoRecording(); stopPreview(); dlg.close(); };
+  const a = $("vrAudioPreview");
+
+  const hasVideo = !!vidrec.blob, hasAudio = !!vidrec.audioBlob;
+  $("vrVideoRow").style.display = hasVideo ? "" : "none";
+  if (hasVideo) {
+    v.src = vidrec.url;
+    $("vrMeta").textContent =
+      `${fmtT(vidrec.durationMs)} · ${fmtBytes(vidrec.blob.size)} · ${vidrec.w}×${vidrec.h} · ${vidrec.ext.toUpperCase()}`;
+  }
+  $("vrAudioRow").style.display = hasAudio ? "" : "none";
+  if (hasAudio) {
+    a.src = vidrec.audioUrl;
+    $("vrAudioMeta").textContent =
+      `Separate audio track · ${fmtBytes(vidrec.audioBlob.size)} · ${vidrec.audioExt.toUpperCase()} — starts at the same moment as the video`;
+  }
+  // Only surfaced when audio was expected but didn't happen; silent otherwise.
+  const note = $("vrNote");
+  note.textContent = hasAudio ? "" : (vidrec.audioNote || "");
+  note.style.display = note.textContent ? "" : "none";
+
+  const stopPreview = () => {
+    try { v.pause(); } catch (_) {} v.removeAttribute("src");
+    try { a.pause(); } catch (_) {} a.removeAttribute("src");
+  };
+  const dlBtn = $("vrDownloadBtn");
+  dlBtn.textContent = hasVideo && hasAudio ? "⬇ Download both" : hasAudio ? "⬇ Download audio" : "⬇ Download video";
+  dlBtn.onclick = async () => { await downloadVideoRecording(); stopPreview(); dlg.close(); };
+  const audioBtn = $("vrDownloadAudioBtn");
+  audioBtn.style.display = hasVideo && hasAudio ? "" : "none";
+  audioBtn.onclick = () => downloadBlobAs(vidrec.audioUrl, `${vidrec.baseName}.${vidrec.audioExt}`);
   $("vrDiscardBtn").onclick = () => { stopPreview(); releaseVideoBlob(); dlg.close(); syncStatus(); };
   // Closing any other way (Esc) deliberately KEEPS the recording — it's only held in
   // memory, so a stray Escape silently binning a lesson would be unforgivable. The
@@ -260,6 +419,9 @@ function openVideoRecDialog() {
   dlg.showModal();
 }
 
+// Captured once, when recording starts, and shared by both files — so the video and its
+// audio always land as an obviously-matching pair, and the timestamp is when the lesson
+// was actually recorded rather than whenever the download button happened to be pressed.
 function videoFileBaseName() {
   let name = "InkPad";
   try {
@@ -274,12 +436,24 @@ function videoFileBaseName() {
   return `${safe} ${stamp}`;
 }
 
-function downloadVideoRecording() {
-  if (!vidrec.blob) return;
+function downloadBlobAs(url, filename) {
+  if (!url) return;
   const a = document.createElement("a");
-  a.href = vidrec.url;
-  a.download = `${videoFileBaseName()}.${vidrec.ext}`;
+  a.href = url;
+  a.download = filename;
   a.click();
-  // The object URL is deliberately NOT revoked here — it's still the <video>
-  // preview's source, and releaseVideoBlob() owns its lifetime.
+  // Object URLs are deliberately NOT revoked here — they're still the preview
+  // elements' sources, and releaseVideoBlob() owns their lifetime.
+}
+
+async function downloadVideoRecording() {
+  const base = vidrec.baseName || videoFileBaseName();
+  if (vidrec.blob) downloadBlobAs(vidrec.url, `${base}.${vidrec.ext}`);
+  if (vidrec.audioBlob) {
+    // Staggered, same as the multi-page SVG export: Chrome's "allow multiple
+    // downloads?" permission prompt only appears once, and firing two saves in the
+    // same tick lets it swallow the second.
+    if (vidrec.blob) await new Promise(res => setTimeout(res, 250));
+    downloadBlobAs(vidrec.audioUrl, `${base}.${vidrec.audioExt}`);
+  }
 }

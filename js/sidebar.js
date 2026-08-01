@@ -413,7 +413,7 @@ function refreshHelp() {
     ["Shift (while drawing)", "Straight line, snapped to horizontal/vertical"],
     ["Wheel / Ctrl+Wheel", "Scroll / zoom at cursor"], ["Ctrl+0", "Reset zoom"],
     ["PgUp / PgDn", "Jump a page"], ["F5 / Space", "Record / play audio replay"],
-    ["F6", "Record the canvas as a video (no audio)"],
+    ["F6", "Record canvas video + separate audio file"],
     ["Ctrl+Click ink", "Jump audio to stroke"], ["Ctrl+Z / Ctrl+Y", "Undo / redo"],
     ["Ctrl+D", "Duplicate selection"], ["Ctrl+C / Ctrl+V", "Copy / paste selection"],
     ["Ctrl+S / Ctrl+O", "Save / open"],
