@@ -103,11 +103,30 @@ function warnFsUnavailable(err) {
     (err && err.message ? err.message : err) + ")"
   );
 }
+// Thrown when inkpad-index.json exists but isn't parseable — the classic result of losing power
+// mid-write, where the filesystem has already extended the file but the contents were never
+// flushed, leaving it truncated or NUL-padded. Distinguished from every other failure because
+// it's the one that's *recoverable*: the index is only a catalogue, while the actual notebooks
+// live as separate files under docs/, which a failed index write never touches.
+class FsIndexCorruptError extends Error {
+  constructor(raw, cause) {
+    super("The folder's index file (inkpad-index.json) is damaged and can't be read.");
+    this.name = "FsIndexCorruptError";
+    this.raw = raw;
+    this.cause = cause;
+  }
+}
+
 async function fsLoadIndex() {
   if (fsIndexCache) return fsIndexCache;
   try {
     const fh = await fsRoot.getFileHandle("inkpad-index.json");
-    fsIndexCache = JSON.parse(await (await fh.getFile()).text());
+    const text = await (await fh.getFile()).text();
+    try {
+      fsIndexCache = JSON.parse(text);
+    } catch (parseErr) {
+      throw new FsIndexCorruptError(text, parseErr);
+    }
   } catch (err) {
     // A missing index file means a genuinely new/empty folder — fine, start fresh there. Any OTHER
     // error (the drive was unplugged, the folder was deleted, permission is actually denied despite
@@ -127,6 +146,68 @@ async function fsSaveIndex() {
   const w = await fh.createWritable();
   await w.write(JSON.stringify(fsIndexCache));
   await w.close();
+}
+
+/* ---------------- damaged-index recovery ----------------
+   The index is a catalogue, not the content: every notebook's actual ink/text/images live in
+   its own docs/<id>.json, written separately. So a corrupt index means lost *names and folder
+   structure*, never lost notebooks — provided we rebuild rather than start over on top of it. */
+
+// Pulls whatever {"id":...,"name":...} pairs survived in the damaged text. Power-loss corruption
+// usually NUL-pads or truncates the tail, so the head is often still readable — worth scraping
+// before falling back to placeholder names. Deliberately regex, not a parser: the input is by
+// definition not valid JSON, and we only want the two fields.
+function fsSalvageNamesFromCorruptIndex(raw) {
+  const names = new Map();
+  if (typeof raw !== "string") return names;
+  const re = /"id"\s*:\s*"([^"]{1,64})"\s*,\s*"name"\s*:\s*"((?:[^"\\]|\\.){0,200})"/g;
+  let m;
+  while ((m = re.exec(raw))) {
+    try { names.set(m[1], JSON.parse(`"${m[2]}"`)); } catch (_) { names.set(m[1], m[2]); }
+  }
+  return names;
+}
+
+// Rebuilds inkpad-index.json from the docs/ directory. Every .json file there is one notebook,
+// named after its id. Non-destructive: the damaged file is copied aside first, never deleted, so
+// a better salvage attempt is still possible later.
+async function fsRebuildIndexFromDocs(raw) {
+  const salvaged = fsSalvageNamesFromCorruptIndex(raw);
+  if (typeof raw === "string" && raw.length) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    try {
+      const bh = await fsRoot.getFileHandle(`inkpad-index.damaged-${stamp}.json`, { create: true });
+      const bw = await bh.createWritable();
+      await bw.write(raw);
+      await bw.close();
+    } catch (_) {} // best effort — a failed backup must not block the recovery itself
+  }
+
+  const notebooks = [];
+  try {
+    const docs = await fsRoot.getDirectoryHandle("docs", { create: true });
+    for await (const [fname, h] of docs.entries()) {
+      if (h.kind !== "file" || !fname.endsWith(".json")) continue;
+      const id = fname.slice(0, -5);
+      let updatedAt = Date.now(), size = 0;
+      try { const f = await h.getFile(); updatedAt = f.lastModified || updatedAt; size = f.size; } catch (_) {}
+      if (!size) continue; // an empty doc file is the write that never landed — nothing to recover
+      notebooks.push({ id, name: salvaged.get(id) || "", folderId: null, createdAt: updatedAt, updatedAt, order: 0 });
+    }
+  } catch (err) {
+    throw new Error("Couldn't read the docs folder to rebuild from: " + (err && err.message ? err.message : err));
+  }
+
+  // Most-recently-edited first, so whatever was being worked on when the power went is at the top.
+  notebooks.sort((a, b) => b.updatedAt - a.updatedAt);
+  notebooks.forEach((nb, i) => {
+    nb.order = (i + 1) * 1000;
+    if (!nb.name) nb.name = `Recovered notebook ${i + 1}`;
+  });
+
+  fsIndexCache = { folders: [], notebooks, tombstones: [], stamps: [], rosters: [] };
+  await fsSaveIndex();
+  return { count: notebooks.length, named: notebooks.filter(n => !/^Recovered notebook /.test(n.name)).length };
 }
 async function fsGetAll(store) {
   try {
@@ -456,9 +537,43 @@ async function connectToFsHandle(handle, { silent } = {}) {
   let idx;
   try { idx = await fsLoadIndex(); }
   catch (err) {
-    fsRoot = null;
-    if (!silent) notifyDialog("Couldn't read that folder", (err && err.message ? err.message : String(err)));
-    return false;
+    // A damaged index is recoverable and worth offering to repair — the notebooks themselves are
+    // in docs/ and untouched by whatever broke this file. Never attempted silently: rewriting the
+    // index is a real change to the user's folder, so it waits for an explicit yes.
+    if (err instanceof FsIndexCorruptError && !silent) {
+      const ok = await confirmDialogAsync(
+        "This folder's index is damaged",
+        "The file listing your notebooks (inkpad-index.json) can't be read — usually the result of losing power mid-save.\n\n" +
+        "Your notebooks themselves are stored separately and are almost certainly fine. InkPad can rebuild the listing from them. " +
+        "The damaged file is kept as a copy, nothing is deleted, but folder structure will be lost and some notebooks may come back " +
+        "with placeholder names you'll want to rename.",
+        "Rebuild the listing",
+      );
+      if (ok) {
+        try {
+          const res = await fsRebuildIndexFromDocs(err.raw);
+          idx = await fsLoadIndex();
+          await notifyDialog(
+            "Folder rebuilt",
+            res.count
+              ? `Recovered ${res.count} notebook(s)${res.named ? `, ${res.named} with their original name` : ""}. ` +
+                `Anything named "Recovered notebook …" kept its contents but lost its name — rename it from the Files list.`
+              : "No notebook files were found in this folder's docs/ subfolder, so there was nothing to recover.",
+          );
+        } catch (rebuildErr) {
+          fsRoot = null;
+          notifyDialog("Couldn't rebuild the folder", (rebuildErr && rebuildErr.message ? rebuildErr.message : String(rebuildErr)));
+          return false;
+        }
+      } else {
+        fsRoot = null;
+        return false;
+      }
+    } else {
+      fsRoot = null;
+      if (!silent) notifyDialog("Couldn't read that folder", (err && err.message ? err.message : String(err)));
+      return false;
+    }
   }
 
   const isEmpty = idx.folders.length === 0 && idx.notebooks.length === 0;

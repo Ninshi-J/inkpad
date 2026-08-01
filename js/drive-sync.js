@@ -85,10 +85,22 @@ function loadGis() {
   return driveGisReady;
 }
 
+// Holds the current in-flight request's reject function so error_callback (below) can
+// fail it — GIS delivers those errors out-of-band, not through the per-request callback.
+let drivePendingTokenFail = null;
+
 function ensureDriveTokenClient() {
   if (!driveTokenClient) {
     driveTokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: DRIVE_CLIENT_ID, scope: DRIVE_SCOPE, callback: () => {},
+      client_id: DRIVE_CLIENT_ID, scope: DRIVE_SCOPE,
+      callback: () => {},
+      // Fires for failures that never reach `callback` at all: popup blocked, the GIS
+      // iframe failing to load, the user closing the sign-in window. Without this those
+      // cases leave the request promise pending forever, which surfaces as the whole UI
+      // sitting on "Loading your Drive library…" with no error and no way forward.
+      error_callback: err => {
+        if (drivePendingTokenFail) drivePendingTokenFail(err || new Error("Google sign-in didn't complete."));
+      },
     });
   }
   return driveTokenClient;
@@ -103,10 +115,30 @@ function ensureDriveTokenClient() {
      "select_account" — always show the account chooser. (Also the default when prompt is omitted.)
    So: "none" for background checks, "" for genuine user-initiated actions. Nothing here should
    ever use "consent" — that is a re-authorize action, not a sign-in. */
+// Every request is bounded by a timeout. A prompt:"none" attempt that Google simply
+// never answers is a real, observed failure mode — and with no deadline the promise
+// stays pending forever, hanging whatever awaited it with no error to report. A signed
+// -out user clicking Restore should get "couldn't load", not an eternal spinner.
+const DRIVE_SILENT_TIMEOUT_MS = 8000;        // no user interaction — should be quick or not at all
+const DRIVE_INTERACTIVE_TIMEOUT_MS = 180000; // a real person is typing a password; be generous
 function requestDriveToken(prompt) {
+  const silent = prompt === "none";
   return new Promise((resolve, reject) => {
-    driveTokenClient.callback = resp => resp.error ? reject(resp) : resolve(resp);
-    driveTokenClient.requestAccessToken({ prompt });
+    let done = false;
+    const timer = setTimeout(() => settle(reject, new Error(silent
+      ? "Google didn't respond to the silent sign-in check."
+      : "Google sign-in timed out.")), silent ? DRIVE_SILENT_TIMEOUT_MS : DRIVE_INTERACTIVE_TIMEOUT_MS);
+    function settle(fn, value) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      drivePendingTokenFail = null;
+      fn(value);
+    }
+    drivePendingTokenFail = err => settle(reject, err);
+    driveTokenClient.callback = resp => resp && resp.error ? settle(reject, resp) : settle(resolve, resp);
+    try { driveTokenClient.requestAccessToken({ prompt }); }
+    catch (err) { settle(reject, err); }
   });
 }
 
