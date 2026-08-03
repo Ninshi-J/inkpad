@@ -947,7 +947,10 @@
 <dialog id="helpDlg">
   <h2>InkPad shortcuts</h2>
   <div class="keys" id="helpKeys"></div>
-  <form method="dialog"><button autofocus>Close</button></form>
+  <form method="dialog" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+    <button type="button" id="helpMathRefBtn">📖 Math typesetting reference…</button>
+    <button autofocus>Close</button>
+  </form>
 </dialog>
 
 <dialog id="randomDlg" style="max-width:420px;width:min(420px,94vw);">
@@ -1012,7 +1015,18 @@
 <input type="file" id="fileImg" accept="image/*" multiple hidden>
 <input type="file" id="filePdf" accept="application/pdf" multiple hidden>
 <div id="colorPop"></div>
+<div id="mathHelpDlg-anchor"></div>
+<dialog id="mathHelpDlg" style="max-width:720px;width:min(720px,95vw)">
+  <h2>Math typesetting reference</h2>
+  <input id="mhelpSearch" type="search" placeholder="Search — try &quot;perpendicular&quot;, &quot;subscript&quot;, &quot;fraction&quot;, &quot;union&quot;…" autocomplete="off" spellcheck="false">
+  <div id="mhelpHint" class="mhelp-hint"></div>
+  <div id="mhelpBody" class="mhelp-body"></div>
+  <div id="mhelpEmpty" class="mhelp-loading" style="display:none">Nothing matches that. Try a plainer word — most symbols are findable by what they mean.</div>
+  <form method="dialog" style="text-align:right;margin-top:14px"><button>Close</button></form>
+</dialog>
+
 <div id="mathHelperPanel" class="math-helper">
+  <button type="button" id="mhOpenRef" class="mh-ref">📖 Full reference &amp; search…</button>
   <div class="mh-cat">Fractions &amp; powers</div>
   <div class="mh-grid">
     <button type="button" data-tpl="\frac{$1}{}" title="\frac{a}{b}">a⁄b</button>
@@ -1076,6 +1090,7 @@
 <script src="js/history.js"></script>
 <script src="js/render.js"></script>
 <script src="js/math-typeset.js"></script>
+<script src="js/math-help.js"></script>
 <script src="js/debug-hud.js"></script>
 <script src="js/input.js"></script>
 <script src="js/clipboard.js"></script>

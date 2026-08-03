@@ -314,6 +314,41 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
   background: #fff; cursor: pointer; color: var(--ink);
 }
 .math-helper .mh-grid button:hover { background: var(--accent-soft); border-color: var(--accent); }
+.math-helper .mh-ref {
+  display: block; width: 100%; margin-bottom: 8px; padding: 6px 8px; font: inherit; font-size: 12px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--chrome-2);
+  color: var(--ink); cursor: pointer; text-align: left;
+}
+.math-helper .mh-ref:hover { background: var(--accent-soft); border-color: var(--accent); }
+
+/* ---------- math typesetting reference dialog ---------- */
+#mhelpSearch {
+  font: inherit; font-size: 13px; width: 100%; padding: 8px 10px; margin-bottom: 8px;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
+}
+#mhelpSearch:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.mhelp-hint { color: var(--ink-soft); font-size: 12px; margin-bottom: 8px; min-height: 15px; }
+.mhelp-body { max-height: 58vh; overflow-y: auto; padding-right: 4px; }
+.mhelp-loading { color: var(--ink-soft); font-size: 12.5px; padding: 10px 2px; }
+.mhelp-cat {
+  font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-soft);
+  margin: 12px 0 6px; position: sticky; top: 0; background: var(--chrome); padding: 3px 0;
+}
+.mhelp-cat:first-child { margin-top: 0; }
+.mhelp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 5px; }
+.mhelp-item {
+  display: flex; align-items: center; gap: 8px; min-height: 38px;
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px;
+  background: #fff; cursor: pointer; text-align: left; overflow: hidden;
+}
+.mhelp-item:hover { background: var(--accent-soft); border-color: var(--accent); }
+.mhelp-item .mhelp-prev { flex: none; min-width: 30px; color: var(--ink); font-size: 15px; }
+/* Deliberately NOT direction:rtl (tried, to put the ellipsis on the left): backslashes and
+   braces are directionally neutral, so RTL reorders them and "\perp" displays as "perp\". */
+.mhelp-item code {
+  font-size: 11px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; unicode-bidi: plaintext;
+}
 
 /* ---------- dialogs ---------- */
 dialog {

@@ -97,6 +97,7 @@ wireRandomDlg();
 wireTimerWidget();
 wireStampDlg();
 wireFileMenu();
+wireMathHelpDlg();
 wireDriveMenu();
 resize();
 resizeMinimap();

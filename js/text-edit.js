@@ -412,6 +412,9 @@ function insertMathSnippet(tpl) {
 }
 function toggleMathHelper(btnEl) {
   const panel = $("mathHelperPanel");
+  // Bound here rather than at boot so it survives any future rebuild of the panel, and
+  // because this is the only place the panel becomes reachable.
+  $("mhOpenRef").onclick = () => { closeMathHelper(); openMathHelpDlg(); };
   if (panel.classList.contains("open")) { closeMathHelper(); return; }
   const r = btnEl.getBoundingClientRect();
   panel.style.left = Math.round(Math.min(r.left, innerWidth - 250)) + "px";
