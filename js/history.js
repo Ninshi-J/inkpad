@@ -58,6 +58,17 @@ function applyEntry(e, dir) { // dir: -1 undo, +1 redo
       e.ref.bb = strokeBB(e.ref);
       break;
     }
+    // Colour / thickness applied to already-drawn strokes from the selection toolbar. Separate
+    // from "transform" because nothing geometric moves -- only w needs the bounding box redone,
+    // since stroke width feeds into it.
+    case "style": {
+      e.items.forEach(it => {
+        const snap = undoing ? it.before : it.after;
+        if (snap.color !== undefined) it.ref.color = snap.color;
+        if (snap.w !== undefined) { it.ref.w = snap.w; it.ref.bb = strokeBB(it.ref); }
+      });
+      break;
+    }
     case "transform": {
       e.items.forEach(it => {
         const snap = undoing ? it.before : it.after;

@@ -65,7 +65,9 @@ cv.addEventListener("pointerdown", e => {
     return;
   }
 
-  if ((e.ctrlKey || e.metaKey) && audio.totalMs > 0 && V.tool !== "tape" && V.tool !== "timerObj" && V.tool !== "stopwatchObj") {
+  // Lasso is excluded: there Ctrl+click means "add to selection" (see the lasso branch below),
+  // which would otherwise be eaten by this audio-seek shortcut on any notebook that has audio.
+  if ((e.ctrlKey || e.metaKey) && audio.totalMs > 0 && V.tool !== "lasso" && V.tool !== "tape" && V.tool !== "timerObj" && V.tool !== "stopwatchObj") {
     const s = strokeAt(w.x, w.y);
     if (s && s.t != null) { seekAudio(s.t); startPlayback(); return; }
   }
@@ -115,12 +117,16 @@ cv.addEventListener("pointerdown", e => {
         };
         break;
       }
+      const additive = e.ctrlKey || e.metaKey;
       const b = selBounds();
-      if (b && w.x > b.x0 - 10 && w.x < b.x1 + 10 && w.y > b.y0 - 10 && w.y < b.y1 + 10) {
+      // With Ctrl held, a click inside the selection box must still be able to toggle the item
+      // under the cursor back OUT of the selection, so it deliberately skips the drag-to-move
+      // branch that would otherwise swallow it.
+      if (!additive && b && w.x > b.x0 - 10 && w.x < b.x1 + 10 && w.y > b.y0 - 10 && w.y < b.y1 + 10) {
         drag = { mode: "selMove", lx: w.x, ly: w.y, dx: 0, dy: 0 };
       } else {
-        clearSelection();
-        drag = { mode: "lassoNew", rect: e.shiftKey, partial: e.altKey, downPx: px, downPy: py, x0: w.x, y0: w.y, moved: false };
+        if (!additive) clearSelection(); // Ctrl builds on what's already picked
+        drag = { mode: "lassoNew", additive, rect: e.shiftKey, partial: e.altKey, downPx: px, downPy: py, x0: w.x, y0: w.y, moved: false };
         live = { mode: "lasso", pts: [{ x: w.x, y: w.y }], rect: e.shiftKey };
         if (clipboard.items.length || clipboard.crop) {
           const pasteAt = { x: w.x, y: w.y };
@@ -315,7 +321,19 @@ function endPointer(e) {
       const clickDist = Math.hypot(px - drag.downPx, py - drag.downPy);
       if (clickDist < 6) {
         const picked = pickObjectAt(w.x, w.y);
-        sel.items = picked ? [picked] : [];
+        // Ctrl/Cmd+click adds to (or removes from) the selection instead of replacing it, the
+        // usual modifier for this everywhere else. Ctrl+click on empty space deliberately keeps
+        // what's already selected -- with a plain click still one keystroke away, having a
+        // slightly-missed ctrl+click wipe a carefully built-up selection would be the worse
+        // failure. Matched by pointerdown's own ctrl handling so the click isn't consumed there.
+        if (drag.additive) {
+          if (picked) {
+            const i = sel.items.findIndex(it => it.ref === picked.ref);
+            if (i >= 0) sel.items.splice(i, 1); else sel.items.push(picked);
+          }
+        } else {
+          sel.items = picked ? [picked] : [];
+        }
         sel.shape = null;
       } else {
         finishLasso(drag.partial);

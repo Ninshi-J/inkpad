@@ -67,6 +67,9 @@ let driveGisReady = null;
 // failed silent token refresh into the interactive consent flow. Set true only around those
 // explicit user-initiated call trees; driveGetToken consults it below.
 let driveInteractiveAllowed = false;
+// Set when the auto-push loop had something to send but no usable token, so the status line can
+// explain the pause instead of leaving backups silently not happening.
+let driveAutoSyncPausedNoToken = false;
 async function withDriveInteractive(fn) {
   driveInteractiveAllowed = true;
   try { return await fn(); }
@@ -254,6 +257,17 @@ async function refreshDriveSignInStatus() {
   const el = $("fmDriveStatus");
   if (!el) return;
   if (!driveConfigured()) { el.textContent = ""; el.className = "fm-status"; return; }
+  // A still-valid stored token means signed in, with no need to ask Google anything.
+  if (driveValidToken()) {
+    el.textContent = "Signed in to Google Drive";
+    el.className = "fm-status signed-in";
+    return;
+  }
+  if (driveAutoSyncPausedNoToken) {
+    el.textContent = "Auto-sync paused — your Google session expired. Back up or restore once to resume it.";
+    el.className = "fm-status signed-out-lost";
+    return;
+  }
   try {
     await driveTrySilentToken();
     el.textContent = "Signed in to Google Drive";
@@ -1092,6 +1106,15 @@ function startDriveAutoPushLoop() {
     // Nothing changed since the last push? Then don't touch the network at all — see
     // driveHasLocalChangesToPush. An idle notebook should be completely silent.
     if (!driveHasLocalChangesToPush()) return;
+    // Hard rule: background work NEVER acquires a token, it only spends one that's already
+    // valid. Even prompt:"none" is serviced by GIS through a real popup window that opens and
+    // closes on its own, so acquiring one here means a window flashing over the page while
+    // someone is mid-sentence — which is precisely the complaint. When the hour-long token
+    // lapses, auto-sync quietly pauses rather than interrupting; the next deliberate Drive
+    // action (Back up, Restore, Manage) refreshes it and syncing resumes, and the File menu
+    // says so in the meantime.
+    if (!driveValidToken()) { driveAutoSyncPausedNoToken = true; refreshDriveSignInStatus(); return; }
+    driveAutoSyncPausedNoToken = false;
     try { await driveBackupNow(); } catch (_) {} // silent — don't nag every interval on transient failures
   }, DRIVE_AUTO_PUSH_INTERVAL_MS);
 }

@@ -507,6 +507,80 @@ function buildSelToolbarContent(showItems, showShape, editableImage) {
     mk("📋 Copy", () => copySelectionToClipboard(), "Copy this region (Ctrl+C)");
     mk("🧹 Clear", () => clearShapeSelection(), "Clear this region");
   }
+  // Restyling controls, only when the selection actually contains ink -- pointless (and
+  // misleading) hanging off a selection of images or text boxes.
+  const inkSel = selectedStrokes();
+  if (showItems && inkSel.length) {
+    sepEl();
+    const dot = document.createElement("span");
+    dot.className = "sel-width-dot";
+    host.appendChild(dot);
+    const rng = document.createElement("input");
+    rng.type = "range"; rng.className = "sel-width";
+    rng.min = 0; rng.max = PEN_SLIDER_STEPS;
+    rng.value = widthToSliderPos(inkSel[0].w);
+    rng.title = "Thickness of the selected ink";
+    const paintDot = () => {
+      const d = Math.max(4, Math.min(16, sliderPosToWidth(+rng.value) + 3));
+      dot.style.width = dot.style.height = d + "px";
+      dot.style.background = inkSel[0].color;
+    };
+    paintDot();
+    // Live preview while dragging, one undo entry when released -- dragging a slider shouldn't
+    // leave a hundred separate steps in the undo stack.
+    let styleBefore = null;
+    rng.oninput = () => {
+      if (!styleBefore) styleBefore = snapshotSelectionStyle(inkSel);
+      applyStrokeStyle(inkSel, { w: sliderPosToWidth(+rng.value) });
+      paintDot();
+    };
+    const commit = () => {
+      if (!styleBefore) return;
+      commitStrokeStyle(inkSel, styleBefore);
+      styleBefore = null;
+    };
+    rng.onchange = commit;
+    rng.onpointerup = commit;
+    host.appendChild(rng);
+    for (const c of paletteFor(inkSel[0].tool === "hl" ? "hl" : "pen")) {
+      const s = document.createElement("button");
+      s.className = "sel-swatch";
+      s.style.background = c;
+      s.title = `Recolor the selected ink`;
+      s.onclick = () => {
+        const before = snapshotSelectionStyle(inkSel);
+        applyStrokeStyle(inkSel, { color: c });
+        commitStrokeStyle(inkSel, before);
+        paintDot();
+      };
+      host.appendChild(s);
+    }
+  }
+}
+
+// Ink in the current selection. Highlighters and pens are both "strokes"; tapes/text/images have
+// no thickness or per-object palette, so they're simply not restyled.
+function selectedStrokes() {
+  return sel.items.filter(it => it.kind === "stroke").map(it => it.ref);
+}
+function snapshotSelectionStyle(refs) {
+  return refs.map(r => ({ ref: r, before: { color: r.color, w: r.w } }));
+}
+function applyStrokeStyle(refs, patch) {
+  for (const r of refs) {
+    if (patch.color !== undefined) r.color = patch.color;
+    if (patch.w !== undefined) { r.w = patch.w; r.bb = strokeBB(r); }
+  }
+  needsDraw = true;
+}
+function commitStrokeStyle(refs, before) {
+  const items = before
+    .map(b => ({ ref: b.ref, before: b.before, after: { color: b.ref.color, w: b.ref.w } }))
+    .filter(it => it.before.color !== it.after.color || it.before.w !== it.after.w);
+  if (!items.length) return;
+  pushUndo({ op: "style", items });
+  markDirty();
+  needsDraw = true;
 }
 function selEditableImage() {
   return sel.items.length === 1 && sel.items[0].kind === "image" && sel.items[0].ref.shapeGen ? sel.items[0].ref : null;
@@ -520,7 +594,11 @@ function positionSelToolbar() {
   const showShape = !!(sel.shape && shapeHasImageTarget());
   if ((!showItems && !showShape) || drag) { host.classList.remove("open"); return; }
   const editableImage = selEditableImage();
-  const sig = `${showItems}|${showShape}|${!!editableImage}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
+  // Deliberately keyed on the ink selection's SHAPE (how many, which palette) and never on its
+  // current width/colour — those change continuously while the slider is being dragged, and a
+  // rebuild mid-drag would destroy the very slider under the user's finger.
+  const inkSel = selectedStrokes();
+  const sig = `${showItems}|${showShape}|${!!editableImage}|${inkSel.length}|${inkSel[0] ? inkSel[0].tool : ""}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
   if (sig !== selToolbarSig) { selToolbarSig = sig; buildSelToolbarContent(showItems, showShape, editableImage); }
   const b = selBounds() || shapeBounds(sel.shape);
   if (!b) { host.classList.remove("open"); return; }
