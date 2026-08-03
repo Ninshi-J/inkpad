@@ -639,6 +639,163 @@ function buildFunctionPathD(fn, mapX, mapY, xMin, xMax, yMin, yMax) {
   return d.trim();
 }
 
+/* ---------------- automatic axis fitting ----------------
+   Working out a sensible Y range by hand is the tedious part of setting up a graph: "x from 0 to
+   100, y = 150x + 100" means squinting at the equation to realise the top of the line is 15100 and
+   the grid wants to count in 2000s. This samples the entered functions across the x range and
+   suggests the Y min/max plus both grid increments, offered as a one-click "Apply" hint under the
+   range fields rather than silently overwriting what the user typed. */
+const GRAPH_FIT_TOOLS = {
+  plane: {
+    xMin: "planeXMin", xMax: "planeXMax", yMin: "planeYMin", yMax: "planeYMax",
+    xStep: "planeXStep", yStep: "planeYStep",
+    textarea: "planeFunctions", hint: "planeFitHint", hintText: "planeFitText",
+  },
+  planeMath: {
+    xMin: "pmXMin", xMax: "pmXMax", yMin: "pmYMin", yMax: "pmYMax",
+    xStep: "pmXStep", yStep: "pmYStep",
+    fnList: "pmFnList", hint: "pmFitHint", hintText: "pmFitText",
+  },
+  // Quadrant 1 has no min fields at all — both axes start at 0 by definition.
+  planeQ1: {
+    xMin: null, xMax: "q1XMax", yMin: null, yMax: "q1YMax",
+    xStep: "q1XStep", yStep: "q1YStep",
+    fnList: "q1FnList", hint: "q1FitHint", hintText: "q1FitText", firstQuadrant: true,
+  },
+};
+const GRAPH_FIT_TARGET_LINES = 10; // matches the tools' own -5..5-by-1 default feel
+
+// Rounds a raw "range ÷ how many lines I want" figure to the nearest increment people actually
+// label axes with — 1, 2 or 5 times a power of ten (… 0.5, 1, 2, 5, 10, 20, 50, 100 …).
+function niceGridStep(range, targetLines) {
+  if (!Number.isFinite(range) || range <= 0) return 1;
+  const raw = range / Math.max(1, targetLines);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const mult = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return Math.max(0.001, Math.round(mult * mag * 1e6) / 1e6);
+}
+const tidyFitNum = v => Math.round(v * 1e6) / 1e6;
+
+// The y values the given functions actually occupy across [xMin, xMax]. Asymptotes would otherwise
+// decide the whole scale on their own (one sample next to x=0 in 1/x is worth millions), so when
+// the full min→max span dwarfs the middle 96% of samples the outliers are dropped and the bulk of
+// the curve gets fitted instead — flagged back to the caller so the hint can say so.
+function sampleFnYRange(fns, xMin, xMax) {
+  const steps = 400;
+  const ys = [];
+  for (const fn of fns) {
+    for (let k = 0; k <= steps; k++) {
+      const x = xMin + (xMax - xMin) * (k / steps);
+      let y;
+      try { y = fn(x); } catch (_) { continue; }
+      if (Number.isFinite(y)) ys.push(y);
+    }
+  }
+  if (!ys.length) return null;
+  ys.sort((a, b) => a - b);
+  const lo = ys[0], hi = ys[ys.length - 1];
+  const qLo = ys[Math.floor(ys.length * 0.02)], qHi = ys[Math.ceil(ys.length * 0.98) - 1];
+  if (qHi > qLo && hi - lo > (qHi - qLo) * 8) return { lo: qLo, hi: qHi, clipped: true };
+  return { lo, hi, clipped: false };
+}
+
+// Every non-empty, ticked expression for this tool, compiled. Rows that don't parse are skipped
+// silently here — they already surface as errors under the function list itself.
+function graphFitFns(cfg) {
+  const exprs = cfg.textarea
+    ? $(cfg.textarea).value.split("\n").map(l => l.trim()).filter(Boolean)
+    : Array.from($(cfg.fnList).querySelectorAll(".eq-row"))
+        .filter(r => r.querySelector(".eq-enabled").checked)
+        .map(r => r.querySelector(".eq-expr").value.trim())
+        .filter(Boolean);
+  const fns = [];
+  for (const e of exprs) {
+    try { fns.push(compileExpr(e)); } catch (_) {}
+  }
+  return fns;
+}
+
+// Returns {xStep, yStep?, yMin?, yMax?, clipped} — the Y range is only suggested when there's a
+// plottable function to derive it from; the increments are suggested either way, since a hand-typed
+// range like 0–100 still wants a grid of 10s rather than the default 1s.
+function suggestGraphFit(cfg) {
+  const xMin = cfg.xMin ? (parseFloat($(cfg.xMin).value) || 0) : 0;
+  const xMax = parseFloat($(cfg.xMax).value);
+  if (!Number.isFinite(xMax) || xMax <= xMin) return null;
+  const out = { xStep: niceGridStep(xMax - xMin, GRAPH_FIT_TARGET_LINES), clipped: false };
+
+  const fns = graphFitFns(cfg);
+  const span = fns.length ? sampleFnYRange(fns, xMin, xMax) : null;
+  if (span) {
+    let lo = span.lo, hi = span.hi;
+    if (cfg.firstQuadrant) {
+      if (hi <= 0) return out; // nothing of the curve is in quadrant 1 — no Y range worth proposing
+      lo = 0;
+    }
+    if (hi - lo <= 0) { // a constant function has no span of its own to scale to
+      const pad = Math.max(Math.abs(hi), 1) * 0.5;
+      hi += pad;
+      if (!cfg.firstQuadrant) lo -= pad;
+    }
+    const yStep = niceGridStep(hi - lo, GRAPH_FIT_TARGET_LINES);
+    out.yStep = yStep;
+    out.yMin = cfg.firstQuadrant ? 0 : tidyFitNum(Math.floor(lo / yStep + 1e-9) * yStep);
+    out.yMax = tidyFitNum(Math.ceil(hi / yStep - 1e-9) * yStep);
+    out.clipped = span.clipped;
+  } else {
+    const yMin = cfg.yMin ? (parseFloat($(cfg.yMin).value) || 0) : 0;
+    const yMax = parseFloat($(cfg.yMax).value);
+    if (Number.isFinite(yMax) && yMax > yMin) out.yStep = niceGridStep(yMax - yMin, GRAPH_FIT_TARGET_LINES);
+  }
+  return out;
+}
+
+const fitFieldDiffers = (id, want) => {
+  if (!id || want === undefined) return false;
+  const cur = parseFloat($(id).value);
+  return !Number.isFinite(cur) || Math.abs(cur - want) > Math.abs(want) * 1e-9 + 1e-9;
+};
+// Thousands separators here specifically: "16,000" is the whole point of the feature (reading
+// "15100" off a raw equation is the mental arithmetic it's meant to save).
+const fmtFitNum = v => Number(v).toLocaleString(undefined, { maximumFractionDigits: 6 });
+
+function applyGraphFit(type) {
+  const cfg = GRAPH_FIT_TOOLS[type];
+  if (!cfg) return;
+  const fit = suggestGraphFit(cfg);
+  if (!fit) return;
+  if (cfg.yMin && fit.yMin !== undefined) $(cfg.yMin).value = fit.yMin;
+  if (fit.yMax !== undefined) $(cfg.yMax).value = fit.yMax;
+  if (fit.yStep !== undefined) $(cfg.yStep).value = fit.yStep;
+  $(cfg.xStep).value = fit.xStep;
+  renderShapePreview();
+}
+
+// Shows/hides the "Apply" hint for whichever graph tool is open, listing only the values that
+// would actually change (so a graph that's already fitted shows nothing at all).
+function updateGraphFitHint() {
+  const type = $("shapeTypeSelect").value;
+  for (const [t, cfg] of Object.entries(GRAPH_FIT_TOOLS)) {
+    if (t !== type && $(cfg.hint)) $(cfg.hint).style.display = "none";
+  }
+  const cfg = GRAPH_FIT_TOOLS[type];
+  if (!cfg || !$(cfg.hint)) return;
+  let fit = null;
+  try { fit = suggestGraphFit(cfg); } catch (_) {}
+  const parts = [];
+  if (fit) {
+    if (fitFieldDiffers(cfg.yMin, fit.yMin)) parts.push(`Y min <b>${fmtFitNum(fit.yMin)}</b>`);
+    if (fitFieldDiffers(cfg.yMax, fit.yMax)) parts.push(`Y max <b>${fmtFitNum(fit.yMax)}</b>`);
+    if (fitFieldDiffers(cfg.yStep, fit.yStep)) parts.push(`Y grid <b>${fmtFitNum(fit.yStep)}</b>`);
+    if (fitFieldDiffers(cfg.xStep, fit.xStep)) parts.push(`X grid <b>${fmtFitNum(fit.xStep)}</b>`);
+  }
+  if (!parts.length) { $(cfg.hint).style.display = "none"; return; }
+  $(cfg.hintText).innerHTML = "Suggested fit: " + parts.join(" &middot; ") +
+    (fit.clipped ? ' <span style="opacity:.7;">(ignoring asymptote spikes)</span>' : "");
+  $(cfg.hint).style.display = "flex";
+}
+
 // Parses each raw field string as a plain positive number; returns null (not partial results)
 // if ANY value fails, since mixing a real number with a variable like "x" can't be scaled sensibly.
 function tryParseDims(strs) {

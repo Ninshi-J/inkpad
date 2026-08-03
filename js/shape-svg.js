@@ -1107,6 +1107,7 @@ function previewViewBoxFor(srcBox, labelSpecs) {
 }
 
 function renderShapePreview() {
+  updateGraphFitHint(); // before the build, so a momentarily-unbuildable graph still gets its hint
   let svgString, labelSpecs, srcBox, fnErrors;
   try {
     ({ svgString, labelSpecs, srcBox, fnErrors } = buildMathShapeSVG());
