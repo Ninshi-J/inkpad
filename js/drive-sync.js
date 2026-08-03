@@ -503,6 +503,25 @@ async function driveApplyTombstones(remoteDeleted) {
   return toRemove;
 }
 
+/* Is there anything at all to push? Answered PURELY LOCALLY — no Drive request, no token, no
+   Google contact of any kind. This exists because the 2-minute auto-push loop used to call
+   driveBackupNow() unconditionally, and that function's very first acts are driveFindFolder()
+   and driveFetchLibrarySnapshot() — real authenticated requests. So an idle notebook still
+   produced Drive traffic (and a token acquisition, which GIS services through a popup window
+   that opens and closes on its own) every two minutes, forever. The per-item "has this changed?"
+   dedup further down only ever ran *after* that damage was done.
+   Mirrors exactly what driveBackupNow would find changed, so it can never skip a real push. */
+function driveHasLocalChangesToPush() {
+  if (libNotebooks.some(nb => (nb.updatedAt || 0) > (nb.driveSyncedAt || 0))) return true;
+  // Both of these compare against the last-pushed JSON this session; a null cache means "never
+  // pushed from this device yet", which counts as needing a push.
+  if (driveLastPushedSettingsJson === null || driveLastPushedLibraryJson === null) return true;
+  try {
+    if (JSON.stringify({ version: 1, settings: currentSettingsSnapshot() }) !== driveLastPushedSettingsJson) return true;
+  } catch (_) { return true; }
+  return false;
+}
+
 async function driveBackupNow() {
   await flushAutosave(); // make sure the active notebook's own latest edits are in docdata first
   const folderId = (await driveFindFolder()) || (await driveCreateFolder());
@@ -1070,6 +1089,9 @@ function startDriveAutoPushLoop() {
   if (driveAutoTimer) return;
   driveAutoTimer = setInterval(async () => {
     if (!driveAutoSyncEnabled || !driveConfigured() || dirty) return; // dirty: let local autosave settle first
+    // Nothing changed since the last push? Then don't touch the network at all — see
+    // driveHasLocalChangesToPush. An idle notebook should be completely silent.
+    if (!driveHasLocalChangesToPush()) return;
     try { await driveBackupNow(); } catch (_) {} // silent — don't nag every interval on transient failures
   }, DRIVE_AUTO_PUSH_INTERVAL_MS);
 }

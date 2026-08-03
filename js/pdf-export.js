@@ -248,7 +248,7 @@ async function exportPdf(pages) {
         // textBaseline:"top" canvas rendering exactly; + size*ascent converts that top position
         // into this font's actual baseline, which is what PDF text drawing positions from.
         const baseline = t.y + k * t.size * 1.3 + t.size * ascent;
-        if (!lineHasMath(ln) && !lineHasFormatting(ln)) {
+        if (!lineNeedsMathPass(ln) && !lineHasFormatting(ln)) {
           page.drawText(ln, { x: X(t.x), y: Y(baseline), size: t.size * PT, font, color: rgb(r, g, b) });
           continue;
         }
@@ -387,7 +387,7 @@ async function svgTextEl(t, top) {
     const ln = lines[k];
     if (!ln) continue;
     const baseline = t.y - top + k * t.size * 1.3 + t.size * ascent;
-    if (!lineHasMath(ln) && !lineHasFormatting(ln)) {
+    if (!lineNeedsMathPass(ln) && !lineHasFormatting(ln)) {
       out += `<text x="${t.x}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(ln)}</text>\n`;
       continue;
     }

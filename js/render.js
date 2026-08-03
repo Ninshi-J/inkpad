@@ -242,16 +242,23 @@ function drawTexts() {
   for (const t of doc.texts) {
     if (t.del || t.hidden || !isLayerVisible(t.layer)) continue;
     ctx.font = textRunFont(t, false, false);
-    // fontBoundingBoxAscent/Descent are measured relative to whatever textBaseline is CURRENTLY
-    // set, not as absolute font metrics -- has to be read under "alphabetic" (ascent measured up
-    // from the real baseline) before switching to "top" for the actual fillText/drawImage calls
-    // below, or it comes back as ~0 (the "top" anchor is already roughly at the ascent line).
-    ctx.textBaseline = "alphabetic";
-    const ascent = ctx.measureText("M").fontBoundingBoxAscent || t.size * V.zoom * 0.8;
+    // Distance from the "top" anchor (what everything below is positioned against) DOWN to the
+    // alphabetic baseline, which is where inline math and underlines have to sit.
+    //
+    // This must NOT use fontBoundingBoxAscent: that's the font's *bounding box* ascent, sized to
+    // clear accents and diacritics, and it's far taller than where canvas actually places the
+    // "top" anchor. At 28px sans it reports 30 where the real top-to-baseline distance is 21.7 --
+    // so inline math was being drawn 9px below the line it belonged on, over a third of the font
+    // size, which is exactly the "math hangs well below the line" symptom.
+    //
+    // Measured under textBaseline="top" so it's relative to the same anchor being drawn from:
+    // "M" has a flat bottom sitting exactly on the baseline (no rounded overshoot, no descender),
+    // so its actualBoundingBoxDescent from the top anchor IS the baseline distance.
     ctx.textBaseline = "top";
+    const ascent = ctx.measureText("M").actualBoundingBoxDescent || t.size * V.zoom * 0.8;
     wrappedLines(t).forEach((ln, i) => {
       const y = sy(t.y + i * t.size * 1.3);
-      if (!lineHasMath(ln) && !lineHasFormatting(ln)) {
+      if (!lineNeedsMathPass(ln) && !lineHasFormatting(ln)) {
         ctx.font = textRunFont(t, false, false);
         ctx.fillStyle = t.color;
         ctx.fillText(ln, sx(t.x), y);
