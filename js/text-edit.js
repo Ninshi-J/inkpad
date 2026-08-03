@@ -54,7 +54,7 @@ function startTextEdit(x, y, existing) {
   }
   editingTextBefore = (t && !t.fresh) ? snapshotItem("text", t) : null;
   if (!t) {
-    t = { x, y, color: V.colorHex, size: V.textSize, font: V.textFont, w: null, lines: [], del: false, fresh: true, layer: currentLayerId() };
+    t = { x, y, color: V.colorHex, size: V.textSize, font: V.textFont, w: null, bg: null, lines: [], del: false, fresh: true, layer: currentLayerId() };
     doc.texts.push(t);
   }
   editingText = t;
@@ -65,6 +65,7 @@ function startTextEdit(x, y, existing) {
   textEdit.style.fontFamily = fontCss(t);
   textEdit.style.fontSize = (t.size * V.zoom) + "px";
   textEdit.style.color = t.color;
+  textEdit.style.background = t.bg || "transparent"; // so editing looks like the committed result
   if (t.w) { textEdit.classList.add("wrap"); textEdit.style.width = (t.w * V.zoom) + "px"; lastSetWidthPx = t.w * V.zoom; }
   else { textEdit.classList.remove("wrap"); syncTextEditAutoWidth(); }
   syncTextEditRows();
@@ -183,6 +184,9 @@ function applyTextFmt(patch) {
   if (patch.font !== undefined) { textEdit.style.fontFamily = fontCss(editingText); V.textFont = editingText.font; saveTextDefaults(); }
   if (patch.size !== undefined) { textEdit.style.fontSize = (editingText.size * V.zoom) + "px"; V.textSize = editingText.size; saveTextDefaults(); }
   if (patch.color !== undefined) { textEdit.style.color = editingText.color; setColor(editingText.color); }
+  // Deliberately NOT saved as a default for the next box, unlike font/size/colour: a white-out
+  // patch is a one-off fix for a particular spot, not a preference you want inherited.
+  if (patch.bg !== undefined) textEdit.style.background = editingText.bg || "transparent";
   if (patch.font !== undefined || patch.size !== undefined) { syncTextEditAutoWidth(); syncTextEditRows(); }
   needsDraw = true;
 }
@@ -306,6 +310,35 @@ function buildTextFmtBar() {
     fmtWrap.appendChild(b);
   });
   bar.appendChild(fmtWrap);
+
+  const sepBg = document.createElement("div"); sepBg.className = "tfb-sep"; bar.appendChild(sepBg);
+
+  // Background fill behind the whole box. White is the one people reach for most — it blanks out
+  // whatever is underneath (an imported PDF's own text, a stray stroke) so the box reads as a
+  // correction rather than as something layered on top.
+  const bgWrap = document.createElement("div"); bgWrap.className = "tfb-bg";
+  const BG_CHOICES = [
+    [null, "No background (see-through)"],
+    ["#FFFFFF", "White — covers whatever is underneath"],
+    ["#FFF3A3", "Yellow highlight"],
+    ["#CFE9FF", "Blue highlight"],
+    ["#D6F5D6", "Green highlight"],
+    ["#FFD9E0", "Pink highlight"],
+  ];
+  for (const [c, title] of BG_CHOICES) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tfb-bg-sw" + ((editingText.bg || null) === c ? " active" : "") + (c ? "" : " none");
+    if (c) b.style.background = c;
+    b.title = title;
+    b.onclick = () => {
+      applyTextFmt({ bg: c });
+      bgWrap.querySelectorAll(".tfb-bg-sw").forEach(el => el.classList.remove("active"));
+      b.classList.add("active");
+    };
+    bgWrap.appendChild(b);
+  }
+  bar.appendChild(bgWrap);
 
   const sep2b = document.createElement("div"); sep2b.className = "tfb-sep"; bar.appendChild(sep2b);
 

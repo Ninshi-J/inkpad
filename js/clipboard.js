@@ -4,7 +4,7 @@ const clipboard = { items: [], crop: null, pasteCount: 0 };
 function cloneForClipboard(kind, ref) {
   if (kind === "stroke") return { kind, tool: ref.tool, color: ref.color, w: ref.w, layer: ref.layer, pts: ref.pts.map(p => ({ ...p })) };
   if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, color: ref.color, layer: ref.layer };
-  if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, lines: ref.lines.slice(), layer: ref.layer };
+  if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, bg: ref.bg ?? null, lines: ref.lines.slice(), layer: ref.layer };
   if (kind === "timer") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, mode: ref.mode, durationMs: ref.durationMs, layer: ref.layer };
   return {
     kind, img: ref.img, data: ref.data, x: ref.x, y: ref.y, w: ref.w, h: ref.h,
@@ -176,7 +176,7 @@ function insertClipboardWithOffset(dx, dy) {
       copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, color: it.color, revealed: false, del: false, layer };
       doc.tapes.push(copy);
     } else if (it.kind === "text") {
-      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, lines: it.lines.slice(), del: false, layer };
+      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, bg: it.bg ?? null, lines: it.lines.slice(), del: false, layer };
       doc.texts.push(copy);
     } else if (it.kind === "timer") {
       // Pastes a fresh, stopped timer — never carries over a running/startWall state from the
@@ -275,7 +275,7 @@ async function loadStamps() {
 function stampableClone(kind, ref) {
   if (kind === "stroke") return { kind, tool: ref.tool, color: ref.color, w: ref.w, pts: ref.pts.map(p => ({ ...p })) };
   if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, color: ref.color };
-  if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, lines: ref.lines.slice() };
+  if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, bg: ref.bg ?? null, lines: ref.lines.slice() };
   if (kind === "timer") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, mode: ref.mode, durationMs: ref.durationMs };
   return {
     kind, data: ref.data, x: ref.x, y: ref.y, w: ref.w, h: ref.h, rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY,
@@ -378,7 +378,7 @@ function instantiateStampItems(items, dx, dy) {
       copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, color: it.color, revealed: false, del: false, layer };
       doc.tapes.push(copy);
     } else if (it.kind === "text") {
-      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, lines: it.lines.slice(), del: false, layer };
+      copy = { x: it.x + dx, y: it.y + dy, color: it.color, size: it.size, font: it.font, w: it.w, bg: it.bg ?? null, lines: it.lines.slice(), del: false, layer };
       doc.texts.push(copy);
     } else if (it.kind === "timer") {
       copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, mode: it.mode, durationMs: it.durationMs, running: false, baseMs: 0, startWall: null, del: false, layer };

@@ -282,6 +282,19 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
   background: #fff; cursor: pointer; color: var(--ink); line-height: 1;
 }
 #textFmtBar .tfb-math:hover, #textFmtBar .tfb-math.active { background: var(--accent-soft); border-color: var(--accent); }
+#textFmtBar .tfb-bg { display: flex; gap: 3px; align-items: center; }
+#textFmtBar .tfb-bg-sw {
+  width: 17px; height: 17px; padding: 0; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--line); background: #fff;
+}
+#textFmtBar .tfb-bg-sw.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The "no background" choice: a red diagonal over a transparency checkerboard, so it reads as
+   "see-through" rather than as a second white swatch sitting next to the real white one. */
+#textFmtBar .tfb-bg-sw.none {
+  background:
+    linear-gradient(to top right, transparent 44%, #C4453D 44%, #C4453D 56%, transparent 56%),
+    conic-gradient(#E9E6DE 25%, #fff 0 50%, #E9E6DE 0 75%, #fff 0) 0 0 / 8px 8px;
+}
 #textFmtBar .tfb-fmt { display: flex; gap: 3px; }
 #textFmtBar .tfb-fmt button {
   font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;

@@ -353,6 +353,11 @@ function renderPageThumbnail(p, thumbW, asCanvas) {
   thumbCtx.textBaseline = "top";
   for (const t of doc.texts) {
     if (t.del || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
+    if (t.bg) {
+      const r = textBB(t);
+      thumbCtx.fillStyle = t.bg;
+      thumbCtx.fillRect(r.x0 * scale, (r.y0 - top) * scale, (r.x1 - r.x0) * scale, (r.y1 - r.y0) * scale);
+    }
     thumbCtx.fillStyle = t.color;
     thumbCtx.font = `${Math.max(6, t.size * scale)}px ${fontCss(t)}`;
     wrappedLines(t).forEach((ln, i) => thumbCtx.fillText(ln, t.x * scale, (t.y - top + i * t.size * 1.3) * scale));
@@ -452,7 +457,7 @@ async function serialize(pages) {
       pts: s.pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round((p.p ?? .5) * 100) / 100]),
     })),
     tapes: src.tapes.map(({ x, y, w, h, color, revealed, layer }) => ({ x, y, w, h, color, revealed, layer })),
-    texts: src.texts.map(({ x, y, color, size, font, w, lines, layer }) => ({ x, y, color, size, font, w, lines, layer })),
+    texts: src.texts.map(({ x, y, color, size, font, w, bg, lines, layer }) => ({ x, y, color, size, font, w, bg: bg ?? null, lines, layer })),
     images: src.images.map(({ data, x, y, w, h, rot, flipX, flipY, pdfSrcId, pdfPageIndex, pdfBox, pdfWholePage, shapeGen, layer }) => {
       const hasVectorSrc = pdfSrcId != null && pdfSourcesOut[pdfSrcId] != null;
       // A whole-page PDF import doesn't need its rendered raster preview saved too once the

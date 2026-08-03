@@ -241,6 +241,14 @@ function textRunFont(t, bold, italic) {
 function drawTexts() {
   for (const t of doc.texts) {
     if (t.del || t.hidden || !isLayerVisible(t.layer)) continue;
+    if (t.bg) {
+      // Painted first so it sits behind this box's own text, but it's drawn inside drawTexts()
+      // rather than earlier, so it also covers anything underneath — ink, an imported PDF page —
+      // which is the point of being able to white a background out.
+      const r = textBB(t);
+      ctx.fillStyle = t.bg;
+      ctx.fillRect(sx(r.x0), sy(r.y0), (r.x1 - r.x0) * V.zoom, (r.y1 - r.y0) * V.zoom);
+    }
     ctx.font = textRunFont(t, false, false);
     // Distance from the "top" anchor (what everything below is positioned against) DOWN to the
     // alphabetic baseline, which is where inline math and underlines have to sit.

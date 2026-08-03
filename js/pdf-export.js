@@ -246,6 +246,16 @@ async function exportPdf(pages) {
 
     for (const t of doc.texts) {
       if (t.del || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
+      if (t.bg) {
+        // Drawn before this box's glyphs but after the page's ink, so it covers what's beneath —
+        // the whole point of a white-out patch. Same rect as the canvas uses (textBB).
+        const bb = textBB(t);
+        const [br, bgc, bb2] = hexToRgb01(t.bg);
+        page.drawRectangle({
+          x: X(bb.x0), y: Y(bb.y1), width: (bb.x1 - bb.x0) * PT, height: (bb.y1 - bb.y0) * PT,
+          color: rgb(br, bgc, bb2),
+        });
+      }
       const [r, g, b] = hexToRgb01(t.color);
       const font = pdfFontFor(t);
       const paras = (t.lines.length ? t.lines : [""]).map(sanitizeForWinAnsi);
@@ -391,6 +401,11 @@ async function svgTextEl(t, top) {
   const family = fontCss(t).replace(/"/g, "'");
   measureCtx.font = `${t.size}px ${fontCss(t)}`;
   let out = "";
+  if (t.bg) {
+    const bb = textBB(t);
+    out += `<rect x="${bb.x0.toFixed(2)}" y="${(bb.y0 - top).toFixed(2)}" ` +
+      `width="${(bb.x1 - bb.x0).toFixed(2)}" height="${(bb.y1 - bb.y0).toFixed(2)}" fill="${t.bg}"/>\n`;
+  }
   const lines = wrappedLines(t);
   for (let k = 0; k < lines.length; k++) {
     const ln = lines[k];
