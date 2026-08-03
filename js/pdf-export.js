@@ -75,15 +75,24 @@ async function exportPdf(pages) {
   // Mirrors wrapParagraph()'s greedy word-wrap but measures with pdf-lib's font metrics instead
   // of a canvas context, and operates on the already WinAnsi-sanitized text (the substituted
   // ASCII stand-ins for e.g. "θ" render at a different width than the glyph they replace).
+  // Same atom rule as the canvas (js/state.js): a "$...$" run is never split, because each half
+  // would lose its matching delimiter and export as raw LaTeX. Math is measured by its source
+  // width here rather than its rendered width -- an overestimate, so a line may break slightly
+  // early, but it can never split a formula, which is the failure that actually matters.
   function wrapParagraphPdf(font, text, maxWidth, size) {
     if (!text) return [""];
-    const words = text.split(" ");
     const lines = [];
-    let cur = "";
-    for (const word of words) {
-      const test = cur ? cur + " " + word : word;
-      if (!cur || font.widthOfTextAtSize(test, size) <= maxWidth) cur = test;
-      else { lines.push(cur); cur = word; }
+    let cur = "", curW = 0;
+    const widthOf = s => { try { return font.widthOfTextAtSize(s, size); } catch (_) { return 0; } };
+    for (const a of textAtoms(text)) {
+      if (!cur && a.space) continue;
+      const w = widthOf(a.s);
+      if (cur && !a.space && curW + w > maxWidth) {
+        lines.push(cur.replace(/ +$/, ""));
+        cur = a.s; curW = w;
+        continue;
+      }
+      cur += a.s; curW += w;
     }
     lines.push(cur);
     return lines;

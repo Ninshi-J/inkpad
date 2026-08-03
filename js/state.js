@@ -158,18 +158,49 @@ function pdfAscentFor(t) { return (FONT_STACKS[t.font] || FONT_STACKS[DEFAULT_FO
 const measureCanvas = document.createElement("canvas");
 const measureCtx = measureCanvas.getContext("2d");
 
+/* Breaks a line into the smallest pieces wrapping is allowed to separate. A whole "$...$" run is
+   ONE atom: splitting it would strand its delimiters on different lines, and each half — no longer
+   having a matching "$" — stops being math and renders as raw LaTeX. Spaces are kept as their own
+   atoms so a break can consume one rather than leaving it dangling at the end of a line. */
+function textAtoms(line) {
+  const atoms = [];
+  for (const run of splitMathRuns(line)) {
+    if (run.math !== undefined) { atoms.push({ s: "$" + run.math + "$", math: run.math }); continue; }
+    for (const part of run.text.split(/( +)/)) {
+      if (part) atoms.push({ s: part, space: part[0] === " " });
+    }
+  }
+  return atoms;
+}
+/* Width an atom actually occupies once drawn. Math is measured at its RENDERED size, not at the
+   width of its LaTeX source — "$\frac{1}{2}$" is 13 characters of source that draws about as wide
+   as one, so measuring the source made a box wrap several words early and look badly overfull.
+   While a span is still rasterizing getMathSpan returns null and the source width stands in; the
+   render sets needsDraw when it lands, so the next frame re-wraps with the real figure. */
+function atomWidth(a, t) {
+  if (a.math !== undefined && t) {
+    const span = getMathSpan(a.math, mathSizePx(t.size), t.color);
+    if (span && span.w && !span.failed) return span.w;
+  }
+  return measureCtx.measureText(a.s).width;
+}
 // Greedy word-wrap: breaks `text` into lines no wider than `maxWidth` (world-space px) at
-// measureCtx's current font. A single word wider than maxWidth is left on its own line rather
-// than broken mid-word.
-function wrapParagraph(text, maxWidth) {
+// measureCtx's current font. A single word (or one "$...$" formula) wider than maxWidth is left
+// on its own line rather than broken up. `t` is the text object, needed only to measure math at
+// its rendered size; without it math falls back to its source width.
+function wrapParagraph(text, maxWidth, t) {
   if (!text) return [""];
-  const words = text.split(" ");
   const lines = [];
-  let cur = "";
-  for (const word of words) {
-    const test = cur ? cur + " " + word : word;
-    if (!cur || measureCtx.measureText(test).width <= maxWidth) cur = test;
-    else { lines.push(cur); cur = word; }
+  let cur = "", curW = 0;
+  for (const a of textAtoms(text)) {
+    if (!cur && a.space) continue; // a break already consumed the gap; don't indent the new line
+    const w = atomWidth(a, t);
+    if (cur && !a.space && curW + w > maxWidth) {
+      lines.push(cur.replace(/ +$/, ""));
+      cur = a.s; curW = w;
+      continue;
+    }
+    cur += a.s; curW += w;
   }
   lines.push(cur);
   return lines;
@@ -182,7 +213,7 @@ function wrappedLines(t) {
   if (!t.w) return paras;
   measureCtx.font = `${t.size}px ${fontCss(t)}`;
   const out = [];
-  for (const para of paras) out.push(...wrapParagraph(para, t.w));
+  for (const para of paras) out.push(...wrapParagraph(para, t.w, t));
   return out;
 }
 function setColor(hex) {
