@@ -144,7 +144,7 @@ function replaceGeneratedShape(im, svgString, genParams) {
    thickness. Persisted in localStorage and mirrored into the same settings snapshot as
    keymap/palette/text defaults (see currentSettingsSnapshot/applySettingsSnapshot in storage.js),
    so it follows a teacher between devices the same way those already do. */
-const SHAPE_DEFAULTS_FALLBACK = { graphFontSize: 20, graphGridThickness: 2, graphSizeFrac: 0.3125, shapeSizeFrac: 0.25 };
+const SHAPE_DEFAULTS_FALLBACK = { graphFontSize: 20, graphGridThickness: 2, graphSizeFrac: 0.3125, shapeSizeFrac: 0.25, tickFormat: "auto" };
 let shapeDefaults = { ...SHAPE_DEFAULTS_FALLBACK };
 function loadShapeDefaults() {
   shapeDefaults = { ...SHAPE_DEFAULTS_FALLBACK };
@@ -166,7 +166,18 @@ function applyShapeDefaultsToImporter() {
     const fontEl = $(`${prefix}FontSize`), gridEl = $(`${prefix}GridThickness`);
     if (fontEl) { fontEl.value = shapeDefaults.graphFontSize; const v = $(`${prefix}FontVal`); if (v) v.textContent = fontEl.value; }
     if (gridEl) { gridEl.value = shapeDefaults.graphGridThickness; const v = $(`${prefix}GridThickVal`); if (v) v.textContent = gridEl.value; }
+    // Tick number format is seeded the same way rather than being a per-diagram field: a teacher
+    // who works to 2 significant figures wants that on every graph, not re-picked each time.
+    const fmtEl = $(`${prefix}TickFmt`);
+    if (fmtEl) fmtEl.value = shapeDefaults.tickFormat || "auto";
   }
+}
+// Changing the format in any graph tool makes it the starting point for the next graph too.
+// (Re-editing a placed graph still restores that graph's own saved format — applyShapeGenParams
+// runs after this seeding, so the snapshot wins.)
+function setGraphTickFmtDefault(v) {
+  shapeDefaults.tickFormat = v;
+  saveShapeDefaults();
 }
 // Populates/commits the "Shapes & Graphs" category's fields inside the unified #settingsDlg
 // (js/settings-ui.js) — these two used to open/save a dedicated #shapeDefaultsDlg, folded into
@@ -188,7 +199,10 @@ function resetShapeDefaultsFields() {
   $("sdShapeSizeFrac").value = shapePct; $("sdShapeSizeVal").textContent = shapePct;
 }
 function commitShapeDefaultsFromSettingsDlg() {
+  // Spread first: this dialog only edits four of the defaults, and rebuilding the object from
+  // just its own fields would silently drop any the dialog doesn't show (e.g. tickFormat).
   shapeDefaults = {
+    ...shapeDefaults,
     graphFontSize: parseInt($("sdGraphFontSize").value) || SHAPE_DEFAULTS_FALLBACK.graphFontSize,
     graphGridThickness: parseFloat($("sdGraphGridThickness").value) || SHAPE_DEFAULTS_FALLBACK.graphGridThickness,
     graphSizeFrac: (parseFloat($("sdGraphSizeFrac").value) || SHAPE_DEFAULTS_FALLBACK.graphSizeFrac * 100) / 100,
@@ -760,15 +774,43 @@ const fitFieldDiffers = (id, want) => {
 // "15100" off a raw equation is the mental arithmetic it's meant to save).
 const fmtFitNum = v => Number(v).toLocaleString(undefined, { maximumFractionDigits: 6 });
 
+// An axis divided into this many steps is readable, so a grid increment landing in the band is
+// left alone even when the fit would have chosen differently — 0–40 in 10s is a deliberate choice,
+// not a mistake to be nagged about, and only a grid too coarse or too dense to read is worth
+// flagging. Range fixes have no such band: a Y max that cuts the curve off is simply wrong.
+const FIT_MIN_DIVS = 4, FIT_MAX_DIVS = 20;
+const fitStepUnreadable = (id, range) => {
+  const step = parseFloat($(id).value);
+  if (!Number.isFinite(step) || step <= 0 || !(range > 0)) return true;
+  const divs = range / step;
+  return divs < FIT_MIN_DIVS || divs > FIT_MAX_DIVS;
+};
+// The fields the hint offers to change, keyed by config field name — the single source of truth
+// for both the hint text and what Apply writes, so the two can never disagree.
+function graphFitChanges(cfg) {
+  const fit = suggestGraphFit(cfg);
+  if (!fit) return null;
+  const xMin = cfg.xMin ? (parseFloat($(cfg.xMin).value) || 0) : 0;
+  const xMax = parseFloat($(cfg.xMax).value);
+  // Grid increments are judged against the range as it will stand AFTER the fit is applied —
+  // a step of 1 is fine on today's 0–10 axis but useless once the axis becomes 0–16000.
+  const yMin = fit.yMin !== undefined ? fit.yMin : (cfg.yMin ? (parseFloat($(cfg.yMin).value) || 0) : 0);
+  const yMax = fit.yMax !== undefined ? fit.yMax : parseFloat($(cfg.yMax).value);
+  const out = { clipped: fit.clipped, fields: {} };
+  if (fitFieldDiffers(cfg.yMin, fit.yMin)) out.fields.yMin = fit.yMin;
+  if (fitFieldDiffers(cfg.yMax, fit.yMax)) out.fields.yMax = fit.yMax;
+  if (fitFieldDiffers(cfg.yStep, fit.yStep) && fitStepUnreadable(cfg.yStep, yMax - yMin)) out.fields.yStep = fit.yStep;
+  if (fitFieldDiffers(cfg.xStep, fit.xStep) && fitStepUnreadable(cfg.xStep, xMax - xMin)) out.fields.xStep = fit.xStep;
+  return out;
+}
+
 function applyGraphFit(type) {
   const cfg = GRAPH_FIT_TOOLS[type];
-  if (!cfg) return;
-  const fit = suggestGraphFit(cfg);
-  if (!fit) return;
-  if (cfg.yMin && fit.yMin !== undefined) $(cfg.yMin).value = fit.yMin;
-  if (fit.yMax !== undefined) $(cfg.yMax).value = fit.yMax;
-  if (fit.yStep !== undefined) $(cfg.yStep).value = fit.yStep;
-  $(cfg.xStep).value = fit.xStep;
+  const changes = cfg && graphFitChanges(cfg);
+  if (!changes) return;
+  for (const [key, val] of Object.entries(changes.fields)) {
+    if (cfg[key]) $(cfg[key]).value = val;
+  }
   renderShapePreview();
 }
 
@@ -781,18 +823,15 @@ function updateGraphFitHint() {
   }
   const cfg = GRAPH_FIT_TOOLS[type];
   if (!cfg || !$(cfg.hint)) return;
-  let fit = null;
-  try { fit = suggestGraphFit(cfg); } catch (_) {}
-  const parts = [];
-  if (fit) {
-    if (fitFieldDiffers(cfg.yMin, fit.yMin)) parts.push(`Y min <b>${fmtFitNum(fit.yMin)}</b>`);
-    if (fitFieldDiffers(cfg.yMax, fit.yMax)) parts.push(`Y max <b>${fmtFitNum(fit.yMax)}</b>`);
-    if (fitFieldDiffers(cfg.yStep, fit.yStep)) parts.push(`Y grid <b>${fmtFitNum(fit.yStep)}</b>`);
-    if (fitFieldDiffers(cfg.xStep, fit.xStep)) parts.push(`X grid <b>${fmtFitNum(fit.xStep)}</b>`);
-  }
+  let changes = null;
+  try { changes = graphFitChanges(cfg); } catch (_) {}
+  const LABELS = { yMin: "Y min", yMax: "Y max", yStep: "Y grid", xStep: "X grid" };
+  const parts = changes
+    ? Object.entries(changes.fields).map(([k, v]) => `${LABELS[k]} <b>${fmtFitNum(v)}</b>`)
+    : [];
   if (!parts.length) { $(cfg.hint).style.display = "none"; return; }
   $(cfg.hintText).innerHTML = "Suggested fit: " + parts.join(" &middot; ") +
-    (fit.clipped ? ' <span style="opacity:.7;">(ignoring asymptote spikes)</span>' : "");
+    (changes.clipped ? ' <span style="opacity:.7;">(ignoring asymptote spikes)</span>' : "");
   $(cfg.hint).style.display = "flex";
 }
 

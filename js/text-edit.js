@@ -325,19 +325,37 @@ function buildTextFmtBar() {
     ["#D6F5D6", "Green highlight"],
     ["#FFD9E0", "Pink highlight"],
   ];
+  const curBg = editingText.bg || null;
+  const clearBgActive = () => bgWrap.querySelectorAll(".active").forEach(el => el.classList.remove("active"));
   for (const [c, title] of BG_CHOICES) {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "tfb-bg-sw" + ((editingText.bg || null) === c ? " active" : "") + (c ? "" : " none");
+    b.className = "tfb-bg-sw" + (curBg === c ? " active" : "") + (c ? "" : " none");
     if (c) b.style.background = c;
     b.title = title;
     b.onclick = () => {
       applyTextFmt({ bg: c });
-      bgWrap.querySelectorAll(".tfb-bg-sw").forEach(el => el.classList.remove("active"));
+      clearBgActive();
       b.classList.add("active");
     };
     bgWrap.appendChild(b);
   }
+  // Custom background colour, mirroring the custom text colour further along the bar. The six
+  // presets cover the usual cases, but not e.g. matching a colour already used on the page.
+  // Shows as active whenever the box's background isn't one of the presets.
+  const bgInp = document.createElement("input");
+  bgInp.type = "color";
+  bgInp.className = "tfb-bg-custom" + (BG_CHOICES.some(([c]) => c === curBg) ? "" : " active");
+  // Opens on the current background when there is one; otherwise on a highlighter yellow rather
+  // than white, which is already a preset a click away.
+  bgInp.value = /^#[0-9a-f]{6}$/i.test(curBg || "") ? curBg : "#FFF3A3";
+  bgInp.title = "Custom background colour";
+  bgInp.oninput = () => {
+    applyTextFmt({ bg: bgInp.value });
+    clearBgActive();
+    bgInp.classList.add("active");
+  };
+  bgWrap.appendChild(bgInp);
   bar.appendChild(bgWrap);
 
   const sep2b = document.createElement("div"); sep2b.className = "tfb-sep"; bar.appendChild(sep2b);

@@ -185,6 +185,7 @@ function closeFileMenu() {
 function fileMenuOutside(e) { if (!$("fileMenu").contains(e.target)) closeFileMenu(); }
 function wireFileMenu() {
   $("fmImage").onclick = () => { closeFileMenu(); $("fileImg").click(); };
+  $("fmPasteImage").onclick = () => { closeFileMenu(); pasteImageFromSystemClipboard(); };
   $("fmPdfIn").onclick = () => { closeFileMenu(); $("filePdf").click(); };
   $("fmExport").onclick = () => { closeFileMenu(); openExportDialog(); };
   $("fmSave").onclick = () => { closeFileMenu(); saveFile(); };
@@ -210,15 +211,20 @@ function beginRemap(id, kbdEl) {
 }
 
 /* ---------------- keyboard ---------------- */
-addEventListener("keydown", e => {
-  // Any open <dialog> (shape importer, confirm, page picker, name prompt…) or an in-place rename
-  // in the Files tree owns the keyboard while it's up — without this, typing into e.g. a "New
-  // notebook" name field would also fire canvas hotkeys like the digit-key color presets. The
-  // floating timer widget's custom minute/second fields are a plain (non-<dialog>) panel, so they
-  // need their own check here too — same bug, since those inputs slipped through this guard.
+// True while something other than the canvas owns the keyboard: any open <dialog> (shape importer,
+// confirm, page picker, name prompt…), an in-place rename in the Files tree, or a focused text
+// field. Without this, typing into e.g. a "New notebook" name field would also fire canvas hotkeys
+// like the digit-key color presets. The floating timer widget's custom minute/second fields are a
+// plain (non-<dialog>) panel, so the INPUT/TEXTAREA check covers those too.
+// Also consulted by the system-paste handler in images.js, so a Ctrl+V into any of these stays an
+// ordinary text paste instead of dropping an image on the page behind them.
+function uiOwnsKeyboard() {
   const ae = document.activeElement;
-  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
-  if (editingText || libEditingName || document.querySelector("dialog[open]")) return;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return true;
+  return !!(editingText || libEditingName || document.querySelector("dialog[open]"));
+}
+addEventListener("keydown", e => {
+  if (uiOwnsKeyboard()) return;
   const k = e.key.toLowerCase();
   if (pendingPlacement) {
     if (k === "escape") { pendingPlacement = null; needsDraw = true; e.preventDefault(); }
@@ -246,7 +252,10 @@ addEventListener("keydown", e => {
   if (C && k === "e") { openExportDialog(); return handled(); }
   if (C && k === "d") { duplicateSelection(); return handled(); }
   if (C && k === "c") { copySelectionToClipboard(); return handled(); }
-  if (C && k === "v") { pasteFromClipboard(); return handled(); }
+  // Ctrl+V is deliberately absent here. Calling preventDefault() on the keydown suppresses the
+  // browser's own `paste` event, and that event is the only way to see what is actually on the
+  // system clipboard (a screenshot copied from another app). onSystemPaste() in images.js is the
+  // single dispatcher for both kinds of paste — external image, or the in-app selection clipboard.
   if (C && k === "0") { setZoom(1); return handled(); }
   if (C) return;
 

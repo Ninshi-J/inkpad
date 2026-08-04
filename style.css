@@ -288,6 +288,15 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
   border: 1px solid var(--line); background: #fff;
 }
 #textFmtBar .tfb-bg-sw.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Custom-colour picker, sized to sit in the same row as the preset swatches. The inner padding
+   reset is what stops browsers rendering a white frame around the colour itself. */
+#textFmtBar .tfb-bg-custom {
+  width: 17px; height: 17px; padding: 0; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--line); background: none;
+}
+#textFmtBar .tfb-bg-custom::-webkit-color-swatch-wrapper { padding: 0; }
+#textFmtBar .tfb-bg-custom::-webkit-color-swatch { border: none; border-radius: 3px; }
+#textFmtBar .tfb-bg-custom.active { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The "no background" choice: a red diagonal over a transparency checkerboard, so it reads as
    "see-through" rather than as a second white swatch sitting next to the real white one. */
 #textFmtBar .tfb-bg-sw.none {

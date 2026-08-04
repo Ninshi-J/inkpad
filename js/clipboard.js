@@ -134,12 +134,29 @@ async function clearShapeSelection() {
   }
 }
 
+// A copy inside InkPad has to stake its claim on the SYSTEM clipboard too, not just the in-app
+// one. Paste is dispatched from the browser's paste event (see onSystemPaste in images.js), which
+// treats the system clipboard as the record of what the user copied most recently — so a
+// screenshot pasted in earlier would otherwise still be sitting there and win over this selection.
+// Any selected text goes along for the ride, so a text box can be copied straight out into another
+// app; a selection with no text falls back to a plain description of what was copied.
+function claimSystemClipboardForSelection(items) {
+  const text = items.filter(i => i.kind === "text").map(i => i.lines.join("\n")).join("\n\n");
+  const n = items.length;
+  const payload = text || `[InkPad selection: ${n} item${n === 1 ? "" : "s"}]`;
+  // Fired synchronously inside the Ctrl+C gesture (Safari rejects a clipboard write once the
+  // activation has been awaited away), and best-effort — a blocked write just means the old
+  // fallback behaviour, never an error.
+  try { navigator.clipboard?.writeText(payload).catch(() => {}); } catch (_) {}
+}
+
 async function copySelectionToClipboard() {
   if (!sel.items.length && !sel.shape) return;
   const items = sel.items.map(({ kind, ref }) => cloneForClipboard(kind, ref));
   clipboard.items = items;
   clipboard.crop = null;
   clipboard.pasteCount = 0;
+  claimSystemClipboardForSelection(items); // may be superseded by the crop image write below
 
   if (sel.shape) {
     const wholeImages = new Set(sel.items.filter(it => it.kind === "image").map(it => it.ref));
