@@ -52,7 +52,7 @@ const DRIVE_LIBRARY_FILE_ID_KEY = "inkpad.driveLibraryFileId";
 const DRIVE_AUTO_SYNC_KEY = "inkpad.driveAutoSync";
 const DRIVE_EVER_SIGNED_IN_KEY = "inkpad.driveEverSignedIn";
 const DRIVE_LAST_SEEN_KEY = "inkpad.driveLastSeenModified";
-const DRIVE_AUTO_PUSH_INTERVAL_MS = 2 * 60000;
+const DRIVE_AUTO_SYNC_INTERVAL_MS = 30000;
 
 function driveConfigured() { return !!DRIVE_CLIENT_ID; }
 function driveSanitizeName(name) { return ((name || "Untitled").replace(/[\\/:*?"<>|]/g, "-").trim() || "Untitled"); }
@@ -666,13 +666,18 @@ async function driveBackupNow() {
 }
 
 // Downloads just the notebooks Drive holds newer copies of, without yanking the user out of
-// whatever they currently have open (driveRestoreSelected switches to what it restored, which is
-// right when it's the whole point of the click, wrong as a side effect of a backup).
+// whatever they currently have open. skipActiveSwitch on the underlying restore means it never
+// jumps away from the current view on its own; the only view change here is reloading the ACTIVE
+// notebook's own content, and only if it was itself one of the ones just restored — the quiet
+// auto-sync loop deliberately excludes the active notebook from what it silently pulls, so for it
+// this is always a no-op, and whatever's on screen stays completely undisturbed.
 async function driveDownloadIncoming(items) {
   const wasActive = activeNotebookId;
-  await driveRestoreSelected(items.map(i => i.id), null, false);
-  if (wasActive && libNotebooks.some(nb => nb.id === wasActive)) await switchNotebook(wasActive);
-  driveIncoming = [];
+  const ids = items.map(i => i.id);
+  await driveRestoreSelected(ids, null, false, { skipActiveSwitch: true });
+  // driveRestoreSelected already filters driveIncoming/driveConflicted down to what's left —
+  // clearing the whole list here would be wrong for a caller passing a subset (the auto-sync loop).
+  if (wasActive && ids.includes(wasActive)) { activeNotebookId = null; await switchNotebook(wasActive); }
   refreshDriveSignInStatus();
   renderLibTree();
 }
@@ -859,7 +864,7 @@ async function driveRestoreNow(force, forceLocalWipe) {
 // Restores just these notebook ids (plus whichever ancestor folders they need
 // so the sidebar nests them correctly), leaving every other locally-stored
 // notebook untouched — unlike driveRestoreNow(), which replaces everything.
-async function driveRestoreSelected(notebookIds, snapshot, force) {
+async function driveRestoreSelected(notebookIds, snapshot, force, opts = {}) {
   snapshot = snapshot || await driveFetchLibrarySnapshot();
   if (!snapshot || !snapshot.folderId) throw new Error('No InkPad backup found in Google Drive yet — use "Back up to Drive" first.');
   const wantedMeta = snapshot.notebooks.filter(n => notebookIds.includes(n.id));
@@ -904,8 +909,13 @@ async function driveRestoreSelected(notebookIds, snapshot, force) {
   driveIncoming = driveIncoming.filter(i => !done.has(i.id));
   driveConflicted = driveConflicted.filter(i => !done.has(i.id));
   refreshDriveSignInStatus();
-  activeNotebookId = null;
-  await switchNotebook(wantedMeta[0].id);
+  // Callers restoring as a side effect of something else (driveDownloadIncoming, mid-backup) pass
+  // skipActiveSwitch and handle the active view themselves -- jumping to whatever was restored is
+  // right when that's the whole point of the click (the restore picker), wrong as a side effect.
+  if (!opts.skipActiveSwitch) {
+    activeNotebookId = null;
+    await switchNotebook(wantedMeta[0].id);
+  }
   renderLibTree();
 }
 
@@ -1217,24 +1227,55 @@ function saveDriveAutoSyncPref() {
   try { localStorage.setItem(DRIVE_AUTO_SYNC_KEY, driveAutoSyncEnabled ? "1" : "0"); } catch (_) {}
 }
 
-function startDriveAutoPushLoop() {
+// Both directions now: pushes local changes AND silently pulls in anything Drive has that's safe
+// to take automatically (a notebook classified "pull" by driveNotebookSyncState, meaning THIS
+// device hasn't touched it since the last sync — no local edit is ever at risk). A "conflict"
+// notebook is never auto-resolved either way, same as a manual backup — it's only ever surfaced,
+// same as before this loop existed. Split out from the setInterval registration so it can be
+// called directly (once, awaited) from tests without waiting on a real 30s timer.
+async function driveAutoSyncTick() {
+  if (!driveAutoSyncEnabled || !driveConfigured() || dirty) return; // dirty: let local autosave settle first
+  // Hard rule: background work NEVER acquires a token, it only spends one that's already
+  // valid. Even prompt:"none" is serviced by GIS through a real popup window that opens and
+  // closes on its own, so acquiring one here means a window flashing over the page while
+  // someone is mid-sentence — which is precisely the complaint. When the hour-long token
+  // lapses, auto-sync quietly pauses rather than interrupting; the next deliberate Drive
+  // action (Back up, Restore, Manage) refreshes it and syncing resumes, and the File menu
+  // says so in the meantime.
+  if (!driveValidToken()) { driveAutoSyncPausedNoToken = true; refreshDriveSignInStatus(); return; }
+  driveAutoSyncPausedNoToken = false;
+
+  // The "quick check" this loop is named for: one cheap metadata-only listing call (no content
+  // download — see driveFolderNewestModifiedTime) to see whether ANYTHING on the Drive side has
+  // moved since this device last looked. Combined with the existing local dirty-check, a fully
+  // idle notebook on a fully idle Drive folder costs exactly one small request per tick, not a
+  // full library-index fetch — that only happens below once there's an actual reason for it.
+  const hasLocal = driveHasLocalChangesToPush();
+  let driveMoved = false;
+  try {
+    const folderId = await driveFindFolder();
+    if (folderId) {
+      const newest = await driveFolderNewestModifiedTime(folderId);
+      let lastSeen = null;
+      try { lastSeen = localStorage.getItem(DRIVE_LAST_SEEN_KEY); } catch (_) {}
+      driveMoved = !!newest && (!lastSeen || new Date(newest) > new Date(lastSeen));
+    }
+  } catch (_) { return; } // transient — try again next tick rather than escalating blind
+  if (!hasLocal && !driveMoved) return; // idle in both directions — stay completely silent
+
+  let res;
+  try { res = await driveBackupNow(); } catch (_) { return; } // silent — don't nag every interval
+
+  // Safe to take without asking (by construction, "pull" means local hasn't changed) — except
+  // whatever notebook is on screen right now. Swapping that one out from under an active
+  // viewer/editor would be jarring even though nothing local is actually at risk; it stays
+  // flagged for a conscious download instead, exactly like before this loop pulled anything.
+  const safeToAutoPull = res.incoming.filter(nb => nb.id !== activeNotebookId);
+  if (safeToAutoPull.length) { try { await driveDownloadIncoming(safeToAutoPull); } catch (_) {} }
+}
+function startDriveAutoSyncLoop() {
   if (driveAutoTimer) return;
-  driveAutoTimer = setInterval(async () => {
-    if (!driveAutoSyncEnabled || !driveConfigured() || dirty) return; // dirty: let local autosave settle first
-    // Nothing changed since the last push? Then don't touch the network at all — see
-    // driveHasLocalChangesToPush. An idle notebook should be completely silent.
-    if (!driveHasLocalChangesToPush()) return;
-    // Hard rule: background work NEVER acquires a token, it only spends one that's already
-    // valid. Even prompt:"none" is serviced by GIS through a real popup window that opens and
-    // closes on its own, so acquiring one here means a window flashing over the page while
-    // someone is mid-sentence — which is precisely the complaint. When the hour-long token
-    // lapses, auto-sync quietly pauses rather than interrupting; the next deliberate Drive
-    // action (Back up, Restore, Manage) refreshes it and syncing resumes, and the File menu
-    // says so in the meantime.
-    if (!driveValidToken()) { driveAutoSyncPausedNoToken = true; refreshDriveSignInStatus(); return; }
-    driveAutoSyncPausedNoToken = false;
-    try { await driveBackupNow(); } catch (_) {} // silent — don't nag every interval on transient failures
-  }, DRIVE_AUTO_PUSH_INTERVAL_MS);
+  driveAutoTimer = setInterval(driveAutoSyncTick, DRIVE_AUTO_SYNC_INTERVAL_MS);
 }
 
 // Runs once at boot when auto-sync is on: if Drive has anything newer than
@@ -1310,11 +1351,11 @@ function wireDriveMenu() {
     driveAutoSyncEnabled = chk.checked;
     saveDriveAutoSyncPref();
     if (driveAutoSyncEnabled) {
-      startDriveAutoPushLoop();
+      startDriveAutoSyncLoop();
       try { await withDriveInteractive(driveBackupNow); } catch (err) { notifyDialog("Initial backup failed", (err && err.message ? err.message : String(err))); }
       refreshDriveSignInStatus();
     }
   };
-  startDriveAutoPushLoop(); // no-op internally unless/until the pref is on
+  startDriveAutoSyncLoop(); // no-op internally unless/until the pref is on
   refreshDriveSignInStatus(); // one silent check at boot only -- not re-probed on every File-menu open
 }
