@@ -253,10 +253,27 @@ function driveHasEverSignedIn() {
 // signed in, now isn't" case the status line calls out specifically, since the fix (re-authorize)
 // differs from a fresh setup. Checked opportunistically (boot, and every time the File menu opens)
 // via the silent-only path above rather than kept as a standing flag.
+// Notebooks another device has newer copies of outrank the sign-in state in the status line: being
+// signed in is reassuring but not news, whereas "your other device has work this one hasn't taken"
+// is the thing that used to be invisible right up until it got overwritten.
+function drivePendingIncomingText() {
+  const n = driveIncoming.length, c = driveConflicted.length;
+  if (!n && !c) return null;
+  const parts = [];
+  if (n) parts.push(`${n} notebook${n === 1 ? "" : "s"} newer in Drive`);
+  if (c) parts.push(`${c} changed in both places`);
+  return parts.join(", ") + " — use Restore to download";
+}
 async function refreshDriveSignInStatus() {
   const el = $("fmDriveStatus");
   if (!el) return;
   if (!driveConfigured()) { el.textContent = ""; el.className = "fm-status"; return; }
+  const pending = drivePendingIncomingText();
+  if (pending) {
+    el.textContent = pending;
+    el.className = "fm-status signed-out-lost"; // same attention-drawing style as a lapsed session
+    return;
+  }
   // A still-valid stored token means signed in, with no need to ask Google anything.
   if (driveValidToken()) {
     el.textContent = "Signed in to Google Drive";
@@ -441,10 +458,64 @@ async function driveFetchLibrarySnapshot() {
   };
 }
 
+/* ---------------- per-notebook sync state ----------------
+   Backup used to push blindly. That is safe only while one device is in play: the library index is
+   a SINGLE blob carrying every notebook's metadata, so a device pushing its own one change also
+   republishes its stale view of every other notebook, reverting whatever another device had
+   recorded. The result was silent: after device A backed up an unrelated edit, device B's newer
+   work was still in its content file but the index said otherwise, A believed it was fully in
+   sync, and A's next edit to that notebook overwrote B's work for good.
+
+   The comparison below is deliberately an equality test against driveSyncedUpdatedAt — the
+   updatedAt value this notebook had at its last successful sync, written at both push and pull.
+   Comparing "is the remote newer" across devices would mean comparing one machine's wall clock
+   against another's, which clock skew alone can invert; "is it the same value I last saw" cannot
+   be fooled that way. */
+const DRIVE_SYNC_STATES = ["inSync", "push", "pull", "conflict", "localOnly"];
+function driveNotebookSyncState(nb, remote) {
+  if (!remote) return "localOnly"; // never backed up, or backed up from nowhere this index knows
+  const local = nb.updatedAt || 0, rem = remote.updatedAt || 0;
+  const base = nb.driveSyncedUpdatedAt;
+  if (base === undefined) {
+    // A notebook last synced by a build that predates this marker. One-time fallback to the old
+    // straight timestamp comparison, which at least always prefers the newer side; the marker is
+    // written on the next sync either way, so this branch stops being reachable per notebook.
+    if (local === rem) return "inSync";
+    return local > rem ? "push" : "pull";
+  }
+  const localChanged = local !== base, remoteChanged = rem !== base;
+  if (localChanged && remoteChanged) return "conflict";
+  if (localChanged) return "push";
+  if (remoteChanged) return "pull";
+  return "inSync";
+}
+// Drive file id / sync bookkeeping is local-only, meaningless to other devices.
+const driveStripLocalFields = ({ driveFileId, driveSyncedAt, driveSyncedName, driveSyncedUpdatedAt, ...rest }) => rest;
+
+// What this device should publish as the shared index. Its own entry per notebook, EXCEPT where
+// Drive's is the one holding work this device hasn't taken yet — plus every notebook that exists
+// only in Drive, which the old purely-local list dropped outright, orphaning its content file.
+function driveMergedNotebookIndex(localNotebooks, remoteNotebooks, states) {
+  const tombstoned = new Set(libTombstones.map(t => t.id));
+  const byId = new Map();
+  for (const rn of remoteNotebooks || []) if (!tombstoned.has(rn.id)) byId.set(rn.id, rn);
+  for (const nb of localNotebooks) {
+    if (tombstoned.has(nb.id)) { byId.delete(nb.id); continue; }
+    const st = states.get(nb.id);
+    if (st === "pull" || st === "conflict") continue; // Drive's entry is the authoritative one
+    byId.set(nb.id, nb);
+  }
+  return [...byId.values()];
+}
+
 /* ---------------- per-tier push, each skipping a no-op upload ---------------- */
 
 let driveLastPushedSettingsJson = null;
 let driveLastPushedLibraryJson = null;
+// Notebooks the last backup found newer in Drive, or changed on both sides — surfaced in the File
+// menu's status line and offered as a download after a manual backup, never resolved silently.
+let driveIncoming = [];   // [{id, name}] — safe to download, nothing local would be lost
+let driveConflicted = []; // [{id, name}] — changed here AND in Drive since the last sync
 
 async function driveBackupSettingsIfChanged(folderId) {
   const bodyStr = JSON.stringify({ version: 1, settings: currentSettingsSnapshot() });
@@ -456,12 +527,14 @@ async function driveBackupSettingsIfChanged(folderId) {
   return result;
 }
 
-async function driveBackupLibraryIndexIfChanged(folderId) {
+// `mergedNotebooks` is what this device should publish for the notebook list — see
+// driveMergedNotebookIndex. Falls back to the plain local list only when a caller has no snapshot
+// to merge against (e.g. Drive was unreachable for the read).
+async function driveBackupLibraryIndexIfChanged(folderId, mergedNotebooks) {
   const [folders, notebooksRaw, stamps, rosters, deletedNotebookIds] = await Promise.all([
     storeGetAll("folders"), storeGetAll("notebooks"), storeGetAll("stamps"), storeGetAll("rosters"), storeGetAll("tombstones"),
   ]);
-  // Drive file id / sync bookkeeping is local-only, not meaningful to other devices.
-  const notebooks = notebooksRaw.map(({ driveFileId, driveSyncedAt, driveSyncedName, ...rest }) => rest);
+  const notebooks = (mergedNotebooks || notebooksRaw).map(driveStripLocalFields);
   const bodyStr = JSON.stringify({ version: 1, folders, notebooks, stamps, rosters, deletedNotebookIds });
   if (bodyStr === driveLastPushedLibraryJson) return null;
   const id = await driveFindSingletonFileId(folderId, DRIVE_LIBRARY_FILE_NAME, DRIVE_LIBRARY_FILE_ID_KEY);
@@ -488,6 +561,7 @@ async function driveBackupNotebook(nb, folderId) {
   nb.driveFileId = result.id;
   nb.driveSyncedAt = Date.now();
   nb.driveSyncedName = nb.name;
+  nb.driveSyncedUpdatedAt = nb.updatedAt || 0; // the marker every sync-state comparison keys off
   await storePut("notebooks", nb);
   return result;
 }
@@ -536,16 +610,20 @@ function driveHasLocalChangesToPush() {
   return false;
 }
 
+// Returns {pushedAny, incoming, conflicted}. A notebook Drive holds a newer copy of is never
+// pushed over and never quietly downloaded either — it's reported, and the caller decides.
 async function driveBackupNow() {
   await flushAutosave(); // make sure the active notebook's own latest edits are in docdata first
   const folderId = (await driveFindFolder()) || (await driveCreateFolder());
   let pushedAny = false, newestSeen = null;
   const note = t => { if (t && (!newestSeen || new Date(t) > new Date(newestSeen))) newestSeen = t; };
 
-  // Quick sync check: if a notebook was deleted on another device since this device last looked,
-  // drop it locally instead of blindly re-uploading it below and resurrecting it in Drive.
+  // This snapshot is what makes the push safe, and it was already being fetched here purely for
+  // tombstones (if a notebook was deleted on another device since this one last looked, drop it
+  // locally instead of blindly re-uploading it below and resurrecting it in Drive).
+  let snap = null;
   try {
-    const snap = await driveFetchLibrarySnapshot();
+    snap = await driveFetchLibrarySnapshot();
     const removed = await driveApplyTombstones(snap ? snap.deletedNotebookIds : []);
     if (removed.length) {
       if (!activeNotebookId) {
@@ -556,18 +634,47 @@ async function driveBackupNow() {
     }
   } catch (_) {} // best-effort -- worst case a since-deleted notebook gets re-pushed once more
 
+  // Classify every notebook BEFORE anything is written. Doing it afterwards would be useless: this
+  // device's own push is what overwrites the remote entry it needs to compare against.
+  const remoteById = new Map(((snap && snap.notebooks) || []).map(n => [n.id, n]));
+  // A null snap means the fetch itself failed (network/Drive error, caught above) — not "nothing is
+  // on Drive yet" (a real empty/first-time snapshot is still a truthy object). Falling through to
+  // driveNotebookSyncState in that case would find no remote entry for ANY notebook and classify
+  // every single one "localOnly", mass-pushing the whole library on a transient blip. Fall back to
+  // the plain local dirty-check instead, matching pre-merge behavior when remote state is unknown.
+  const states = new Map(libNotebooks.map(nb => [nb.id, snap
+    ? driveNotebookSyncState(nb, remoteById.get(nb.id))
+    : ((nb.updatedAt || 0) > (nb.driveSyncedAt || 0) ? "push" : "inSync")]));
+  const named = st => libNotebooks.filter(nb => states.get(nb.id) === st).map(nb => ({ id: nb.id, name: nb.name }));
+  driveIncoming = named("pull");
+  driveConflicted = named("conflict");
+
   const settingsResult = await driveBackupSettingsIfChanged(folderId);
   if (settingsResult) { pushedAny = true; note(settingsResult.modifiedTime); }
-  const libraryResult = await driveBackupLibraryIndexIfChanged(folderId);
+  const libraryResult = await driveBackupLibraryIndexIfChanged(
+    folderId, snap ? driveMergedNotebookIndex(libNotebooks, snap.notebooks, states) : null);
   if (libraryResult) { pushedAny = true; note(libraryResult.modifiedTime); }
   for (const nb of libNotebooks) {
-    if ((nb.updatedAt || 0) > (nb.driveSyncedAt || 0)) {
-      const r = await driveBackupNotebook(nb, folderId);
-      pushedAny = true; note(r.modifiedTime);
-    }
+    const st = states.get(nb.id);
+    if (st !== "push" && st !== "localOnly") continue; // never overwrite a newer or diverged remote
+    const r = await driveBackupNotebook(nb, folderId);
+    pushedAny = true; note(r.modifiedTime);
   }
   if (newestSeen) { try { localStorage.setItem(DRIVE_LAST_SEEN_KEY, newestSeen); } catch (_) {} }
-  return pushedAny;
+  refreshDriveSignInStatus();
+  return { pushedAny, incoming: driveIncoming, conflicted: driveConflicted };
+}
+
+// Downloads just the notebooks Drive holds newer copies of, without yanking the user out of
+// whatever they currently have open (driveRestoreSelected switches to what it restored, which is
+// right when it's the whole point of the click, wrong as a side effect of a backup).
+async function driveDownloadIncoming(items) {
+  const wasActive = activeNotebookId;
+  await driveRestoreSelected(items.map(i => i.id), null, false);
+  if (wasActive && libNotebooks.some(nb => nb.id === wasActive)) await switchNotebook(wasActive);
+  driveIncoming = [];
+  refreshDriveSignInStatus();
+  renderLibTree();
 }
 
 /* ---------------- warn before overwriting a notebook that looks newer locally ---------------- */
@@ -735,9 +842,12 @@ async function driveRestoreNow(force, forceLocalWipe) {
   driveLastPushedSettingsJson = settingsSnapshot ? JSON.stringify(settingsSnapshot) : null;
   driveLastPushedLibraryJson = JSON.stringify({
     version: 1, folders: snapshot.folders,
-    notebooks: libNotebooks.map(({ driveFileId, driveSyncedAt, driveSyncedName, ...rest }) => rest),
+    notebooks: libNotebooks.map(driveStripLocalFields),
     stamps: snapshot.stamps, rosters: snapshot.rosters, deletedNotebookIds: libTombstones,
   });
+  // A full restore takes Drive's version of everything, so nothing is outstanding any more.
+  driveIncoming = []; driveConflicted = [];
+  refreshDriveSignInStatus();
   try {
     const newest = await driveFolderNewestModifiedTime(folderId);
     if (newest) localStorage.setItem(DRIVE_LAST_SEEN_KEY, newest);
@@ -773,7 +883,10 @@ async function driveRestoreSelected(notebookIds, snapshot, force) {
       if (res.ok) {
         const parsed = JSON.parse(await res.text());
         await storePut("docdata", parsed.docdata, nb.id);
+        // nb here is the REMOTE metadata entry, so this records "local and Drive now agree at this
+        // updatedAt" — the same invariant driveBackupNotebook establishes on the way out.
         nb.driveFileId = file.id; nb.driveSyncedAt = Date.now(); nb.driveSyncedName = nb.name;
+        nb.driveSyncedUpdatedAt = nb.updatedAt || 0;
       }
     } else if (snapshot.docdata && snapshot.docdata[nb.id]) {
       // Legacy single-file backup (from before per-notebook files existed) — content was bundled
@@ -786,6 +899,11 @@ async function driveRestoreSelected(notebookIds, snapshot, force) {
 
   libFolders = await storeGetAll("folders");
   libNotebooks = await storeGetAll("notebooks");
+  // Taking Drive's copy settles whatever was outstanding for exactly these notebooks.
+  const done = new Set(wantedMeta.map(n => n.id));
+  driveIncoming = driveIncoming.filter(i => !done.has(i.id));
+  driveConflicted = driveConflicted.filter(i => !done.has(i.id));
+  refreshDriveSignInStatus();
   activeNotebookId = null;
   await switchNotebook(wantedMeta[0].id);
   renderLibTree();
@@ -1147,8 +1265,28 @@ function wireDriveMenu() {
   $("fmDriveBackup").onclick = async () => {
     closeFileMenu();
     if (!driveConfigured()) return needsSetup();
-    try { const pushed = await withDriveInteractive(driveBackupNow); notifyDialog("Back up to Drive", pushed ? "Backed up to Google Drive." : "Already up to date — nothing's changed since the last backup."); }
-    catch (err) { notifyDialog("Backup failed", (err && err.message ? err.message : String(err))); }
+    let res;
+    try { res = await withDriveInteractive(driveBackupNow); }
+    catch (err) { notifyDialog("Backup failed", (err && err.message ? err.message : String(err))); refreshDriveSignInStatus(); return; }
+    const names = list => list.map(i => `"${i.name}"`).join(", ");
+    const sent = res.pushedAny ? "Backed up to Google Drive." : "Already up to date — nothing's changed since the last backup.";
+    // Anything Drive holds a newer copy of was deliberately left alone above rather than
+    // overwritten; offer to bring it down now, while the user is already thinking about sync.
+    if (res.incoming.length) {
+      const ok = await confirmDialogAsync(
+        "Newer in Drive",
+        `${sent} ${names(res.incoming)} ${res.incoming.length > 1 ? "have" : "has"} newer version${res.incoming.length > 1 ? "s" : ""} in Drive that this device hasn't taken yet. Download ${res.incoming.length > 1 ? "them" : "it"} now?`,
+        "Download");
+      if (ok) {
+        try { await withDriveInteractive(() => driveDownloadIncoming(res.incoming)); notifyDialog("Downloaded from Drive", `${names(res.incoming)} updated from Google Drive.`); }
+        catch (err) { notifyDialog("Download failed", (err && err.message ? err.message : String(err))); }
+      }
+    } else if (res.conflicted.length) {
+      notifyDialog("Back up to Drive",
+        `${sent} ${names(res.conflicted)} changed both here and in Drive since the last sync, so ${res.conflicted.length > 1 ? "they were" : "it was"} left untouched rather than one version overwriting the other. Use "Restore from Drive" to take Drive's copy, or edit and back up again to keep this device's.`);
+    } else {
+      notifyDialog("Back up to Drive", sent);
+    }
     refreshDriveSignInStatus();
   };
   $("fmDriveRestore").onclick = () => { closeFileMenu(); withDriveInteractive(openDriveRestorePicker); };
