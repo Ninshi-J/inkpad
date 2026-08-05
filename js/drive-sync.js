@@ -612,7 +612,13 @@ function driveHasLocalChangesToPush() {
 
 // Returns {pushedAny, incoming, conflicted}. A notebook Drive holds a newer copy of is never
 // pushed over and never quietly downloaded either — it's reported, and the caller decides.
-async function driveBackupNow() {
+// `keepLocalIds` (optional) is the explicit exception: notebook ids the user has just confirmed
+// resolving toward THIS device's copy after seeing a conflict — see wireDriveMenu's conflict
+// branch. Without this, "conflict" is a dead end: driveSyncedUpdatedAt only ever advances via a
+// real push below, which conflict status itself blocks, so a notebook that lands in conflict once
+// stays there on every future backup no matter how many more times it's edited — the "edit and
+// back up again to keep this device's" advice in the UI had no code path that actually did it.
+async function driveBackupNow(keepLocalIds) {
   await flushAutosave(); // make sure the active notebook's own latest edits are in docdata first
   const folderId = (await driveFindFolder()) || (await driveCreateFolder());
   let pushedAny = false, newestSeen = null;
@@ -645,6 +651,10 @@ async function driveBackupNow() {
   const states = new Map(libNotebooks.map(nb => [nb.id, snap
     ? driveNotebookSyncState(nb, remoteById.get(nb.id))
     : ((nb.updatedAt || 0) > (nb.driveSyncedAt || 0) ? "push" : "inSync")]));
+  // Treat an explicitly-confirmed id as "push" for this one run — everything downstream (the
+  // merged index, the per-notebook push loop) already handles "push" correctly, so this needs no
+  // special-casing beyond overriding the classification itself.
+  if (keepLocalIds) for (const id of keepLocalIds) if (states.has(id)) states.set(id, "push");
   const named = st => libNotebooks.filter(nb => states.get(nb.id) === st).map(nb => ({ id: nb.id, name: nb.name }));
   driveIncoming = named("pull");
   driveConflicted = named("conflict");
@@ -1323,8 +1333,22 @@ function wireDriveMenu() {
         catch (err) { notifyDialog("Download failed", (err && err.message ? err.message : String(err))); }
       }
     } else if (res.conflicted.length) {
-      notifyDialog("Back up to Drive",
-        `${sent} ${names(res.conflicted)} changed both here and in Drive since the last sync, so ${res.conflicted.length > 1 ? "they were" : "it was"} left untouched rather than one version overwriting the other. Use "Restore from Drive" to take Drive's copy, or edit and back up again to keep this device's.`);
+      // Backing up again on its own can never clear this — driveBackupNow always leaves a
+      // "conflict" notebook alone, so without an explicit resolution here it would just re-detect
+      // the same stale conflict forever. Keeping this device's version needs to be an actual choice,
+      // confirmed each time, since it does overwrite Drive's diverged copy.
+      const ok = await confirmDialogAsync(
+        "Changed in both places",
+        `${sent} ${names(res.conflicted)} changed both here and in Drive since the last sync, so ${res.conflicted.length > 1 ? "they were" : "it was"} left untouched rather than one version overwriting the other. Keep this device's version and overwrite Drive's copy? Use "Restore from Drive" instead if you want Drive's copy.`,
+        "Keep this device's");
+      if (ok) {
+        const ids = res.conflicted.map(i => i.id);
+        try {
+          const res2 = await withDriveInteractive(() => driveBackupNow(ids));
+          notifyDialog("Backed up to Drive", `${names(res.conflicted)} backed up, overwriting Drive's diverged copy.`);
+          res.incoming = res2.incoming; res.conflicted = res2.conflicted; // stay accurate for the status-line refresh below
+        } catch (err) { notifyDialog("Backup failed", (err && err.message ? err.message : String(err))); }
+      }
     } else {
       notifyDialog("Back up to Drive", sent);
     }
