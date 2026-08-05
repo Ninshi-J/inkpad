@@ -744,14 +744,20 @@ function collectFolderDescendantFolders(folderId) {
 // Records that these notebook ids were deliberately deleted (not just "no longer present") — so
 // Drive sync on another device can tell the difference and delete its own stale copy instead of
 // silently re-uploading it. See js/drive-sync.js's driveApplyTombstones/driveDeleteNotebookFiles.
+// Records the local "this notebook is deleted" marker, replacing any existing one for that id.
+// Deliberately does NOT touch Drive: callers decide whether the Drive-side file also needs removing
+// (tombstoneNotebooks does; deleting a leftover Drive file whose caller is already trashing it
+// directly does not). Kept as its own function because three call sites had this same five-line
+// block copy-pasted, one of them in a handler that duplicated an existing helper verbatim.
+async function recordTombstone(id, deletedAt = Date.now()) {
+  libTombstones = libTombstones.filter(t => t.id !== id);
+  const entry = { id, deletedAt };
+  libTombstones.push(entry);
+  try { await storePut("tombstones", entry); } catch (_) {}
+}
 async function tombstoneNotebooks(ids) {
-  const now = Date.now();
-  for (const id of ids) {
-    libTombstones = libTombstones.filter(t => t.id !== id);
-    const entry = { id, deletedAt: now };
-    libTombstones.push(entry);
-    try { await storePut("tombstones", entry); } catch (_) {}
-  }
+  const now = Date.now(); // one timestamp for the whole batch, so a bulk delete reads as one event
+  for (const id of ids) await recordTombstone(id, now);
   driveDeleteNotebookFiles(ids); // best-effort, fire-and-forget — no Drive access yet is fine too
 }
 async function deleteNotebook(id) {

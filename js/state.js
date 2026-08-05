@@ -447,16 +447,6 @@ function bumpPages(y) {
   const needed = Math.floor(Math.max(0, y) / stride()) + 2;
   if (needed > S.pages) { S.pages = Math.min(needed, MAX_PAGES); markDirty(); }
 }
-function lastContentPage() {
-  let m = -1;
-  const scan = (arr, yOf) => arr.forEach(o => { if (!o.del) m = Math.max(m, Math.floor(yOf(o) / stride())); });
-  scan(doc.strokes, s => s.bb.y1 - 4);
-  scan(doc.tapes, t => t.y + t.h);
-  scan(doc.texts, t => t.y);
-  scan(doc.images, i => i.y + i.h);
-  scan(doc.timers, t => t.y + t.h);
-  return m;
-}
 function curPage() {
   const mid = V.scroll + CH / V.zoom / 2;
   return Math.min(S.pages - 1, Math.max(0, Math.floor(mid / stride())));

@@ -1024,12 +1024,9 @@ async function driveRestoreOrphanedFile(file) {
 }
 async function driveDeleteOrphanedFile(file) {
   await driveTrashFile(file.id);
-  if (file.notebookId) {
-    const entry = { id: file.notebookId, deletedAt: Date.now() };
-    libTombstones = libTombstones.filter(t => t.id !== entry.id);
-    libTombstones.push(entry);
-    try { await storePut("tombstones", entry); } catch (_) {}
-  }
+  // Tombstoned so another device that still has this notebook locally doesn't just re-upload it on
+  // its next backup, which would bring the leftover straight back.
+  if (file.notebookId) await recordTombstone(file.notebookId);
 }
 // onRestored lets a caller other than the restore picker (e.g. the manage-backups dialog) decide
 // what happens after a successful restore instead of always closing #driveRestoreDlg — defaults to
@@ -1056,14 +1053,10 @@ function driveOrphanRow(file, onRestored) {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Delete "${file.name}" from Drive?`, "This permanently removes this leftover file from Google Drive (moved to Drive's own Trash). It won't show up here again.", "Delete");
     if (!ok) return;
-    try { await withDriveInteractive(() => driveTrashFile(file.id)); row.remove(); }
+    // driveDeleteOrphanedFile does exactly this (trash + tombstone) and already existed — this
+    // handler had its body inlined instead, leaving the real function unreferenced.
+    try { await withDriveInteractive(() => driveDeleteOrphanedFile(file)); row.remove(); }
     catch (err) { notifyDialog("Delete failed", (err && err.message ? err.message : String(err))); return; }
-    if (file.notebookId) {
-      const entry = { id: file.notebookId, deletedAt: Date.now() };
-      libTombstones = libTombstones.filter(t => t.id !== entry.id);
-      libTombstones.push(entry);
-      try { await storePut("tombstones", entry); } catch (_) {}
-    }
   };
   return row;
 }
