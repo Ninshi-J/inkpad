@@ -5,7 +5,9 @@
    ========================================================================== */
 
 /* ---------------- constants & settings ---------------- */
-const PAPERS = { a4: [794, 1123], letter: [816, 1056], a5: [559, 794] };
+// widescreen: 13.333x7.5in @96dpi (standard 16:9 slide size) — [short, long], same convention as
+// every other entry here (portrait uses index0 as width; landscape swaps to the actual 1280x720 shape).
+const PAPERS = { a4: [794, 1123], letter: [816, 1056], a5: [559, 794], widescreen: [720, 1280] };
 const PAGE_GAP = 28;
 const MAX_PAGES = 500;
 let PALETTE = ["#2A2A2A", "#2B579A", "#C43737", "#2E7D46", "#E88C28", "#7846AA"];
@@ -125,6 +127,7 @@ function sliderPosToWidth(pos) {
 const V = { // view state
   zoom: 1, scroll: 0, scrollX: 0, tool: "pen", colorHex: "#2A2A2A", width: 3, eraserSize: 12,
   ruler: false, sidebar: true, minimap: true, layersPanel: false, popped: false, prevTool: "hl",
+  teachMode: false,
   // each color-bearing tool remembers its own last-used color independently
   colorByTool: { pen: "#2A2A2A", hl: "#FFD53D", text: "#2A2A2A" },
   lastColorTool: "pen",

@@ -46,6 +46,7 @@ function buildToolButtons(host) {
     btn(V.popped ? "Dock" : "Pop out", togglePopout, "Float the tools (F3)"),
     btn("Overview", () => { V.minimap = !V.minimap; syncUI(); }, "Toggle document overview rail (F4)"),
     btn("Layers", () => { V.layersPanel = !V.layersPanel; syncUI(); renderLayersPanel(); }, "Toggle the layers panel"),
+    btn(V.teachMode ? "Exit Teach" : "🎓 Teach", toggleTeachingMode, "Teaching / Presentation mode — hides the panel and overview rail, goes fullscreen, and zooms to fit the page width (Shift+F)"),
   );
   host.appendChild(gPanel);
   host.appendChild(sep());
@@ -162,6 +163,41 @@ function togglePopout() {
   buildToolButtons(V.popped ? PALB : TB);
   syncUI(); resize();
 }
+
+// Automates the manual routine of hiding the side panel/overview rail, going fullscreen, and
+// zooming until the page fills the width — for presenting/teaching on a projector or second screen.
+let teachModeSnapshot = null; // {sidebar, minimap, zoom, scroll, scrollX}, restored on exit
+function toggleTeachingMode() {
+  if (V.teachMode) { exitTeachingMode(); return; }
+  teachModeSnapshot = { sidebar: V.sidebar, minimap: V.minimap, zoom: V.zoom, scroll: V.scroll, scrollX: V.scrollX };
+  V.teachMode = true;
+  V.sidebar = false;
+  V.minimap = false;
+  syncUI(); resize(); // resize() reads the just-applied layout change synchronously
+  setZoom(CW / pageW());
+  if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+  buildToolButtons(V.popped ? PALB : TB);
+}
+function exitTeachingMode() {
+  if (!V.teachMode) return;
+  V.teachMode = false;
+  if (teachModeSnapshot) {
+    V.sidebar = teachModeSnapshot.sidebar;
+    V.minimap = teachModeSnapshot.minimap;
+    V.zoom = teachModeSnapshot.zoom;
+    V.scroll = teachModeSnapshot.scroll;
+    V.scrollX = teachModeSnapshot.scrollX;
+    teachModeSnapshot = null;
+  }
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  syncUI(); resize();
+  buildToolButtons(V.popped ? PALB : TB);
+}
+// The user can also leave fullscreen natively (Escape, F11, browser UI) without going through our
+// own toggle — stay in sync so the panel/zoom always come back rather than leaving a half-exited state.
+document.addEventListener("fullscreenchange", () => {
+  if (V.teachMode && !document.fullscreenElement) exitTeachingMode();
+});
 
 (() => {
   let sx0 = 0, sy0 = 0, ox = 0, oy = 0, on = false;

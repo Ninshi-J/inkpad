@@ -258,8 +258,11 @@ addEventListener("keydown", e => {
   // single dispatcher for both kinds of paste — external image, or the in-app selection clipboard.
   if (C && k === "0") { setZoom(1); return handled(); }
   if (C) return;
+  // "f" alone is the Laser tool (ACTIONS, remappable) — Shift+F is a fixed, separate binding since
+  // the remap system only ever records the lowercase key, never a shift-modified variant.
+  if (e.shiftKey && k === "f") { toggleTeachingMode(); return handled(); }
 
-  switch (k) { 
+  switch (k) {
     case "1": case "2": case "3": case "4": case "5": case "6": case "7": case "8": case "9": {
       const pal = paletteFor(V.tool);
       if (pal[+k - 1]) setColor(pal[+k - 1]);

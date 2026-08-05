@@ -20,6 +20,7 @@ function rebuildSidebar() {
       <div class="side-row"><label>Paper</label>
         <select id="setPaper">
           <option value="a4">A4</option><option value="letter">Letter</option><option value="a5">A5</option>
+          <option value="widescreen">Widescreen (16:9)</option>
         </select></div>
       <div class="side-row"><label>Orientation</label>
         <select id="setOrient"><option value="p">Portrait</option><option value="l">Landscape</option></select></div>
@@ -420,6 +421,7 @@ function refreshHelp() {
     ["Ctrl+E", "Export PDF"], ["Del", "Delete selection / clear page"],
     ["Alt+Click tape", "Delete tape"],
     ["F1 / F2 / F3 / F4", "Help / panel / pop-out / overview"],
+    ["Shift+F", "Toggle Teaching / Presentation mode"],
   ];
   $("helpKeys").innerHTML = [...dyn, ...fixed]
     .map(([k, v]) => `<div><span>${v}</span><kbd>${k}</kbd></div>`).join("");
