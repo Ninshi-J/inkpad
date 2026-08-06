@@ -224,7 +224,7 @@ function applyShapePrefsToDialog() {
 }
 function captureShapePrefsFromDialog() {
   document.querySelectorAll('#shapeImporterDlg input[type="checkbox"]').forEach(cb => { S.shapePrefs[cb.id] = cb.checked; });
-  markDirty();
+  markDirty(); invalidateCleanMarker(); // not undo-tracked
 }
 
 function handleDlgRightAngleToggle() {

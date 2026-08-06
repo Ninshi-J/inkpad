@@ -318,7 +318,7 @@ async function exportPdf(pages) {
   const blob = new Blob([bytes], { type: "application/pdf" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "notes.pdf";
+  a.download = notebookFileStem() + ".pdf";
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -480,11 +480,12 @@ async function exportSvg(pages) {
   // SVG has no native multi-page container, so multiple selected pages come out as one file per
   // page instead of one combined document -- staggered slightly so Chrome's multi-download
   // permission prompt (which only appears once) doesn't drop any of them.
+  const stem = notebookFileStem();
   for (let i = 0; i < pages.length; i++) {
     const blob = new Blob([await buildPageSvg(pages[i])], { type: "image/svg+xml" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = pages.length > 1 ? `notes-page${pages[i] + 1}.svg` : "notes.svg";
+    a.download = pages.length > 1 ? `${stem} page${pages[i] + 1}.svg` : `${stem}.svg`;
     a.click();
     URL.revokeObjectURL(a.href);
     if (i < pages.length - 1) await new Promise(res => setTimeout(res, 150));

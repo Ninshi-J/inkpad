@@ -290,7 +290,7 @@ function endPointer(e) {
   switch (drag.mode) {
     case "draw": commitStroke(); break;
     case "tapeMaybe":
-      if (drag.hit) { drag.hit.revealed = !drag.hit.revealed; markDirty(); }
+      if (drag.hit) { drag.hit.revealed = !drag.hit.revealed; markDirty(); invalidateCleanMarker(); } // not undo-tracked
       else createTapeAt(drag.x0, drag.y0);
       break;
     case "timerObjMaybe": {
@@ -619,11 +619,11 @@ function toggleTimerObj(t) {
     if (t.mode === "down" && t.baseMs >= t.durationMs) t.baseMs = 0; // restart a finished countdown
     t.startWall = performance.now(); t.running = true;
   }
-  markDirty(); needsDraw = true;
+  markDirty(); invalidateCleanMarker(); needsDraw = true; // not undo-tracked
 }
 function resetTimerObj(t) {
   t.running = false; t.baseMs = 0;
-  markDirty(); needsDraw = true;
+  markDirty(); invalidateCleanMarker(); needsDraw = true; // not undo-tracked
 }
 // Timer (countdown) asks for a duration first since there's a real target to hit; Stopwatch has
 // nothing to configure, so it's just dropped in place immediately, already at 0:00.

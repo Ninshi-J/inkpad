@@ -783,6 +783,8 @@
       <button type="button" class="settings-nav-btn" data-cat="tape">🟨 Tape</button>
       <button type="button" class="settings-nav-btn" data-cat="timer">⏱ Timer &amp; Stopwatch</button>
       <button type="button" class="settings-nav-btn" data-cat="shapes">📐 Shapes &amp; Graphs</button>
+      <button type="button" class="settings-nav-btn" data-cat="recording">🎥 Video Recording</button>
+      <button type="button" class="settings-nav-btn" data-cat="keys">⌨️ Keyboard Shortcuts</button>
     </div>
     <div class="settings-content">
       <div class="settings-pane" data-cat="pen">
@@ -890,6 +892,32 @@
           </div>
         </div>
       </div>
+      <div class="settings-pane" data-cat="recording">
+        <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+          <div class="shape-field">
+            <label for="stVideoAudioMode">Microphone audio</label>
+            <select id="stVideoAudioMode">
+              <option value="separate">Separate audio file — best for transcription</option>
+              <option value="embed">Inside the video — one file, plays with sound</option>
+              <option value="both">Both — sound in the video, plus a separate file</option>
+              <option value="none">No audio — video only, never asks for the mic</option>
+            </select>
+          </div>
+          <div style="font-size: 11.5px; color: var(--ink-soft); line-height: 1.6; margin-top: 4px;">
+            A separate file drops straight into transcription software, where audio inside a video
+            has to be pulled back out first. Embedding gives you one file you can hand to someone
+            and have it just play. <b>Both</b> records the microphone once and writes it to each,
+            so the two can't drift apart.
+          </div>
+        </div>
+      </div>
+      <div class="settings-pane" data-cat="keys">
+        <div style="font-size: 11.5px; color: var(--ink-soft); line-height: 1.6; margin-bottom: 10px;">
+          Click a key to rebind it, then press the new key (Escape cancels). If that key was already
+          taken, it moves here. Rebinding takes effect immediately rather than waiting for Save.
+        </div>
+        <div class="keys" id="stKeys"></div>
+      </div>
     </div>
   </div>
   <form method="dialog" style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 18px;">
@@ -909,8 +937,8 @@
 
 <dialog id="driveRestoreDlg" style="max-width:420px;width:min(420px,94vw)">
   <h2>Restore from Drive</h2>
-  <p style="color:var(--ink-soft);font-size:12.5px;margin-bottom:10px;">Restore everything, or just one folder or notebook — whatever you pick replaces the matching item currently stored on this device.</p>
-  <button type="button" class="side-btn" id="driveRestoreAllBtn" style="margin-top:0;">⟳ Restore everything</button>
+  <p style="color:var(--ink-soft);font-size:12.5px;margin-bottom:10px;">"Merge from Drive" pulls in whatever's new or updated without touching anything you've changed here — nothing is deleted or overwritten. Restoring one specific folder or notebook below is different: that one item is deliberately replaced with Drive's copy.</p>
+  <button type="button" class="side-btn" id="driveRestoreAllBtn" style="margin-top:0;">⟳ Merge from Drive</button>
   <div id="driveRestoreStatus" style="color:var(--ink-soft);font-size:12px;margin:8px 0;"></div>
   <div id="driveRestoreTree" class="lib-tree" style="max-height:44vh;overflow-y:auto;"></div>
   <form method="dialog" style="text-align:right;margin-top:16px;"><button autofocus>Close</button></form>
@@ -959,7 +987,7 @@
 
 <dialog id="videoRecDlg" style="max-width:560px;width:min(560px,94vw)">
   <h2>🎥 Canvas recording</h2>
-  <p style="color:var(--ink-soft);font-size:12.5px;margin-bottom:10px;">The microphone is saved as its own file rather than mixed into the video, so it can go straight into transcription software. Both start together, so they stay in sync.</p>
+  <p id="vrIntro" style="color:var(--ink-soft);font-size:12.5px;margin-bottom:10px;"></p>
   <div id="vrVideoRow">
     <video id="vrPreview" controls playsinline style="width:100%;border-radius:8px;background:#000;display:block"></video>
     <div id="vrMeta" style="color:var(--ink-soft);font-size:12px;margin-top:8px;"></div>
@@ -969,6 +997,11 @@
     <div id="vrAudioMeta" style="color:var(--ink-soft);font-size:12px;margin-top:6px;"></div>
   </div>
   <div id="vrNote" style="color:#B45309;font-size:12px;margin-top:10px;"></div>
+  <div class="shape-field" style="margin-top:12px;">
+    <label for="vrFileName">File name</label>
+    <input type="text" id="vrFileName" maxlength="120" spellcheck="false" style="width:100%;box-sizing:border-box;">
+    <div id="vrFileNamePreview" style="color:var(--ink-soft);font-size:11.5px;margin-top:4px;"></div>
+  </div>
   <form method="dialog" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
     <button type="button" id="vrDiscardBtn">Discard</button>
     <button type="button" id="vrDownloadAudioBtn">⬇ Audio only</button>

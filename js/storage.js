@@ -281,6 +281,7 @@ function currentSettingsSnapshot() {
     shapeCategory: localStorage.getItem("inkpad.shapeCategory") || null,
     shapeDefaults,
     widthByTool: V.widthByTool, eraserSizeByTool: V.eraserSizeByTool, tapeDefaults, timerObjDefaults,
+    videoAudioMode,
   };
 }
 function applySettingsSnapshot(s) {
@@ -309,7 +310,9 @@ function applySettingsSnapshot(s) {
   }
   if (s.tapeDefaults && typeof s.tapeDefaults === "object") Object.assign(tapeDefaults, s.tapeDefaults);
   if (s.timerObjDefaults && typeof s.timerObjDefaults === "object") Object.assign(timerObjDefaults, s.timerObjDefaults);
+  if (VIDEO_AUDIO_MODES.includes(s.videoAudioMode)) videoAudioMode = s.videoAudioMode;
   savePalette(); saveKeymap(); saveTextDefaults(); saveTimerPrefs(); saveShapeDefaults();
+  saveVideoAudioMode();
   savePenDefaults(); saveEraserDefaults(); saveTapeDefaults(); saveTimerObjDefaults();
   try { localStorage.setItem("inkpad.colorByTool", JSON.stringify(V.colorByTool)); } catch (_) {}
 }
@@ -392,6 +395,7 @@ async function flushAutosave() {
     const nb = libNotebooks.find(n => n.id === activeNotebookId);
     if (nb) { nb.updatedAt = Date.now(); await storePut("notebooks", nb); }
     dirty = false;
+    resetCleanMarkers();
   } catch (_) {}
 }
 

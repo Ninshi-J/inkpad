@@ -78,19 +78,22 @@ function rebuildSidebar() {
   $("setRule").value = S.ruleSp;
   $("setGrid").value = S.gridSp;
   $("setOutline").checked = S.outline;
-  $("setPaper").onchange = e => { S.paper = e.target.value; clampScroll(); markDirty(); };
-  $("setOrient").onchange = e => { S.landscape = e.target.value === "l"; clampScroll(); markDirty(); };
-  $("setTmpl").onchange = e => { S.template = e.target.value; markDirty(); };
-  $("setRule").onchange = e => { S.ruleSp = Math.max(12, +e.target.value || 34); markDirty(); };
-  $("setGrid").onchange = e => { S.gridSp = Math.max(10, +e.target.value || 28); markDirty(); };
-  $("setOutline").onchange = e => { S.outline = e.target.checked; markDirty(); };
+  // Page/document setup below is never undo-tracked (no pushUndo call) -- invalidateCleanMarker()
+  // stops undo/redo from ever mistaking a stack position match for "back to clean" while one of
+  // these is still unsaved (see its comment in state.js).
+  $("setPaper").onchange = e => { S.paper = e.target.value; clampScroll(); markDirty(); invalidateCleanMarker(); };
+  $("setOrient").onchange = e => { S.landscape = e.target.value === "l"; clampScroll(); markDirty(); invalidateCleanMarker(); };
+  $("setTmpl").onchange = e => { S.template = e.target.value; markDirty(); invalidateCleanMarker(); };
+  $("setRule").onchange = e => { S.ruleSp = Math.max(12, +e.target.value || 34); markDirty(); invalidateCleanMarker(); };
+  $("setGrid").onchange = e => { S.gridSp = Math.max(10, +e.target.value || 28); markDirty(); invalidateCleanMarker(); };
+  $("setOutline").onchange = e => { S.outline = e.target.checked; markDirty(); invalidateCleanMarker(); };
 
   // "This page" overrides — each control falls back to the document default when left blank/unset.
   const setPageOverride = (field, value) => {
     const p = curPage();
     if (value === null || value === "") { if (S.pageStyles && S.pageStyles[p]) delete S.pageStyles[p][field]; }
     else { S.pageStyles = S.pageStyles || {}; S.pageStyles[p] = { ...(S.pageStyles[p] || {}), [field]: value }; }
-    markDirty(); needsDraw = true;
+    markDirty(); invalidateCleanMarker(); needsDraw = true;
   };
   $("setPageTmpl").onchange = e => setPageOverride("template", e.target.value || null);
   $("setPageRule").onchange = e => setPageOverride("ruleSp", e.target.value ? Math.max(12, +e.target.value) : null);
@@ -99,7 +102,7 @@ function rebuildSidebar() {
   $("setPageOrient").onchange = e => { setPageOverride("landscape", e.target.value === "" ? null : e.target.value === "l"); clampScroll(); };
   refreshPageSetupControls();
 
-  $("addPageBtn").onclick = () => { if (S.pages < MAX_PAGES) { S.pages++; V.scroll = maxScroll(); markDirty(); syncUI(); } };
+  $("addPageBtn").onclick = () => { if (S.pages < MAX_PAGES) { S.pages++; V.scroll = maxScroll(); markDirty(); invalidateCleanMarker(); syncUI(); } };
   $("insertPageBtn").onclick = () => { const at = curPage() + 1; insertPageAt(at); V.scroll = at * stride(); clampScroll(); };
   $("clearPageBtn").onclick = clearCurrentPage;
   $("delPageBtn").onclick = () => confirmDialog(
@@ -113,16 +116,8 @@ function rebuildSidebar() {
     "This clears every page, all ink, images, text, tape, and recorded audio.",
     deleteDocument
   );
-  const sk = $("sideKeys");
-  sk.innerHTML = "";
-  for (const a of ACTIONS) {
-    const row = document.createElement("div");
-    row.className = "keymap-row";
-    row.innerHTML = `<span>${a.label}</span><kbd>${keyFor(a.id)}</kbd>`;
-    row.querySelector("kbd").onclick = ev => beginRemap(a.id, ev.target);
-    sk.appendChild(row);
-  }
-  $("resetKeysBtn").onclick = () => { defaultKeymap(); saveKeymap(); rebuildSidebar(); refreshHelp(); buildSelToolbar(); };
+  renderKeymapRows($("sideKeys")); // shared with the settings dialog — see js/keymap-colorring.js
+  $("resetKeysBtn").onclick = () => { defaultKeymap(); saveKeymap(); refreshKeymapUI(); };
 
   $("libNewNotebookBtn").onclick = () => createNotebook(null);
   $("libNewFolderBtn").onclick = () => createFolder(null);

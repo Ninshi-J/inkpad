@@ -363,6 +363,24 @@ function timerObjElapsedMs(t) { return t.running ? t.baseMs + (performance.now()
 function timerObjRemainingMs(t) { return Math.max(0, t.durationMs - timerObjElapsedMs(t)); }
 let undoStack = [], redoStack = [];
 let dirty = false, needsDraw = true;
+// Lets undo()/redo() detect "back to exactly what was last saved" (e.g. draw a stroke, immediately
+// undo it) and clear `dirty` again instead of leaving a no-op edit looking like a real change --
+// see markDirty()/resetCleanMarkers() and undo()/redo() in history.js for how these are used.
+// cleanUndoTop is compared by REFERENCE, not just cleanUndoDepth by count: undo()/redo() only ever
+// move existing entries between undoStack/redoStack (never create new ones), while any genuinely
+// new edit always pushes a fresh entry object -- so two different edit sequences that happen to
+// leave the stack the same LENGTH can still be told apart by whether the top entry is the same object.
+let cleanUndoDepth = 0, cleanUndoTop = null;
+function resetCleanMarkers() {
+  cleanUndoDepth = undoStack.length;
+  cleanUndoTop = undoStack.length ? undoStack[undoStack.length - 1] : null;
+}
+// A handful of things dirty the doc WITHOUT ever pushing an undo entry (page-setup dropdowns,
+// tape-reveal-by-click, the automatic page-count grow in bumpPages) -- undo()/redo() can't walk
+// those back, so the stack-position check in reconcileCleanState() would be none the wiser and
+// could wrongly call the doc clean while one of these is still unsaved. Call sites for exactly
+// those cases call this (alongside their normal markDirty()) to rule that out until the next save.
+function invalidateCleanMarker() { cleanUndoDepth = -1; }
 
 /* ---------------- audio state ---------------- */
 const audio = {
@@ -410,6 +428,31 @@ function resizeMinimap() {
   needsDraw = true;
 }
 
+/* ---------------- file naming ----------------
+   Windows, macOS and iOS each reject a different set of characters in a filename; this strips the
+   union of them plus control characters, collapses the whitespace that leaves behind, and trims
+   trailing dots and spaces (Windows silently drops those, so "Ch. 4." would save under a name
+   that doesn't match what was asked for). Returns "" when nothing usable survives, so every
+   caller can fall back rather than producing a file called ".pdf". */
+function safeFileStem(name, maxLen = 60) {
+  return String(name == null ? "" : name)
+    .replace(/[\\/:*?"<>|\x00-\x1F]+/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLen)
+    .replace(/[. ]+$/, "")
+    .trim();
+}
+// The active notebook's name as a file stem — what exports and recordings default to, so a
+// downloaded file says which notebook it came from instead of every one of them being "notes".
+function notebookFileStem(fallback = "notes") {
+  try {
+    const nb = libNotebooks.find(n => n.id === activeNotebookId);
+    if (nb && nb.name) return safeFileStem(nb.name) || fallback;
+  } catch (_) {}
+  return fallback;
+}
+
 /* ---------------- geometry ---------------- */
 const pageW = () => PAPERS[S.paper][S.landscape ? 1 : 0];
 const pageH = () => PAPERS[S.paper][S.landscape ? 0 : 1];
@@ -445,7 +488,10 @@ function clampScrollX() { V.scrollX = Math.max(0, Math.min(V.scrollX, maxScrollX
 // trailing page), when added manually, or when a PDF import needs them.
 function bumpPages(y) {
   const needed = Math.floor(Math.max(0, y) / stride()) + 2;
-  if (needed > S.pages) { S.pages = Math.min(needed, MAX_PAGES); markDirty(); }
+  // Growing the page count isn't itself undo-tracked (whatever triggered it, e.g. a stroke, is --
+  // undoing THAT doesn't shrink S.pages back down), so undoing the triggering action alone would
+  // otherwise leave the doc looking "clean" while the page count stays permanently grown.
+  if (needed > S.pages) { S.pages = Math.min(needed, MAX_PAGES); markDirty(); invalidateCleanMarker(); }
 }
 function curPage() {
   const mid = V.scroll + CH / V.zoom / 2;
@@ -464,6 +510,9 @@ function setZoom(nz, cx = CW / 2, cy = CH / 2) {
   needsDraw = true; syncUI();
   schedulePdfUpgrade();
 }
+// fromUndo is set only by applyEntry() (undo/redo replaying a past entry) -- every other call site
+// is a genuine new change, which undo/redo can never walk back past (a real new edit always clears
+// redoStack -- see pushUndo), so it always invalidates any "back to clean" possibility.
 function markDirty() { dirty = true; needsDraw = true; scheduleAutosave(); scheduleMinimapRegen(); }
 
 /* ---------------- undo / redo ---------------- */

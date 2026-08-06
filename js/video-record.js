@@ -55,19 +55,56 @@ const VIDEO_MIME_CANDIDATES = [
   ["video/webm", "webm"],
 ];
 
-/* The microphone is recorded to its OWN file rather than muxed into the video, at the
-   user's explicit request: a standalone audio file drops straight into transcription
-   tools, where a video would have to be demuxed first. The two are started back to
-   back off the same click and stopped together, so the audio still lines up with the
-   video on a shared timeline — separate files, one take.
+// Same list, but with an audio codec alongside the video one — used only when the mic is being
+// muxed INTO the video file. A video-only MIME can't carry an audio track, so the two lists
+// can't be merged: asking for "video/webm;codecs=vp9" with an audio track attached silently
+// produces a file some players won't read.
+const VIDEO_AV_MIME_CANDIDATES = [
+  ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "mp4"],
+  ["video/mp4", "mp4"],
+  ["video/webm;codecs=vp9,opus", "webm"],
+  ["video/webm;codecs=vp8,opus", "webm"],
+  ["video/webm", "webm"],
+];
 
-   Note this is NOT the same thing as the "● Rec" button (js/audio.js). That records
-   notebook audio: segmented, timestamped against individual strokes, replayable and
-   seekable inside the app, saved with the notebook. This is a plain single-take mic
-   capture that exists only to accompany the video, and deliberately shares none of
-   that machinery — the two can run at once without interfering.
+/* Where the microphone ends up is a setting, because the two useful answers pull in opposite
+   directions. A standalone audio file drops straight into transcription software, where a video
+   would have to be demuxed first — that's why the original build always split them. But a video
+   with no sound is useless to hand to a student, so "embedded" has to be available too, and
+   "both" gets one shareable file plus one transcribable one out of a single take.
 
-   Format preference mirrors the video list: m4a/AAC first (what iPad Safari offers,
+   Whatever the mode, there is exactly ONE microphone capture: the embedded track is a clone of
+   the same MediaStreamTrack the separate file records, so the two can never drift apart, and
+   only one permission prompt ever appears.
+
+   Note none of this is the "● Rec" button (js/audio.js). That records notebook audio: segmented,
+   timestamped against individual strokes, replayable and seekable inside the app, saved with the
+   notebook. This is a plain single-take mic capture that exists only to accompany the video, and
+   deliberately shares none of that machinery — the two can run at once without interfering. */
+const VIDEO_AUDIO_MODES = ["separate", "embed", "both", "none"];
+const VIDEO_AUDIO_MODE_KEY = "inkpad.videoAudioMode";
+let videoAudioMode = "separate";
+function loadVideoAudioMode() {
+  try {
+    const v = localStorage.getItem(VIDEO_AUDIO_MODE_KEY);
+    if (VIDEO_AUDIO_MODES.includes(v)) videoAudioMode = v;
+  } catch (_) {}
+}
+function saveVideoAudioMode() {
+  try { localStorage.setItem(VIDEO_AUDIO_MODE_KEY, videoAudioMode); } catch (_) {}
+  scheduleSettingsSave();
+}
+function setVideoAudioMode(mode) {
+  if (!VIDEO_AUDIO_MODES.includes(mode)) return;
+  videoAudioMode = mode;
+  saveVideoAudioMode();
+}
+const videoAudioWantsMic = () => videoAudioMode !== "none";
+const videoAudioWantsEmbed = () => videoAudioMode === "embed" || videoAudioMode === "both";
+const videoAudioWantsFile = () => videoAudioMode === "separate" || videoAudioMode === "both";
+loadVideoAudioMode();
+
+/* Format preference mirrors the video list: m4a/AAC first (what iPad Safari offers,
    and accepted by essentially every transcription service), then Opus in webm/ogg. */
 const AUDIO_MIME_CANDIDATES = [
   ["audio/mp4;codecs=mp4a.40.2", "m4a"],
@@ -103,6 +140,7 @@ const vidrec = {
   audioBlob: null,
   audioUrl: null,
   audioNote: "",    // why there's no audio file, when there isn't one
+  embedded: false,  // was the mic muxed into the video track this take?
   baseName: "",     // shared filename stem for the video/audio pair, fixed at record start
 
   // Both recorders must have delivered their final data before the dialog can open,
@@ -156,29 +194,31 @@ async function toggleVideoRecord() {
   await startVideoRecord();
 }
 
-// Asks for the microphone and gets a recorder ready, WITHOUT starting it. Resolves to
-// null (never throws) if there's no mic, permission is refused, or the browser can't
-// encode audio — none of which should stop the canvas from being recorded.
-async function prepareAudioRecorder() {
-  vidrec.audioNote = "";
-  const picked = pickAudioMime();
-  if (!picked) { vidrec.audioNote = "This browser has no audio format available for recording."; return null; }
+// Opens the microphone. Resolves to null (never throws) if there's no mic or permission is
+// refused — neither of which should stop the canvas itself from being recorded. Sets audioNote
+// with the reason so the save dialog can explain a silent recording rather than just showing one.
+async function acquireMicStream() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     vidrec.audioNote = "This browser doesn't allow microphone access here.";
     return null;
   }
-  let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    return await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
     vidrec.audioNote = err && err.name === "NotAllowedError"
       ? "Microphone access was blocked, so no audio was recorded."
       : `Microphone unavailable, so no audio was recorded. (${err && err.message ? err.message : err})`;
     return null;
   }
+}
+
+// Builds the recorder for the SEPARATE audio file, WITHOUT starting it. Returns null (with a note)
+// if this browser can't encode standalone audio — the embedded track, if any, is unaffected.
+function createAudioFileRecorder(stream) {
+  const picked = pickAudioMime();
+  if (!picked) { vidrec.audioNote = "This browser has no audio format available for a separate file."; return null; }
   try {
     const rec = new MediaRecorder(stream, { mimeType: picked.mime, audioBitsPerSecond: AUDIO_BITRATE });
-    vidrec.audioStream = stream;
     vidrec.audioMime = picked.mime;
     vidrec.audioExt = picked.ext;
     vidrec.audioChunks = [];
@@ -191,7 +231,6 @@ async function prepareAudioRecorder() {
     rec.onstop = () => settleRecorderStop();
     return rec;
   } catch (err) {
-    try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
     vidrec.audioNote = `Couldn't start the audio recorder. (${err && err.message ? err.message : err})`;
     return null;
   }
@@ -203,16 +242,33 @@ async function startVideoRecord() {
     notifyDialog("Recording unavailable", "This browser can't record the canvas — it's missing MediaRecorder or canvas.captureStream.");
     return;
   }
-  const picked = pickVideoMime();
-  if (!picked) {
-    notifyDialog("Recording unavailable", "This browser has no video format available for recording.");
-    return;
-  }
-
   // Mic permission is resolved BEFORE either recorder starts. Doing it the other way
   // round would let the permission prompt — which can sit there for seconds — run while
   // the video was already rolling, and the two files would no longer share a start.
-  const audioRec = await prepareAudioRecorder();
+  vidrec.audioNote = "";
+  vidrec.embedded = false; // cleared up front so an aborted start can't leave last take's value
+  const micStream = videoAudioWantsMic() ? await acquireMicStream() : null;
+  vidrec.audioStream = micStream;
+
+  // Embedding needs a container that can actually carry both tracks; if this browser has no such
+  // format, fall back to a silent video rather than refusing to record, and say so. In "embed"
+  // mode that fallback would otherwise lose the audio entirely, so it forces the separate file on.
+  let embed = videoAudioWantsEmbed() && !!micStream;
+  let picked = embed ? pickMime(VIDEO_AV_MIME_CANDIDATES) : pickVideoMime();
+  let forceAudioFile = false;
+  if (embed && !picked) {
+    embed = false;
+    forceAudioFile = true;
+    picked = pickVideoMime();
+    vidrec.audioNote = "This browser can't put audio inside the video file, so it was saved separately instead.";
+  }
+  if (!picked) {
+    teardownAudioStream();
+    notifyDialog("Recording unavailable", "This browser has no video format available for recording.");
+    return;
+  }
+  const audioRec = micStream && (videoAudioWantsFile() || forceAudioFile) ? createAudioFileRecorder(micStream) : null;
+  vidrec.embedded = embed;
 
   const { w, h } = videoOutputSize();
   const c = document.createElement("canvas");
@@ -228,7 +284,17 @@ async function startVideoRecord() {
   let rec;
   try {
     vidrec.stream = c.captureStream(VIDEO_FPS);
-    rec = new MediaRecorder(vidrec.stream, { mimeType: picked.mime, videoBitsPerSecond: VIDEO_BITRATE });
+    if (embed) {
+      // A CLONE, not the original track: the separate-file recorder may be reading the same mic
+      // at the same time, and giving two MediaRecorders the identical track object is the kind of
+      // thing browsers disagree about. Cloning costs nothing (same underlying source, so the two
+      // stay sample-for-sample aligned) and teardownVideoStream already stops every track it
+      // finds on this stream, so the clone can't outlive the recording.
+      for (const t of vidrec.audioStream.getAudioTracks()) vidrec.stream.addTrack(t.clone());
+    }
+    rec = new MediaRecorder(vidrec.stream, embed
+      ? { mimeType: picked.mime, videoBitsPerSecond: VIDEO_BITRATE, audioBitsPerSecond: AUDIO_BITRATE }
+      : { mimeType: picked.mime, videoBitsPerSecond: VIDEO_BITRATE });
   } catch (err) {
     teardownVideoStream();
     teardownAudioStream();
@@ -350,7 +416,7 @@ function tickVideoRecord() {
 
 function videoRecStatusText() {
   if (vidrec.rec) {
-    const mic = vidrec.audioRec ? " 🎙" : "";
+    const mic = (vidrec.audioRec || vidrec.embedded) ? " 🎙" : "";
     return `⏺ Video${mic} ${fmtT(videoRecElapsedMs())} · ${fmtBytes(vidrec.bytes + vidrec.audioBytes)}`;
   }
   if (videoRecPending()) {
@@ -389,17 +455,22 @@ function openVideoRecDialog() {
   if (hasVideo) {
     v.src = vidrec.url;
     $("vrMeta").textContent =
-      `${fmtT(vidrec.durationMs)} · ${fmtBytes(vidrec.blob.size)} · ${vidrec.w}×${vidrec.h} · ${vidrec.ext.toUpperCase()}`;
+      `${fmtT(vidrec.durationMs)} · ${fmtBytes(vidrec.blob.size)} · ${vidrec.w}×${vidrec.h} · ${vidrec.ext.toUpperCase()}` +
+      (vidrec.embedded ? " · sound included" : "");
   }
   $("vrAudioRow").style.display = hasAudio ? "" : "none";
   if (hasAudio) {
     a.src = vidrec.audioUrl;
     $("vrAudioMeta").textContent =
-      `Separate audio track · ${fmtBytes(vidrec.audioBlob.size)} · ${vidrec.audioExt.toUpperCase()} — starts at the same moment as the video`;
+      `Separate audio track · ${fmtBytes(vidrec.audioBlob.size)} · ${vidrec.audioExt.toUpperCase()} — ` +
+      (vidrec.embedded ? "the same audio that's in the video, on its own for transcription"
+                       : "starts at the same moment as the video");
   }
-  // Only surfaced when audio was expected but didn't happen; silent otherwise.
+  // Only surfaced when audio was expected but didn't happen (or didn't land where it was meant
+  // to); silent when the recording came out exactly as configured.
   const note = $("vrNote");
-  note.textContent = hasAudio ? "" : (vidrec.audioNote || "");
+  const audioMissing = !hasAudio && !vidrec.embedded && videoAudioWantsMic();
+  note.textContent = (audioMissing || vidrec.audioNote) ? (vidrec.audioNote || "") : "";
   note.style.display = note.textContent ? "" : "none";
 
   const stopPreview = () => {
@@ -411,7 +482,20 @@ function openVideoRecDialog() {
   dlBtn.onclick = async () => { await downloadVideoRecording(); stopPreview(); dlg.close(); };
   const audioBtn = $("vrDownloadAudioBtn");
   audioBtn.style.display = hasVideo && hasAudio ? "" : "none";
-  audioBtn.onclick = () => downloadBlobAs(vidrec.audioUrl, `${vidrec.baseName}.${vidrec.audioExt}`);
+  audioBtn.onclick = () => downloadBlobAs(vidrec.audioUrl, `${videoChosenBaseName()}.${vidrec.audioExt}`);
+  // Pre-filled with the auto-generated name, editable before saving. Both files always take the
+  // same stem, so a renamed pair still reads as a pair.
+  const nameEl = $("vrFileName");
+  nameEl.value = vidrec.baseName || videoFileBaseName();
+  nameEl.oninput = updateVideoFileNamePreview;
+  updateVideoFileNamePreview();
+  $("vrIntro").textContent = vidrec.embedded && hasAudio
+    ? "The microphone is inside the video and saved as its own file as well, so you can hand over one file and still send the audio to transcription software."
+    : vidrec.embedded
+      ? "The microphone is mixed into the video, so it plays with sound as a single file."
+      : hasAudio
+        ? "The microphone is saved as its own file rather than mixed into the video, so it can go straight into transcription software. Both start together, so they stay in sync."
+        : "Recorded without sound. Change this under Settings → Video Recording.";
   $("vrDiscardBtn").onclick = () => { stopPreview(); releaseVideoBlob(); dlg.close(); syncStatus(); };
   // Closing any other way (Esc) deliberately KEEPS the recording — it's only held in
   // memory, so a stray Escape silently binning a lesson would be unforgivable. The
@@ -422,6 +506,7 @@ function openVideoRecDialog() {
 // Captured once, when recording starts, and shared by both files — so the video and its
 // audio always land as an obviously-matching pair, and the timestamp is when the lesson
 // was actually recorded rather than whenever the download button happened to be pressed.
+// Only the STARTING point for the name: the save dialog's field takes over from here.
 function videoFileBaseName() {
   let name = "InkPad";
   try {
@@ -431,9 +516,22 @@ function videoFileBaseName() {
   const d = new Date();
   const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` +
     ` ${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
-  // Strip what Windows/macOS/iOS reject in a filename, collapse the leftovers.
-  const safe = name.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 60) || "InkPad";
-  return `${safe} ${stamp}`;
+  return `${safeFileStem(name) || "InkPad"} ${stamp}`;
+}
+
+// What the user actually typed in the save dialog, cleaned up. Falls back to the generated name
+// rather than letting an empty (or all-punctuation) field produce a file called ".mp4".
+function videoChosenBaseName() {
+  const el = $("vrFileName");
+  const typed = el ? safeFileStem(el.value) : "";
+  return typed || vidrec.baseName || videoFileBaseName();
+}
+function updateVideoFileNamePreview() {
+  const base = videoChosenBaseName();
+  const names = [];
+  if (vidrec.blob) names.push(`${base}.${vidrec.ext}`);
+  if (vidrec.audioBlob) names.push(`${base}.${vidrec.audioExt}`);
+  $("vrFileNamePreview").textContent = names.length ? "Saves as " + names.join("  +  ") : "";
 }
 
 function downloadBlobAs(url, filename) {
@@ -447,7 +545,7 @@ function downloadBlobAs(url, filename) {
 }
 
 async function downloadVideoRecording() {
-  const base = vidrec.baseName || videoFileBaseName();
+  const base = videoChosenBaseName();
   if (vidrec.blob) downloadBlobAs(vidrec.url, `${base}.${vidrec.ext}`);
   if (vidrec.audioBlob) {
     // Staggered, same as the multi-page SVG export: Chrome's "allow multiple

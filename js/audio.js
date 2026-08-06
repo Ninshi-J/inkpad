@@ -18,7 +18,7 @@ async function toggleRecord() {
       audio.segments.push(seg);
       audio.totalMs = seg.startMs + seg.durMs;
       stream.getTracks().forEach(t => t.stop());
-      markDirty(); syncStatus();
+      markDirty(); invalidateCleanMarker(); syncStatus(); // audio segments aren't undo-tracked
     };
     audio.rec = rec; audio.recStream = stream;
     audio.recBaseMs = audio.totalMs;

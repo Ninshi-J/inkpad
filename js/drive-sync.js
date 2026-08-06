@@ -701,10 +701,13 @@ async function driveDownloadIncoming(items) {
 class DriveNewerLocalWarning extends Error {
   constructor(items) { super("Local changes look newer than Drive"); this.newerLocal = items; }
 }
+// Uses driveNotebookSyncState's clock-skew-safe classification (equality against
+// driveSyncedUpdatedAt, the same thing push already relies on) rather than comparing raw
+// updatedAt timestamps across devices, which clock skew alone can invert.
 function findNewerLocalNotebooks(remoteNotebooksMeta) {
   return remoteNotebooksMeta
     .map(remoteNb => ({ remoteNb, localNb: libNotebooks.find(n => n.id === remoteNb.id) }))
-    .filter(({ remoteNb, localNb }) => localNb && (localNb.updatedAt || 0) > (remoteNb.updatedAt || 0))
+    .filter(({ remoteNb, localNb }) => localNb && ["push", "conflict"].includes(driveNotebookSyncState(localNb, remoteNb)))
     .map(({ remoteNb, localNb }) => ({ name: localNb.name, localUpdatedAt: localNb.updatedAt, remoteUpdatedAt: remoteNb.updatedAt || 0 }));
 }
 function formatNewerLocalWarning(items) {
@@ -729,59 +732,7 @@ async function runRestoreWithNewerLocalGuard(runFn) {
   return true;
 }
 
-/* ---------------- warn before deleting a notebook that was never in Drive at all ---------------- */
-
-// "Restore everything" is the one restore path meant to make local storage exactly mirror Drive
-// (its own confirm dialog already says "replaces every notebook..."). That means deleting local
-// notebooks that aren't part of the Drive backup at all — not just ones this device already knows
-// were deliberately deleted (driveApplyTombstones handles those separately). This is a distinct
-// risk from DriveNewerLocalWarning above: there's no remote copy to compare timestamps against, so
-// silently wiping one could destroy something that was never backed up anywhere. Warned separately,
-// and only on this one restore path — driveRestoreSelected/driveRestoreFolder are deliberately
-// scoped and never touch notebooks outside what was asked for.
-class DriveLocalOnlyWarning extends Error {
-  constructor(items) { super("Local-only notebooks would be deleted"); this.localOnly = items; }
-}
-function formatLocalOnlyWarning(items) {
-  return items.map(nb => `"${nb.name}"`).join(", ");
-}
-// Runs driveRestoreNow, sequentially confirming each distinct risk it can throw (a notebook that
-// looks newer locally, then — separately — local-only notebooks a true mirror would delete) before
-// re-running with that specific guard bypassed. Two independent flags rather than one shared
-// "force" so confirming one risk doesn't silently wave through the other unconfirmed.
-async function runRestoreEverythingGuard() {
-  let force = false, forceLocalWipe = false;
-  for (;;) {
-    try {
-      await driveRestoreNow(force, forceLocalWipe);
-      return true;
-    } catch (err) {
-      if (err instanceof DriveNewerLocalWarning) {
-        const ok = await confirmDialogAsync(
-          "Local changes look newer than Drive",
-          `${formatNewerLocalWarning(err.newerLocal)}. Restoring will overwrite ${err.newerLocal.length > 1 ? "these" : "this"} with the older Drive version. Continue anyway?`,
-          "Restore anyway"
-        );
-        if (!ok) return false;
-        force = true;
-        continue;
-      }
-      if (err instanceof DriveLocalOnlyWarning) {
-        const ok = await confirmDialogAsync(
-          "Local notebooks not in this Drive backup",
-          `${formatLocalOnlyWarning(err.localOnly)} ${err.localOnly.length > 1 ? "aren't" : "isn't"} in your Drive backup at all and will be permanently deleted to make this device match Drive exactly. This can't be undone. Continue?`,
-          "Delete and restore"
-        );
-        if (!ok) return false;
-        forceLocalWipe = true;
-        continue;
-      }
-      throw err;
-    }
-  }
-}
-
-/* ---------------- restore: enumerate the whole folder and rebuild ---------------- */
+/* ---------------- restore: merge in whatever Drive has that's safe to take ---------------- */
 
 // Index-driven, deliberately — restores exactly what the picker's preview shows (the library
 // index), nothing more. It used to also enumerate every raw file in the Drive folder and
@@ -791,40 +742,46 @@ async function runRestoreEverythingGuard() {
 // claimed it would do. Any such leftover files are now surfaced separately in the picker as
 // "Unfiled backups," restorable/deletable on their own — driveRestoreNow() itself no longer
 // touches them.
-async function driveRestoreNow(force, forceLocalWipe) {
+//
+// This used to make local storage an exact mirror of Drive: overwrite everything Drive has
+// (guarded only by a blanket "local looks newer, overwrite anyway?" confirm) and DELETE every
+// local notebook Drive didn't know about. That's a destructive operation dressed up as a restore
+// — a notebook started on this device since the last sync, or one with real unsynced edits, could
+// vanish without ever being individually named. This is a non-destructive MERGE instead, using the
+// same clock-skew-safe classification driveBackupNow already relies on (driveNotebookSyncState):
+// pulls anything genuinely new or safely newer in Drive, and never touches (let alone deletes)
+// anything with unsynced local work or an unresolved conflict — those are just reported afterward,
+// same as driveBackupNow already does for its own "incoming"/"conflicted" lists.
+async function driveRestoreNow() {
   const snapshot = await driveFetchLibrarySnapshot();
   if (!snapshot || !snapshot.folderId || (!snapshot.folders.length && !snapshot.notebooks.length)) {
     throw new Error('No InkPad backup found in Google Drive yet — use "Back up to Drive" first.');
   }
-  if (!force) {
-    const atRisk = findNewerLocalNotebooks(snapshot.notebooks);
-    if (atRisk.length) throw new DriveNewerLocalWarning(atRisk);
-  }
 
-  // Reconcile tombstones early (safe/idempotent — recording a remote-known deletion id doesn't
-  // itself remove anything) so the local-only check below can tell apart "local-only because it was
-  // deliberately deleted somewhere" (already handled by tombstones, not a surprise) from "local-only
-  // because it simply never made it into this Drive backup at all" (the new, riskier case).
+  // Reconcile tombstones first (safe/idempotent) so a notebook deliberately deleted elsewhere
+  // doesn't get classified as some kind of local-vs-Drive mismatch below.
   await driveMergeRemoteTombstones(snapshot.deletedNotebookIds);
-  const remoteIds = new Set(snapshot.notebooks.map(n => n.id));
-  const tombstonedIds = new Set(libTombstones.map(t => t.id));
-  const localOnly = libNotebooks.filter(nb => !remoteIds.has(nb.id) && !tombstonedIds.has(nb.id));
-  if (!forceLocalWipe && localOnly.length) throw new DriveLocalOnlyWarning(localOnly);
+
+  const remoteById = new Map(snapshot.notebooks.map(n => [n.id, n]));
+  const states = new Map(libNotebooks.map(nb => [nb.id, driveNotebookSyncState(nb, remoteById.get(nb.id))]));
+  const conflicted = libNotebooks.filter(nb => states.get(nb.id) === "conflict");
+  const keptUnsynced = libNotebooks.filter(nb => states.get(nb.id) === "push");
+
+  // Safe to pull: brand new to this device (no local entry at all -- states has nothing for it), or
+  // Drive's copy is genuinely newer with no local edits at risk. "inSync" is deliberately excluded
+  // -- there's nothing to actually change, so re-writing it would just be a no-op fetch, and it
+  // shouldn't get reported as "pulled" when nothing about it changed. Never "push" (local has
+  // unsynced work) or "conflict" (both sides changed) -- those are left alone, not overwritten.
+  const toPull = snapshot.notebooks
+    .filter(remoteNb => { const st = states.get(remoteNb.id); return st === undefined || st === "pull"; })
+    .map(n => n.id);
 
   for (const fo of snapshot.folders) await storePut("folders", fo);
   for (const st of snapshot.stamps) await storePut("stamps", st);
   for (const r of snapshot.rosters) await storePut("rosters", r);
   await driveApplyTombstones(snapshot.deletedNotebookIds);
 
-  if (snapshot.notebooks.length) await driveRestoreSelected(snapshot.notebooks.map(n => n.id), snapshot, true);
-
-  // True mirror: delete local notebooks that aren't part of the Drive backup at all. Computed
-  // above (before any mutation) so the warning names exactly what's about to go; re-filter against
-  // the current activeNotebookId here since driveRestoreSelected (just above) may have switched it.
-  for (const nb of localOnly) {
-    try { await storeDelete("notebooks", nb.id); await storeDelete("docdata", nb.id); } catch (_) {}
-    if (nb.id === activeNotebookId) activeNotebookId = null;
-  }
+  if (toPull.length) await driveRestoreSelected(toPull, snapshot, true);
 
   const folderId = snapshot.folderId;
   const settingsId = await driveFindSingletonFileId(folderId, DRIVE_SETTINGS_FILE_NAME, DRIVE_SETTINGS_FILE_ID_KEY);
@@ -844,9 +801,9 @@ async function driveRestoreNow(force, forceLocalWipe) {
   libStamps = await storeGetAll("stamps");
   libRosters = await storeGetAll("rosters");
   libTombstones = await storeGetAll("tombstones");
-  // Edge case the local-only wipe above can newly reach: a Drive backup with no notebooks in it,
-  // restored onto a device whose entire local library was local-only — matches deleteNotebook's own
-  // "don't leave the app with nothing open" fallback rather than leaving activeNotebookId dangling.
+  // A brand new device with no local library yet and nothing pulled (e.g. an empty Drive backup)
+  // still needs something open — matches deleteNotebook's own "don't leave the app with nothing
+  // open" fallback rather than leaving activeNotebookId dangling.
   if (libNotebooks.length === 0) await createNotebookRaw("My Notes", null);
   else if (!activeNotebookId || !libNotebooks.some(nb => nb.id === activeNotebookId)) await switchNotebook(libNotebooks[0].id);
   renderLibTree();
@@ -854,26 +811,37 @@ async function driveRestoreNow(force, forceLocalWipe) {
 
   if (settingsId) { try { localStorage.setItem(DRIVE_SETTINGS_FILE_ID_KEY, settingsId); } catch (_) {} }
   try { localStorage.setItem(DRIVE_LIBRARY_FILE_ID_KEY, await driveFindSingletonFileId(folderId, DRIVE_LIBRARY_FILE_NAME, DRIVE_LIBRARY_FILE_ID_KEY)); } catch (_) {}
+  // Local now matches Drive's settings exactly (just applied above), so that cache is legitimately
+  // up to date. driveLastPushedLibraryJson is deliberately left untouched, unlike the old full-mirror
+  // restore -- a merge can leave local-only/unsynced notebooks that were never actually part of
+  // Drive's published index, so claiming this snapshot IS what's published would make the next real
+  // push wrongly think there's nothing new to publish. The next backup computes and pushes that for
+  // real instead.
   driveLastPushedSettingsJson = settingsSnapshot ? JSON.stringify(settingsSnapshot) : null;
-  driveLastPushedLibraryJson = JSON.stringify({
-    version: 1, folders: snapshot.folders,
-    notebooks: libNotebooks.map(driveStripLocalFields),
-    stamps: snapshot.stamps, rosters: snapshot.rosters, deletedNotebookIds: libTombstones,
-  });
-  // A full restore takes Drive's version of everything, so nothing is outstanding any more.
-  driveIncoming = []; driveConflicted = [];
+  // Only the notebooks actually just pulled are settled; anything left alone (unsynced local work,
+  // an unresolved conflict) is still genuinely outstanding, so report it rather than pretending a
+  // merge resolved everything the way a full mirror-restore used to.
+  const pulledIds = new Set(toPull);
+  driveIncoming = driveIncoming.filter(i => !pulledIds.has(i.id));
+  driveConflicted = conflicted.map(nb => ({ id: nb.id, name: nb.name }));
   refreshDriveSignInStatus();
   try {
     const newest = await driveFolderNewestModifiedTime(folderId);
     if (newest) localStorage.setItem(DRIVE_LAST_SEEN_KEY, newest);
   } catch (_) {}
+  return {
+    pulled: toPull.map(id => (remoteById.get(id) || {}).name).filter(Boolean),
+    keptUnsynced: keptUnsynced.map(nb => nb.name),
+    conflicted: conflicted.map(nb => nb.name),
+  };
 }
 
 /* ---------------- targeted restore: one notebook, or one folder's worth ---------------- */
 
-// Restores just these notebook ids (plus whichever ancestor folders they need
-// so the sidebar nests them correctly), leaving every other locally-stored
-// notebook untouched — unlike driveRestoreNow(), which replaces everything.
+// Restores just these notebook ids (plus whichever ancestor folders they need so the sidebar
+// nests them correctly), leaving every other locally-stored notebook untouched. driveRestoreNow()
+// is the same idea at library scope — it also never touches anything outside what it classifies
+// as safe to pull, it just decides that set itself instead of taking it as a parameter.
 async function driveRestoreSelected(notebookIds, snapshot, force, opts = {}) {
   snapshot = snapshot || await driveFetchLibrarySnapshot();
   if (!snapshot || !snapshot.folderId) throw new Error('No InkPad backup found in Google Drive yet — use "Back up to Drive" first.');
@@ -947,6 +915,25 @@ async function driveRestoreFolder(folderId, force) {
 
 /* ---------------- restore picker: everything, or pick a folder/notebook ---------------- */
 
+// Small colored label showing how a notebook's local copy compares to Drive's, reusing
+// driveNotebookSyncState's clock-skew-safe classification (the same one push already relies on)
+// instead of a naive updatedAt comparison. localNb is undefined for a notebook Drive has that this
+// device has never seen at all -- not one of driveNotebookSyncState's own states (that function
+// always assumes a real local notebook to classify), so it's handled directly here as "new".
+function driveSyncBadgeHtml(localNb, remoteNb) {
+  if (!localNb) return `<span style="color:#0F766E;font-size:11px;margin-right:6px;white-space:nowrap;">new in Drive</span>`;
+  const state = driveNotebookSyncState(localNb, remoteNb);
+  const labels = {
+    inSync: null, // nothing worth calling out for the common case
+    pull: ["Drive is newer", "#0F766E"],
+    push: ["you have unsynced changes", "#B45309"],
+    conflict: ["changed in both places", "#B91C1C"],
+  };
+  const l = labels[state];
+  if (!l) return "";
+  return `<span style="color:${l[1]};font-size:11px;margin-right:6px;white-space:nowrap;">${l[0]}</span>`;
+}
+
 function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
   const wrap = document.createElement("div");
   const row = document.createElement("div");
@@ -974,12 +961,17 @@ function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
   return wrap;
 }
 function driveRestoreNotebookRow(nb, depth) {
+  const localNb = libNotebooks.find(n => n.id === nb.id);
   const row = document.createElement("div");
   row.className = "lib-row lib-notebook";
   row.style.paddingLeft = (depth * 14 + 12) + "px";
+  // The sync badge sits OUTSIDE .lib-actions deliberately -- that class is hover-only (see
+  // style.css), but the whole point of the badge is to be scannable across the tree at a glance,
+  // not discovered one row at a time.
   row.innerHTML = `
     <span class="lib-icon">\u{1F4C4}</span>
     <span class="lib-name">${escapeXml(nb.name)}</span>
+    ${driveSyncBadgeHtml(localNb, nb)}
     <span class="lib-actions" style="display:flex;"><button type="button" title="Restore this notebook">⟳</button></span>`;
   row.querySelector("button").onclick = async e => {
     e.stopPropagation();
@@ -1061,6 +1053,27 @@ function driveOrphanRow(file, onRestored) {
   return row;
 }
 
+// Notebooks that exist only on this device -- absent from the Drive snapshot and not tombstoned
+// (i.e. never deliberately deleted elsewhere either). The old "Restore everything" used to silently
+// destroy these to make local storage mirror Drive exactly; the merge-based restore below always
+// keeps them instead, so this section is purely informational, plus a one-click way to back one up
+// to Drive right from here if that's what's actually wanted.
+function driveLocalOnlyRow(nb, folderId) {
+  const row = document.createElement("div");
+  row.className = "lib-row lib-notebook";
+  row.innerHTML = `
+    <span class="lib-icon">\u{1F4C4}</span>
+    <span class="lib-name">${escapeXml(nb.name)}</span>
+    <span style="color:#0F766E;font-size:11px;margin-right:6px;white-space:nowrap;">kept — not in Drive</span>
+    <span class="lib-actions" style="display:flex;"><button type="button" title="Back this up to Drive now">📤</button></span>`;
+  row.querySelector("button").onclick = async e => {
+    e.stopPropagation();
+    try { await withDriveInteractive(() => driveBackupNotebook(nb, folderId)); notifyDialog("Backed up to Drive", `"${nb.name}" was backed up to Google Drive.`); row.remove(); }
+    catch (err) { notifyDialog("Backup failed", (err && err.message ? err.message : String(err))); }
+  };
+  return row;
+}
+
 async function openDriveRestorePicker() {
   if (!driveConfigured()) { notifyDialog("Drive sync isn't set up", "Google Drive sync isn't configured yet — see the top of js/drive-sync.js for the one-line config."); return; }
   const tree = $("driveRestoreTree"), status = $("driveRestoreStatus");
@@ -1089,8 +1102,18 @@ async function openDriveRestorePicker() {
   for (const f of (childrenByFolder.get(null) || [])) tree.appendChild(driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, 0));
   for (const nb of (notebooksByFolder.get(null) || [])) tree.appendChild(driveRestoreNotebookRow(nb, 0));
 
+  const knownIds = new Set(snapshot.notebooks.map(n => n.id));
+  const tombstonedIds = new Set(libTombstones.map(t => t.id));
+  const localOnly = libNotebooks.filter(nb => !knownIds.has(nb.id) && !tombstonedIds.has(nb.id));
+  if (localOnly.length) {
+    const heading = document.createElement("div");
+    heading.textContent = `Only on this device (${localOnly.length}) — a restore always keeps these`;
+    heading.style.cssText = "font-size:11px;color:var(--ink-soft);margin:10px 0 4px;";
+    tree.appendChild(heading);
+    for (const nb of localOnly) tree.appendChild(driveLocalOnlyRow(nb, snapshot.folderId));
+  }
+
   try {
-    const knownIds = new Set(snapshot.notebooks.map(n => n.id));
     const orphans = await driveFetchOrphanedNotebookFiles(snapshot.folderId, knownIds);
     if (orphans.length) {
       const heading = document.createElement("div");
@@ -1296,10 +1319,10 @@ async function checkDriveForNewerBackup() {
     if (lastSeen && new Date(newest) <= new Date(lastSeen)) return;
     const ok = await confirmDialogAsync(
       "Newer backup found in Google Drive",
-      `Your Drive backup was updated ${new Date(newest).toLocaleString()}. Restore it now? This replaces what's currently stored on this device.`,
-      "Restore"
+      `Your Drive backup was updated ${new Date(newest).toLocaleString()}. Pull in what's new? Anything you've changed here since your last sync is left alone either way.`,
+      "Pull in changes"
     );
-    if (ok) { await withDriveInteractive(runRestoreEverythingGuard); return; }
+    if (ok) { await withDriveInteractive(driveRestoreNow); return; }
     try { localStorage.setItem(DRIVE_LAST_SEEN_KEY, newest); } catch (_) {} // don't ask again for the same version
   } catch (_) {}
 }
@@ -1351,12 +1374,21 @@ function wireDriveMenu() {
   $("fmDriveManage").onclick = () => { closeFileMenu(); withDriveInteractive(openDriveManageDialog); };
   $("driveRestoreAllBtn").onclick = async () => {
     if (!driveConfigured()) return needsSetup();
-    const ok = await confirmDialogAsync("Restore everything from Google Drive?", "This replaces every notebook currently stored in your active storage location (browser storage, or a connected folder if you have one open) with what's in your Drive backup. This can't be undone locally.", "Restore");
+    const ok = await confirmDialogAsync(
+      "Merge from Google Drive?",
+      "Pulls in anything new or updated from your Drive backup. Notebooks you've changed here since the last sync (or that only exist on this device) are left completely alone.",
+      "Merge"
+    );
     if (!ok) return;
     try {
-      const proceeded = await withDriveInteractive(runRestoreEverythingGuard);
-      if (proceeded) { notifyDialog("Restored from Drive", "Your library was restored from Google Drive."); $("driveRestoreDlg").close(); }
-    } catch (err) { notifyDialog("Restore failed", (err && err.message ? err.message : String(err))); }
+      const res = await withDriveInteractive(driveRestoreNow);
+      const parts = [];
+      parts.push(res.pulled.length ? `Pulled in: ${res.pulled.map(n => `"${n}"`).join(", ")}.` : "Nothing new to pull in.");
+      if (res.keptUnsynced.length) parts.push(`Left alone (you have unsynced changes): ${res.keptUnsynced.map(n => `"${n}"`).join(", ")}.`);
+      if (res.conflicted.length) parts.push(`Changed in both places, left alone: ${res.conflicted.map(n => `"${n}"`).join(", ")} — use "Back up to Drive" to resolve.`);
+      notifyDialog("Merged from Drive", parts.join(" "));
+      $("driveRestoreDlg").close();
+    } catch (err) { notifyDialog("Merge failed", (err && err.message ? err.message : String(err))); }
     refreshDriveSignInStatus();
   };
 

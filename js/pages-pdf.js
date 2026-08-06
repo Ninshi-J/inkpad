@@ -10,6 +10,7 @@ function resetDocState() {
   clearSelection();
   mmCache.clear();
   dirty = false;
+  resetCleanMarkers();
   needsDraw = true; syncUI(); syncStatus();
 }
 function deleteDocument() {
@@ -561,6 +562,7 @@ function deserialize(json) {
   }
   undoStack = []; redoStack = []; clearSelection();
   V.scroll = 0; dirty = false;
+  resetCleanMarkers();
   mmCache.clear();
   needsDraw = true; syncUI(); syncStatus(); rebuildSidebar(); renderLayersPanel();
   restorePdfLiveLinks();
@@ -608,7 +610,7 @@ async function saveFile(pages) {
   const blob = new Blob([await serialize(pages)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "notes.inkpad";
+  a.download = notebookFileStem() + ".inkpad";
   a.click();
   URL.revokeObjectURL(a.href);
   if (!pages) { dirty = false; syncStatus(); } 

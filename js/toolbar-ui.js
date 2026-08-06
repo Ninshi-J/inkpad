@@ -175,8 +175,26 @@ function toggleTeachingMode() {
   V.minimap = false;
   syncUI(); resize(); // resize() reads the just-applied layout change synchronously
   setZoom(CW / pageW());
-  if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+  if (document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().then(lockEscapeKey).catch(() => {});
+  }
   buildToolButtons(V.popped ? PALB : TB);
+}
+
+/* While fullscreen, the browser keeps Escape for itself: pressing it drops out of fullscreen,
+   which here also drops out of Teaching Mode. Mid-lesson that turns "close this dialog" into
+   "lose the projector view", which is the opposite of what Escape is being pressed for.
+
+   The Keyboard Lock API exists precisely for this — with Escape locked it arrives as an ordinary
+   keypress, so a dialog closes normally, and fullscreen is left by HOLDING Escape (the browser
+   says so on entry) or by the Exit Teach button. Chromium-only and fullscreen-only; Safari has no
+   equivalent, so on an iPad Escape keeps its old meaning. Both calls are best-effort by design —
+   a refused lock must never stop Teaching Mode itself from working. */
+function lockEscapeKey() {
+  try { navigator.keyboard && navigator.keyboard.lock && navigator.keyboard.lock(["Escape"]); } catch (_) {}
+}
+function unlockEscapeKey() {
+  try { navigator.keyboard && navigator.keyboard.unlock && navigator.keyboard.unlock(); } catch (_) {}
 }
 function exitTeachingMode() {
   if (!V.teachMode) return;
@@ -189,6 +207,7 @@ function exitTeachingMode() {
     V.scrollX = teachModeSnapshot.scrollX;
     teachModeSnapshot = null;
   }
+  unlockEscapeKey();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   syncUI(); resize();
   buildToolButtons(V.popped ? PALB : TB);

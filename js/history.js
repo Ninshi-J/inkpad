@@ -85,8 +85,19 @@ function applyEntry(e, dir) { // dir: -1 undo, +1 redo
   }
   markDirty(); clearSelection();
 }
-function undo() { const e = undoStack.pop(); if (e) { applyEntry(e, -1); redoStack.push(e); } }
-function redo() { const e = redoStack.pop(); if (e) { applyEntry(e, +1); undoStack.push(e); } }
+// After undo/redo, check whether the undo stack has landed back exactly where it was at the last
+// save (same length AND same top entry BY REFERENCE -- see cleanUndoTop's comment in state.js). If
+// so, this was a genuine no-op round trip (e.g. an accidental stroke, immediately undone) and dirty
+// can be cleared instead of forcing an autosave / Drive-sync-relevant updatedAt bump for content
+// that's actually unchanged. A handful of call sites that dirty the doc without ever touching the
+// undo stack (see invalidateCleanMarker()'s comment in state.js) set cleanUndoDepth to an impossible
+// value, so this naturally never matches until the next real save regardless of undo/redo.
+function reconcileCleanState() {
+  const top = undoStack.length ? undoStack[undoStack.length - 1] : null;
+  if (undoStack.length === cleanUndoDepth && top === cleanUndoTop) dirty = false;
+}
+function undo() { const e = undoStack.pop(); if (e) { applyEntry(e, -1); redoStack.push(e); reconcileCleanState(); } }
+function redo() { const e = redoStack.pop(); if (e) { applyEntry(e, +1); undoStack.push(e); reconcileCleanState(); } }
 
 function shiftObject(o, kind, dx, dy) {
   if (kind === "stroke") { o.pts.forEach(p => { p.x += dx; p.y += dy; }); o.bb = strokeBB(o); }

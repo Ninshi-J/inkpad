@@ -98,7 +98,13 @@ textEdit.addEventListener("input", () => {
   syncTextEditRows();
 });
 textEdit.addEventListener("keydown", e => {
-  if (e.key === "Escape") { cancelTextEdit(); e.stopPropagation(); return; }
+  if (e.key === "Escape") {
+    // A panel opened from the formatting bar (the math helper) sits on top of this box, and this
+    // listener would otherwise beat the global one to the keystroke — closing the box out from
+    // under the panel the user was actually trying to dismiss. Peel that off first.
+    if (closeTopFloatingPanel()) { e.preventDefault(); e.stopPropagation(); return; }
+    cancelTextEdit(); e.stopPropagation(); return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     // Distinct from plain Enter (which inserts a newline, needed for multi-line text) — a
     // deliberate "I'm done" shortcut so you don't have to click away or hunt for Escape (which
@@ -144,24 +150,29 @@ function commitTextEdit() {
   if (!closed) return;
   const { t, before } = closed;
   const lines = textEdit.value.replace(/\s+$/, "").split("\n");
+  // markDirty() only where a pushUndo() just above it actually recorded a real change -- clicking
+  // into an existing box and clicking away without typing anything (or opening a fresh one and
+  // never typing at all) shouldn't mark the notebook modified just for having been looked at.
   if (!lines.length || (lines.length === 1 && !lines[0])) {
     if (before) Object.assign(t, before); // discard any live formatting changes along with the content
     t.del = true;
-    if (before) pushUndo({ op: "del", items: [{ kind: "text", ref: t }] });
+    if (before) { pushUndo({ op: "del", items: [{ kind: "text", ref: t }] }); markDirty(); }
   } else {
     t.lines = lines;
     if (t.fresh) {
       delete t.fresh;
       pushUndo({ op: "add", items: [{ kind: "text", ref: t }] });
+      bumpPages(textBB(t).y1);
+      markDirty();
     } else if (before) {
       const after = snapshotItem("text", t);
       if (JSON.stringify(before) !== JSON.stringify(after)) {
         pushUndo({ op: "transform", items: [{ kind: "text", ref: t, before, after }] });
+        bumpPages(textBB(t).y1);
+        markDirty();
       }
     }
-    bumpPages(textBB(t).y1);
   }
-  markDirty();
 }
 // Escape: discard whatever was typed/changed this session instead of saving it — reverts an
 // existing box back to exactly how it was before this edit started, or removes a brand-new one
@@ -170,9 +181,13 @@ function cancelTextEdit() {
   const closed = closeTextEditUI();
   if (!closed) return;
   const { t, before } = closed;
+  // Explicitly discarding brings the doc fully back to how it was before this edit session (a
+  // full field-for-field restore, or removing a box that was never really committed) -- nothing
+  // here needs saving, so this deliberately does NOT call markDirty(), same reasoning as the
+  // no-real-change branches in commitTextEdit() just above.
   if (before) Object.assign(t, before);
   else t.del = true;
-  markDirty(); needsDraw = true;
+  needsDraw = true;
 }
 
 /* ---------------- text formatting toolbar ---------------- */

@@ -78,9 +78,11 @@ function setActiveLayer(id) {
   // new strokes would silently vanish onto a layer nothing shows, which reads as data loss.
   const l = S.layers.find(x => x.id === id);
   if (l.visible === false) l.visible = true;
-  markDirty(); needsDraw = true; renderLayersPanel();
+  markDirty(); invalidateCleanMarker(); needsDraw = true; renderLayersPanel();
 }
 
+// None of the layer operations below are undo-tracked (layers are metadata, not content on the
+// undo stack) -- each needs invalidateCleanMarker() alongside markDirty().
 function toggleLayerVisibility(id) {
   const l = S.layers.find(x => x.id === id);
   if (!l) return;
@@ -94,7 +96,7 @@ function toggleLayerVisibility(id) {
     const next = S.layers.find(x => x.id !== id && x.visible !== false) || S.layers.find(x => x.id !== id);
     if (next) { S.activeLayer = next.id; if (next.visible === false) next.visible = true; }
   }
-  markDirty(); needsDraw = true; clearSelection(); renderLayersPanel();
+  markDirty(); invalidateCleanMarker(); needsDraw = true; clearSelection(); renderLayersPanel();
 }
 
 async function createLayer() {
@@ -103,7 +105,7 @@ async function createLayer() {
   const l = { id: genId(), name: name.trim() || `Layer ${S.layers.length + 1}`, visible: true };
   S.layers.push(l);
   S.activeLayer = l.id;
-  markDirty(); renderLayersPanel();
+  markDirty(); invalidateCleanMarker(); renderLayersPanel();
 }
 
 async function renameLayer(id) {
@@ -112,7 +114,7 @@ async function renameLayer(id) {
   const name = await promptDialog("Rename layer", "Layer name", l.name);
   if (name == null) return;
   l.name = name.trim() || l.name;
-  markDirty(); renderLayersPanel();
+  markDirty(); invalidateCleanMarker(); renderLayersPanel();
 }
 
 function deleteLayer(id) {
@@ -126,7 +128,7 @@ function deleteLayer(id) {
       for (const o of arr) if (o.layer === id) o.layer = fallback.id;
     S.layers = S.layers.filter(x => x.id !== id);
     if (S.activeLayer === id) { S.activeLayer = fallback.id; if (fallback.visible === false) fallback.visible = true; }
-    markDirty(); needsDraw = true; clearSelection(); renderLayersPanel();
+    markDirty(); invalidateCleanMarker(); needsDraw = true; clearSelection(); renderLayersPanel();
   };
   if (n > 0) {
     confirmDialog(`Delete "${l.name}"?`, `${n} item${n === 1 ? "" : "s"} on this layer will move to "${fallback.name}" instead of being deleted.`, doDelete);
@@ -143,5 +145,5 @@ function moveLayer(id, dir) {
   const j = i + dir;
   if (i < 0 || j < 0 || j >= S.layers.length) return;
   [S.layers[i], S.layers[j]] = [S.layers[j], S.layers[i]];
-  markDirty(); renderLayersPanel();
+  markDirty(); invalidateCleanMarker(); renderLayersPanel();
 }

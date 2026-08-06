@@ -9,7 +9,7 @@
    shape-defaults dialog already did.
    ========================================================================== */
 
-const SETTINGS_CATEGORIES = ["pen", "eraser", "text", "tape", "timer", "shapes"];
+const SETTINGS_CATEGORIES = ["pen", "eraser", "text", "tape", "timer", "shapes", "recording", "keys"];
 // Pen/eraser/text don't have their own standalone "defaults" object the way tape/timer/shapes
 // do — V.widthByTool/V.eraserSizeByTool/V.textFont/V.textSize/V.colorByTool ARE both the live
 // current value (per tool) and the remembered default simultaneously (same dual role
@@ -50,6 +50,13 @@ function populateSettingsCategory(cat) {
     $("stTimerSec").value = totalSec % 60;
   } else if (cat === "shapes") {
     populateShapeDefaultsFields(); // js/shape-tools.js
+  } else if (cat === "recording") {
+    $("stVideoAudioMode").value = videoAudioMode; // js/video-record.js
+  } else if (cat === "keys") {
+    // Unlike every other category, rebinding writes straight through rather than being staged for
+    // Save — see the note in the pane itself. Staging it would mean shadowing the live keymap
+    // while the remap listener (which reads and writes the real one) is running against it.
+    renderKeymapRows($("stKeys")); // js/keymap-colorring.js
   }
 }
 
@@ -97,6 +104,10 @@ function restoreActiveSettingsCategory() {
     $("stTimerMin").value = Math.floor(totalSec / 60); $("stTimerSec").value = totalSec % 60;
   } else if (cat === "shapes") {
     resetShapeDefaultsFields(); // js/shape-tools.js
+  } else if (cat === "recording") {
+    $("stVideoAudioMode").value = "separate";
+  } else if (cat === "keys") {
+    defaultKeymap(); saveKeymap(); refreshKeymapUI();
   }
 }
 
@@ -131,6 +142,7 @@ function saveSettingsDlg() {
   saveTimerObjDefaults();
 
   commitShapeDefaultsFromSettingsDlg(); // js/shape-tools.js
+  setVideoAudioMode($("stVideoAudioMode").value); // js/video-record.js
 
   needsDraw = true; syncUI();
   $("settingsDlg").close();

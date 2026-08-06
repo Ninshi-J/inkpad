@@ -208,6 +208,45 @@ function beginRemap(id, kbdEl) {
   remapping = { id, kbdEl };
   kbdEl.textContent = "press a key…";
   kbdEl.classList.add("listening");
+  // The next keypress has to reach the global handler, not a text field that happened to have
+  // focus when the chip was clicked — which is also why the remap branch there runs before the
+  // uiOwnsKeyboard() guard.
+  try { document.activeElement && document.activeElement.blur(); } catch (_) {}
+}
+// Renders the shortcut list into whichever host is given — the sidebar's Shortcuts section and the
+// settings dialog's Keyboard Shortcuts category show the same rows and share this one builder.
+function renderKeymapRows(host) {
+  if (!host) return;
+  host.innerHTML = "";
+  for (const a of ACTIONS) {
+    const row = document.createElement("div");
+    row.className = "keymap-row";
+    row.innerHTML = `<span>${a.label}</span><kbd>${keyFor(a.id)}</kbd>`;
+    row.querySelector("kbd").onclick = ev => beginRemap(a.id, ev.target);
+    host.appendChild(row);
+  }
+}
+// Every surface that displays a shortcut, refreshed together after any rebind/reset.
+function refreshKeymapUI() {
+  rebuildSidebar();
+  refreshHelp();
+  buildSelToolbar();
+  if ($("settingsDlg").open) renderKeymapRows($("stKeys"));
+}
+
+/* Closes the frontmost open floating panel and reports whether there was one. Ordered most- to
+   least-recently-openable, so Escape peels them off one layer at a time rather than closing an
+   underlying panel while a popup sits on top of it. A real <dialog> is deliberately absent — the
+   browser already closes those on Escape, and taking the keystroke first would shut a panel
+   behind the dialog instead. */
+function closeTopFloatingPanel() {
+  if (document.querySelector("dialog[open]")) return false;
+  if ($("colorPop").classList.contains("open")) { closeColorPop(); return true; }
+  if ($("mathHelperPanel").classList.contains("open")) { closeMathHelper(); return true; }
+  if ($("fileMenu").classList.contains("open")) { closeFileMenu(); return true; }
+  // Only when it isn't counting — Escape shouldn't silently bin a running lesson timer.
+  if ($("timerWidget").classList.contains("open") && !timer.running) { toggleTimerWidget(); return true; }
+  return false;
 }
 
 /* ---------------- keyboard ---------------- */
@@ -224,23 +263,35 @@ function uiOwnsKeyboard() {
   return !!(editingText || libEditingName || document.querySelector("dialog[open]"));
 }
 addEventListener("keydown", e => {
-  if (uiOwnsKeyboard()) return;
-  const k = e.key.toLowerCase();
-  if (pendingPlacement) {
-    if (k === "escape") { pendingPlacement = null; needsDraw = true; e.preventDefault(); }
-    return;
-  }
+  // Deliberately ahead of the uiOwnsKeyboard() guard: rebinding is now reachable from inside the
+  // settings <dialog>, and that guard would swallow the very keypress being waited for. Safe to
+  // put first because `remapping` is only ever set by clicking a key chip — an explicit "I am
+  // about to press the new key" gesture, not a state anything can drift into.
   if (remapping) {
     e.preventDefault();
-    if (k !== "escape" && !["control", "shift", "alt", "meta"].includes(k)) {
+    const rk = e.key.toLowerCase();
+    if (rk !== "escape" && !["control", "shift", "alt", "meta"].includes(rk)) {
       for (const kk of Object.keys(keymap)) if (keymap[kk] === remapping.id) delete keymap[kk];
-      delete keymap[k]; 
-      keymap[k] = remapping.id;
+      delete keymap[rk];
+      keymap[rk] = remapping.id;
       saveKeymap();
     }
     remapping.kbdEl.classList.remove("listening");
     remapping = null;
-    rebuildSidebar(); refreshHelp(); buildSelToolbar();
+    refreshKeymapUI();
+    return;
+  }
+  // Escape closes the topmost floating panel. These aren't <dialog>s (they're anchored popups
+  // that must not dim or block the canvas behind them), so nothing closes them on Escape for
+  // free the way a real dialog gets for nothing — before this they could only be dismissed by
+  // clicking away, which is a poor answer for something opened by a keyboard shortcut.
+  // Runs ahead of the uiOwnsKeyboard() guard because two of these panels contain a focused text
+  // field of their own, and Escape inside that field should still shut the panel it belongs to.
+  if (e.key === "Escape" && closeTopFloatingPanel()) { e.preventDefault(); return; }
+  if (uiOwnsKeyboard()) return;
+  const k = e.key.toLowerCase();
+  if (pendingPlacement) {
+    if (k === "escape") { pendingPlacement = null; needsDraw = true; e.preventDefault(); }
     return;
   }
   const C = e.ctrlKey || e.metaKey;
