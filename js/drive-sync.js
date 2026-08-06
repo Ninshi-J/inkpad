@@ -257,11 +257,12 @@ function driveHasEverSignedIn() {
 // signed in is reassuring but not news, whereas "your other device has work this one hasn't taken"
 // is the thing that used to be invisible right up until it got overwritten.
 function drivePendingIncomingText() {
-  const n = driveIncoming.length, c = driveConflicted.length;
-  if (!n && !c) return null;
+  const n = driveIncoming.length, c = driveConflicted.length, k = driveKeptDeleted.length;
+  if (!n && !c && !k) return null;
   const parts = [];
   if (n) parts.push(`${n} notebook${n === 1 ? "" : "s"} newer in Drive`);
   if (c) parts.push(`${c} changed in both places`);
+  if (k) parts.push(`${k} deleted elsewhere but kept here`);
   return parts.join(", ") + " — use Restore to download";
 }
 async function refreshDriveSignInStatus() {
@@ -579,15 +580,38 @@ async function driveMergeRemoteTombstones(remoteDeleted) {
   }
   return [];
 }
+// Has this device got work in a notebook that Drive has never seen? Same question
+// driveNotebookSyncState answers, asked without needing the remote entry — which matters for a
+// tombstoned notebook, because there ISN'T a remote entry any more.
+function driveNotebookHasUnsyncedWork(nb) {
+  return nb.driveSyncedUpdatedAt === undefined
+    ? (nb.updatedAt || 0) > (nb.driveSyncedAt || 0)   // pre-marker record: same test push uses
+    : (nb.updatedAt || 0) !== nb.driveSyncedUpdatedAt;
+}
+// Applies deletions made on other devices. A tombstone is a decision taken elsewhere, at a moment
+// when THIS device's unsynced edits weren't visible to whoever made it — so applying it blindly
+// destroys work nobody chose to throw away, and did so from an ordinary backup as well as a
+// restore, with no warning and no way back. Anything edited here since its last sync is kept and
+// reported instead; everything else (nothing local to lose) is removed as before.
+let driveKeptDeleted = []; // [{id, name}] — deleted elsewhere, kept here because of local edits
 async function driveApplyTombstones(remoteDeleted) {
   await driveMergeRemoteTombstones(remoteDeleted);
   const deletedIds = new Set(libTombstones.map(t => t.id));
-  const toRemove = libNotebooks.filter(nb => deletedIds.has(nb.id));
+  const toRemove = [], kept = [];
+  for (const nb of libNotebooks.filter(n => deletedIds.has(n.id))) {
+    (driveNotebookHasUnsyncedWork(nb) ? kept : toRemove).push(nb);
+  }
   for (const nb of toRemove) {
     libNotebooks = libNotebooks.filter(n => n.id !== nb.id);
     try { await storeDelete("notebooks", nb.id); await storeDelete("docdata", nb.id); } catch (_) {}
     if (nb.id === activeNotebookId) activeNotebookId = null;
   }
+  // Merged, not replaced: a backup and a restore can each reach this, and whichever runs second
+  // shouldn't drop what the first one reported.
+  for (const nb of kept) {
+    if (!driveKeptDeleted.some(k => k.id === nb.id)) driveKeptDeleted.push({ id: nb.id, name: nb.name });
+  }
+  driveKeptDeleted = driveKeptDeleted.filter(k => libNotebooks.some(nb => nb.id === k.id));
   return toRemove;
 }
 
@@ -833,6 +857,7 @@ async function driveRestoreNow() {
     pulled: toPull.map(id => (remoteById.get(id) || {}).name).filter(Boolean),
     keptUnsynced: keptUnsynced.map(nb => nb.name),
     conflicted: conflicted.map(nb => nb.name),
+    keptDeleted: driveKeptDeleted.map(k => k.name),
   };
 }
 
@@ -1386,6 +1411,7 @@ function wireDriveMenu() {
       parts.push(res.pulled.length ? `Pulled in: ${res.pulled.map(n => `"${n}"`).join(", ")}.` : "Nothing new to pull in.");
       if (res.keptUnsynced.length) parts.push(`Left alone (you have unsynced changes): ${res.keptUnsynced.map(n => `"${n}"`).join(", ")}.`);
       if (res.conflicted.length) parts.push(`Changed in both places, left alone: ${res.conflicted.map(n => `"${n}"`).join(", ")} — use "Back up to Drive" to resolve.`);
+      if (res.keptDeleted.length) parts.push(`Deleted on another device but kept here because you've edited ${res.keptDeleted.length > 1 ? "them" : "it"} since: ${res.keptDeleted.map(n => `"${n}"`).join(", ")} — ${res.keptDeleted.length > 1 ? "they stay" : "it stays"} on this device only until you delete or duplicate ${res.keptDeleted.length > 1 ? "them" : "it"}.`);
       notifyDialog("Merged from Drive", parts.join(" "));
       $("driveRestoreDlg").close();
     } catch (err) { notifyDialog("Merge failed", (err && err.message ? err.message : String(err))); }
