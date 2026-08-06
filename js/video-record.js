@@ -141,6 +141,11 @@ const vidrec = {
   audioUrl: null,
   audioNote: "",    // why there's no audio file, when there isn't one
   embedded: false,  // was the mic muxed into the video track this take?
+  // Whether each finished file has actually been downloaded. Without this the app can't tell a
+  // saved recording from an unsaved one — it only knew a blob still existed, which is true either
+  // way, so it warned about discarding work that was already safely on disk.
+  savedVideo: false,
+  savedAudio: false,
   baseName: "",     // shared filename stem for the video/audio pair, fixed at record start
 
   // Both recorders must have delivered their final data before the dialog can open,
@@ -151,6 +156,11 @@ const vidrec = {
 function videoRecActive() { return !!vidrec.rec; }
 function videoRecElapsedMs() { return vidrec.rec ? performance.now() - vidrec.startWall : 0; }
 function videoRecPending() { return !!vidrec.blob || !!vidrec.audioBlob; }
+// A finished recording with a file still not written to disk — the only case worth interrupting
+// someone over. Downloading only the audio of a video+audio pair still counts as unsaved.
+function videoRecUnsaved() {
+  return (!!vidrec.blob && !vidrec.savedVideo) || (!!vidrec.audioBlob && !vidrec.savedAudio);
+}
 
 function pickMime(candidates) {
   if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return null;
@@ -182,15 +192,17 @@ async function toggleVideoRecord() {
   if (vidrec.rec) { stopVideoRecord(); return; }
   // A finished-but-unsaved recording is only held in memory — starting a new one
   // is the single way to lose it, so it's the one case worth confirming.
-  if (videoRecPending()) {
+  if (videoRecUnsaved()) {
     const ok = await confirmDialogAsync(
       "Start a new recording?",
       "Your last recording hasn't been downloaded yet. Starting a new one discards it.",
       "Discard and record",
     );
     if (!ok) return;
-    releaseVideoBlob();
   }
+  // Already downloaded (or nothing held): drop it without asking. The blob is only a preview at
+  // that point, and the file is safely on disk.
+  releaseVideoBlob();
   await startVideoRecord();
 }
 
@@ -390,6 +402,8 @@ function releaseVideoBlob() {
   vidrec.blob = null;
   vidrec.audioUrl = null;
   vidrec.audioBlob = null;
+  vidrec.savedVideo = false;
+  vidrec.savedAudio = false;
 }
 
 /* Copies the board into the fixed-size capture canvas, letterboxed and centered.
@@ -427,7 +441,9 @@ function videoRecStatusText() {
   }
   if (videoRecPending()) {
     const total = (vidrec.blob ? vidrec.blob.size : 0) + (vidrec.audioBlob ? vidrec.audioBlob.size : 0);
-    return `🎥 Ready · ${fmtBytes(total)}`;
+    // "Ready" means there's still a file to save; "Saved" means it's on disk and the preview is
+    // just being kept around in case you want it again.
+    return `🎥 ${videoRecUnsaved() ? "Ready" : "Saved"} · ${fmtBytes(total)}`;
   }
   return "";
 }
@@ -488,7 +504,11 @@ function openVideoRecDialog() {
   dlBtn.onclick = async () => { await downloadVideoRecording(); stopPreview(); dlg.close(); };
   const audioBtn = $("vrDownloadAudioBtn");
   audioBtn.style.display = hasVideo && hasAudio ? "" : "none";
-  audioBtn.onclick = () => downloadBlobAs(vidrec.audioUrl, `${videoChosenBaseName()}.${vidrec.audioExt}`);
+  audioBtn.onclick = () => {
+    downloadBlobAs(vidrec.audioUrl, `${videoChosenBaseName()}.${vidrec.audioExt}`);
+    vidrec.savedAudio = true; // the video half is still unsaved, so this alone won't silence the warning
+    syncStatus();
+  };
   // Pre-filled with the auto-generated name, editable before saving. Both files always take the
   // same stem, so a renamed pair still reads as a pair.
   const nameEl = $("vrFileName");
@@ -552,12 +572,14 @@ function downloadBlobAs(url, filename) {
 
 async function downloadVideoRecording() {
   const base = videoChosenBaseName();
-  if (vidrec.blob) downloadBlobAs(vidrec.url, `${base}.${vidrec.ext}`);
+  if (vidrec.blob) { downloadBlobAs(vidrec.url, `${base}.${vidrec.ext}`); vidrec.savedVideo = true; }
   if (vidrec.audioBlob) {
     // Staggered, same as the multi-page SVG export: Chrome's "allow multiple
     // downloads?" permission prompt only appears once, and firing two saves in the
     // same tick lets it swallow the second.
     if (vidrec.blob) await new Promise(res => setTimeout(res, 250));
     downloadBlobAs(vidrec.audioUrl, `${base}.${vidrec.audioExt}`);
+    vidrec.savedAudio = true;
   }
+  syncStatus();
 }
