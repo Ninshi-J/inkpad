@@ -456,6 +456,10 @@ function drawLaser() {
   if (laser.length < 2) return;
   ctx.lineCap = "round"; ctx.lineJoin = "round";
   for (let i = 1; i < laser.length; i++) {
+    // The pen came down here, so there's no stroke between the previous point and this one —
+    // only a gap the pen travelled while lifted. Both points legitimately remain in the trail
+    // (the old one is still fading), but joining them would draw a line across the page.
+    if (laser[i].brk) continue;
     const age = (now - laser[i].t) / LASER_MS;
     ctx.strokeStyle = `rgba(235,60,45,${(1 - age) * .9})`;
     ctx.lineWidth = (1 + (1 - age) * 4) * V.zoom;

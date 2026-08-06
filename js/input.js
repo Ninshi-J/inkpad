@@ -145,7 +145,10 @@ cv.addEventListener("pointerdown", e => {
     case "text": startTextEdit(w.x, w.y); break;
     case "laser":
       drag = { mode: "laser" };
-      laser.push({ x: w.x, y: w.y, t: performance.now() });
+      // brk marks where the pen came down, i.e. a gap in the trail rather than a continuation of
+      // it — see drawLaser(). Without it, lifting the pen and starting again somewhere else
+      // before the old trail has faded draws a line straight across the gap.
+      laser.push({ x: w.x, y: w.y, t: performance.now(), brk: true });
       break;
   }
   if (drag) drag.pointerId = e.pointerId;
