@@ -863,6 +863,19 @@ async function driveRestoreNow() {
 
 /* ---------------- targeted restore: one notebook, or one folder's worth ---------------- */
 
+// Set by the restore picker only while a restore IT started is running, so each notebook row can
+// report what's happening to it as it happens rather than the whole thing being one opaque pause.
+// Null the rest of the time: every restore funnels through driveRestoreSelected, including the
+// quiet auto-sync pulls, and those have no open UI to talk to.
+let driveRestoreProgressFn = null;
+function driveNoteRestoreProgress(id, phase) {
+  if (!driveRestoreProgressFn) return;
+  try { driveRestoreProgressFn(id, phase); } catch (_) {} // never let a UI slip abort a restore
+}
+// Yields to the browser so a progress update actually paints before the next notebook's fetch
+// starts. Without this the whole loop can land in one frame and the tracker is invisible.
+const driveProgressPaint = () => new Promise(r => requestAnimationFrame(() => r()));
+
 // Restores just these notebook ids (plus whichever ancestor folders they need so the sidebar
 // nests them correctly), leaving every other locally-stored notebook untouched. driveRestoreNow()
 // is the same idea at library scope — it also never touches anything outside what it classifies
@@ -885,6 +898,8 @@ async function driveRestoreSelected(notebookIds, snapshot, force, opts = {}) {
   for (const fo of snapshot.folders.filter(f => neededFolderIds.has(f.id))) await storePut("folders", fo);
 
   for (const nb of wantedMeta) {
+    driveNoteRestoreProgress(nb.id, "working");
+    if (driveRestoreProgressFn) await driveProgressPaint();
     const file = await driveFindNotebookFileByProperty(snapshot.folderId, nb.id);
     if (file) {
       const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`);
@@ -903,6 +918,7 @@ async function driveRestoreSelected(notebookIds, snapshot, force, opts = {}) {
       await storePut("docdata", snapshot.docdata[nb.id], nb.id);
     }
     await storePut("notebooks", nb);
+    driveNoteRestoreProgress(nb.id, "done");
   }
 
   libFolders = await storeGetAll("folders");
@@ -963,12 +979,43 @@ const DRIVE_CHANGE_LABELS = {
 const DRIVE_CHANGE_RANK = { new: 1, pull: 1, push: 2, conflict: 3 };
 const driveWorstChange = states => states.reduce((a, b) => (DRIVE_CHANGE_RANK[b] > DRIVE_CHANGE_RANK[a] ? b : a), states[0]);
 const driveBadgeHtml = (text, color) =>
-  `<span style="color:${color};font-size:11px;margin-right:6px;white-space:nowrap;">${text}</span>`;
+  `<span class="drive-badge" style="color:${color || "var(--ink-soft)"};font-size:11px;margin-right:6px;white-space:nowrap;">${text}</span>`;
+const driveSetBadge = (row, text, color) => {
+  const b = row.querySelector(".drive-badge");
+  if (b) { b.textContent = text; b.style.color = color || "var(--ink-soft)"; }
+};
 
-// Small colored label showing how a notebook's local copy compares to Drive's.
+// Small colored label showing how a notebook's local copy compares to Drive's. Emitted even when
+// there's nothing to say, because a running restore writes its live progress into this same element
+// and an in-sync notebook can still be restored deliberately.
 function driveSyncBadgeHtml(localNb, remoteNb) {
   const l = DRIVE_CHANGE_LABELS[driveRowChangeState(localNb, remoteNb)];
-  return l ? driveBadgeHtml(l[0], l[1]) : "";
+  return driveBadgeHtml(l ? l[0] : "", l ? l[1] : "");
+}
+
+/* ---------------- picker state: rows to light up, folder badges to recompute ---------------- */
+// Rebuilt from scratch every time the picker opens, so nothing here can outlive the DOM it points at.
+let driveRestoreRows = new Map();       // notebookId -> its row element, for live progress
+let driveRestoreFolderRefresh = [];     // () => void, one per folder: recompute its rollup badge
+let driveRestoreRemoteById = new Map(); // notebookId -> Drive's metadata entry for it
+
+// Runs a restore with the picker's rows tracking it live, then leaves the ✓ marks in place and
+// brings the folder rollups back in line with what just happened. The dialog deliberately stays
+// open: watching it land IS the confirmation, and closing on success threw that away.
+async function withRestorePickerProgress(run) {
+  driveRestoreProgressFn = (id, phase) => {
+    const row = driveRestoreRows.get(id);
+    if (!row) return;
+    if (phase === "working") { driveSetBadge(row, "restoring…", "#B45309"); row.style.background = "var(--accent-soft)"; }
+    else { driveSetBadge(row, "restored ✓", "#0F766E"); row.style.background = ""; }
+  };
+  try { return await run(); }
+  finally {
+    driveRestoreProgressFn = null;
+    // Folder counts are stale the moment anything under them lands; recompute rather than rebuild,
+    // so the per-row ✓ the user just watched survives.
+    for (const fn of driveRestoreFolderRefresh) fn();
+  }
 }
 
 function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
@@ -982,34 +1029,40 @@ function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
   const childWrap = document.createElement("div");
   childWrap.className = "lib-children";
   const subFolders = childrenByFolder.get(f.id) || [], notebooks = notebooksByFolder.get(f.id) || [];
-  const changed = []; // every changed state in this whole subtree, not just its direct children
+  const nbIds = []; // every notebook in this whole subtree, so the rollup can be recomputed later
   for (const sub of subFolders) {
     const r = driveRestoreFolderRow(sub, childrenByFolder, notebooksByFolder, depth + 1);
     childWrap.appendChild(r.wrap);
-    changed.push(...r.changed);
+    nbIds.push(...r.nbIds);
   }
   for (const nb of notebooks) {
-    const st = driveRemoteNbState(nb);
-    if (st !== "inSync") changed.push(st);
+    nbIds.push(nb.id);
     childWrap.appendChild(driveRestoreNotebookRow(nb, depth + 1));
   }
+  const subtreeChanges = () => nbIds
+    .map(id => driveRemoteNbState(driveRestoreRemoteById.get(id)))
+    .filter(st => st !== "inSync");
+  const changed = subtreeChanges();
   const hasChildren = subFolders.length > 0 || notebooks.length > 0;
   // The whole point: a folder stays shut unless something inside it actually needs attention. Since
   // this recurses bottom-up, an ancestor of a changed notebook is opened too — so the path down to
   // it is visible without any hunting, and everything settled stays out of the way.
   let expanded = changed.length > 0;
 
-  const badge = changed.length
-    ? driveBadgeHtml(`${changed.length} to review`, DRIVE_CHANGE_LABELS[driveWorstChange(changed)][1])
-    : "";
+  const rollupText = states => (states.length ? `${states.length} to review` : "");
+  const rollupColor = states => (states.length ? DRIVE_CHANGE_LABELS[driveWorstChange(states)][1] : "");
   row.innerHTML = `
     <span class="lib-toggle">${hasChildren ? (expanded ? "▾" : "▸") : ""}</span>
     <span class="lib-icon">\u{1F4C1}</span>
     <span class="lib-name">${escapeXml(f.name)}</span>
-    ${badge}
-    <span class="lib-actions" style="display:flex;"><button type="button" title="Restore this folder">⟳</button></span>`;
+    ${driveBadgeHtml(rollupText(changed), rollupColor(changed))}
+    <span class="lib-actions" style="display:flex;"><button type="button" title="Replace every notebook in this folder with Drive's copy">⟳</button></span>`;
   wrap.appendChild(row);
   if (!expanded) childWrap.style.display = "none";
+  driveRestoreFolderRefresh.push(() => {
+    const now = subtreeChanges();
+    driveSetBadge(row, rollupText(now), rollupColor(now));
+  });
 
   // Rows are already built, so this just shows/hides them — no re-render, and no expansion state to
   // keep anywhere, unlike the sidebar's tree (which rebuilds itself from libExpanded on every change).
@@ -1027,35 +1080,87 @@ function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Restore "${f.name}"?`, "This replaces every notebook in this folder (and any subfolders) currently stored on this device with what's in Drive.", "Restore");
     if (!ok) return;
-    try {
-      const proceeded = await withDriveInteractive(() => runRestoreWithNewerLocalGuard(force => driveRestoreFolder(f.id, force)));
-      if (proceeded) { notifyDialog("Restored from Drive", `"${f.name}" was restored from Google Drive.`); $("driveRestoreDlg").close(); }
-    } catch (err) { notifyDialog("Restore failed", (err && err.message ? err.message : String(err))); }
+    await runPickerRestore(
+      () => runRestoreWithNewerLocalGuard(force => driveRestoreFolder(f.id, force)),
+      `Restored "${f.name}" from Drive.`);
   };
   wrap.appendChild(childWrap);
-  return { wrap, changed };
+  return { wrap, changed, nbIds };
 }
+
+// Every restore started from inside the picker goes through here: live per-row progress, the result
+// reported in the picker's own status line, and the dialog left open. It used to fire a separate
+// "Restored from Drive" dialog and close the picker, which meant the tree you were working through
+// vanished after every single item and told you nothing about what the rest of it now looked like.
+async function runPickerRestore(run, successMsg) {
+  const status = $("driveRestoreStatus");
+  try {
+    const proceeded = await withRestorePickerProgress(() => withDriveInteractive(run));
+    // runRestoreWithNewerLocalGuard returns false when the user backs out of its confirm; the
+    // plain restores below return undefined, which is not a refusal.
+    if (proceeded !== false) { status.textContent = successMsg; status.style.color = "#0F766E"; }
+  } catch (err) {
+    status.textContent = "Restore failed: " + (err && err.message ? err.message : String(err));
+    status.style.color = "#B91C1C";
+  }
+  refreshDriveSignInStatus();
+}
+
 function driveRestoreNotebookRow(nb, depth) {
-  const localNb = libNotebooks.find(n => n.id === nb.id);
+  const state = driveRemoteNbState(nb);
   const row = document.createElement("div");
   row.className = "lib-row lib-notebook";
   row.style.paddingLeft = (depth * 14 + 12) + "px";
+  driveRestoreRows.set(nb.id, row);
+  // A merge deliberately skips "push" and "conflict" notebooks — it will not overwrite local work.
+  // That's correct, but on its own it's a dead end: the merge keeps reporting the same rows forever
+  // and nothing in the UI ever resolves them. These two buttons are the way out, spelled out on
+  // exactly the rows that need one instead of hidden behind a generic ⟳ and a scary confirm.
+  const stuck = state === "push" || state === "conflict";
   // The sync badge sits OUTSIDE .lib-actions deliberately -- that class is hover-only (see
   // style.css), but the whole point of the badge is to be scannable across the tree at a glance,
   // not discovered one row at a time.
   row.innerHTML = `
     <span class="lib-icon">\u{1F4C4}</span>
     <span class="lib-name">${escapeXml(nb.name)}</span>
-    ${driveSyncBadgeHtml(localNb, nb)}
-    <span class="lib-actions" style="display:flex;"><button type="button" title="Restore this notebook">⟳</button></span>`;
-  row.querySelector("button").onclick = async e => {
+    ${driveSyncBadgeHtml(libNotebooks.find(n => n.id === nb.id), nb)}
+    <span class="lib-actions" style="display:flex;">
+      ${stuck ? `<button type="button" data-act="take" class="drive-resolve" title="Replace this device's copy with Drive's">Take Drive's</button>` : ""}
+      ${state === "conflict" ? `<button type="button" data-act="keep" class="drive-resolve" title="Publish this device's copy to Drive, replacing what's there">Keep mine</button>` : ""}
+      <button type="button" data-act="restore" title="Replace this notebook with Drive's copy">⟳</button>
+    </span>`;
+
+  const takeBtn = row.querySelector('[data-act=take]');
+  if (takeBtn) takeBtn.onclick = async e => {
+    e.stopPropagation();
+    const detail = state === "conflict"
+      ? `"${nb.name}" was changed both here and on another device. Taking Drive's copy discards the changes made on this device.`
+      : `You have changes to "${nb.name}" on this device that were never backed up. Taking Drive's copy discards them.`;
+    if (!await confirmDialogAsync(`Take Drive's copy of "${nb.name}"?`, detail + " This can't be undone.", "Take Drive's copy")) return;
+    // force=true on purpose: the newer-local guard exists to catch exactly this situation, and the
+    // confirm above has already named what's being given up. Asking twice for one decision is noise.
+    await runPickerRestore(() => driveRestoreSelected([nb.id], null, true), `Took Drive's copy of "${nb.name}".`);
+  };
+
+  const keepBtn = row.querySelector('[data-act=keep]');
+  if (keepBtn) keepBtn.onclick = async e => {
+    e.stopPropagation();
+    if (!await confirmDialogAsync(`Keep this device's copy of "${nb.name}"?`,
+      `Publishes this device's copy to Drive, replacing what's there. The changes made to "${nb.name}" on the other device are discarded. This can't be undone.`, "Keep mine")) return;
+    // driveBackupNow's keepLocalIds is the existing, already-tested route out of a conflict — it
+    // reclassifies just this notebook as a push for one run, which advances driveSyncedUpdatedAt
+    // and is the only thing that actually clears the conflict.
+    await runPickerRestore(() => driveBackupNow([nb.id]), `Kept this device's copy of "${nb.name}" and pushed it to Drive.`);
+    driveSetBadge(row, "kept yours ✓", "#0F766E");
+  };
+
+  row.querySelector('[data-act=restore]').onclick = async e => {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Restore "${nb.name}"?`, "This replaces this notebook's content currently stored on this device with what's in Drive.", "Restore");
     if (!ok) return;
-    try {
-      const proceeded = await withDriveInteractive(() => runRestoreWithNewerLocalGuard(force => driveRestoreSelected([nb.id], null, force)));
-      if (proceeded) { notifyDialog("Restored from Drive", `"${nb.name}" was restored from Google Drive.`); $("driveRestoreDlg").close(); }
-    } catch (err) { notifyDialog("Restore failed", (err && err.message ? err.message : String(err))); }
+    await runPickerRestore(
+      () => runRestoreWithNewerLocalGuard(force => driveRestoreSelected([nb.id], null, force)),
+      `Restored "${nb.name}" from Drive.`);
   };
   return row;
 }
@@ -1153,6 +1258,10 @@ async function openDriveRestorePicker() {
   if (!driveConfigured()) { notifyDialog("Drive sync isn't set up", "Google Drive sync isn't configured yet — see the top of js/drive-sync.js for the one-line config."); return; }
   const tree = $("driveRestoreTree"), status = $("driveRestoreStatus");
   tree.innerHTML = "";
+  driveRestoreRows = new Map();
+  driveRestoreFolderRefresh = [];
+  driveRestoreRemoteById = new Map();
+  status.style.color = "";
   status.textContent = "Loading your Drive library…";
   $("driveRestoreDlg").showModal();
   let snapshot;
@@ -1172,6 +1281,7 @@ async function openDriveRestorePicker() {
     const key = nb.folderId || null;
     if (!notebooksByFolder.has(key)) notebooksByFolder.set(key, []);
     notebooksByFolder.get(key).push(nb);
+    driveRestoreRemoteById.set(nb.id, nb); // folder rollups recompute against this after a restore
   }
   const changed = [];
   for (const f of (childrenByFolder.get(null) || [])) {
@@ -1468,16 +1578,29 @@ function wireDriveMenu() {
       "Merge"
     );
     if (!ok) return;
+    const status = $("driveRestoreStatus");
+    status.style.color = ""; status.textContent = "Merging from Drive…";
     try {
-      const res = await withDriveInteractive(driveRestoreNow);
+      // Same live per-row tracker the targeted restores use — a merge is the one that can touch many
+      // notebooks at once, so it's where watching them land one by one matters most.
+      const res = await withRestorePickerProgress(() => withDriveInteractive(driveRestoreNow));
       const parts = [];
       parts.push(res.pulled.length ? `Pulled in: ${res.pulled.map(n => `"${n}"`).join(", ")}.` : "Nothing new to pull in.");
       if (res.keptUnsynced.length) parts.push(`Left alone (you have unsynced changes): ${res.keptUnsynced.map(n => `"${n}"`).join(", ")}.`);
       if (res.conflicted.length) parts.push(`Changed in both places, left alone: ${res.conflicted.map(n => `"${n}"`).join(", ")} — use "Back up to Drive" to resolve.`);
       if (res.keptDeleted.length) parts.push(`Deleted on another device but kept here because you've edited ${res.keptDeleted.length > 1 ? "them" : "it"} since: ${res.keptDeleted.map(n => `"${n}"`).join(", ")} — ${res.keptDeleted.length > 1 ? "they stay" : "it stays"} on this device only until you delete or duplicate ${res.keptDeleted.length > 1 ? "them" : "it"}.`);
+      // The picker stays open: the tree behind this dialog now shows what the merge did and what it
+      // deliberately left alone, with a "Take Drive's"/"Keep mine" button on each row it skipped —
+      // which is exactly where you'd want to go next, and used to be closed out from under you.
+      status.textContent = res.pulled.length
+        ? `Merged — pulled in ${res.pulled.length} notebook${res.pulled.length === 1 ? "" : "s"}.`
+        : "Merged — nothing new to pull in.";
+      status.style.color = "#0F766E";
       notifyDialog("Merged from Drive", parts.join(" "));
-      $("driveRestoreDlg").close();
-    } catch (err) { notifyDialog("Merge failed", (err && err.message ? err.message : String(err))); }
+    } catch (err) {
+      status.textContent = "Merge failed: " + (err && err.message ? err.message : String(err));
+      status.style.color = "#B91C1C";
+    }
     refreshDriveSignInStatus();
   };
 

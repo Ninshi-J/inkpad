@@ -209,6 +209,12 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
   padding: 2px 4px; line-height: 1; border-radius: 4px;
 }
 .lib-actions button:hover { background: rgba(0,0,0,.08); color: var(--ink); }
+/* Restore picker only: the way out of a notebook the merge deliberately skipped. Outlined rather
+   than icon-only because these two discard work on one side or the other -- they need to read as
+   deliberate choices, not as another glyph in the row. */
+.lib-actions button.drive-resolve {
+  border: 1px solid var(--line); color: var(--ink); padding: 2px 6px; white-space: nowrap;
+}
 .lib-children { display: flex; flex-direction: column; }
 .lib-empty { color: var(--ink-soft); font-size: 11.5px; padding: 5px 4px; font-style: italic; }
 #libTree.dragover { outline: 1.5px dashed var(--accent); outline-offset: -3px; border-radius: 6px; }
