@@ -374,7 +374,13 @@ function finishVideoRecord() {
   vidrec.chunks = [];
   vidrec.audioChunks = [];
   syncStatus();
-  if (videoRecPending()) openVideoRecDialog();
+  if (videoRecPending()) { openVideoRecDialog(); return; }
+  // Stopping and getting NOTHING used to be completely silent — no dialog, no message, the status
+  // bar simply cleared. The realistic way to hit it is stopping almost immediately: the video
+  // encoder needs a moment to produce its first chunk, so a take of about a second can end before
+  // any data exists. Say so, rather than leaving "did that save?" unanswered.
+  notifyDialog("Nothing was recorded",
+    "That recording stopped before any video data was produced — it was probably too short. Try again and give it a few seconds.");
 }
 
 function releaseVideoBlob() {
