@@ -940,23 +940,35 @@ async function driveRestoreFolder(folderId, force) {
 
 /* ---------------- restore picker: everything, or pick a folder/notebook ---------------- */
 
-// Small colored label showing how a notebook's local copy compares to Drive's, reusing
-// driveNotebookSyncState's clock-skew-safe classification (the same one push already relies on)
-// instead of a naive updatedAt comparison. localNb is undefined for a notebook Drive has that this
-// device has never seen at all -- not one of driveNotebookSyncState's own states (that function
-// always assumes a real local notebook to classify), so it's handled directly here as "new".
+// One place that answers "how does this row differ from Drive?", so the notebook badge, the folder
+// rollup counts and the auto-expand decision below can't drift apart. Reuses driveNotebookSyncState's
+// clock-skew-safe classification (the same one push already relies on) rather than a naive updatedAt
+// comparison. localNb is undefined for a notebook Drive has that this device has never seen at all --
+// not one of driveNotebookSyncState's own states (that function always assumes a real local notebook
+// to classify), so it's handled here as "new".
+function driveRowChangeState(localNb, remoteNb) {
+  return localNb ? driveNotebookSyncState(localNb, remoteNb) : "new";
+}
+const driveRemoteNbState = nb => driveRowChangeState(libNotebooks.find(n => n.id === nb.id), nb);
+const DRIVE_CHANGE_LABELS = {
+  inSync: null, // nothing worth calling out for the common case
+  new: ["new in Drive", "#0F766E"],
+  pull: ["Drive is newer", "#0F766E"],
+  push: ["you have unsynced changes", "#B45309"],
+  conflict: ["changed in both places", "#B91C1C"],
+};
+// Severity order for rolling a subtree's states up into one folder badge: a folder holding a single
+// conflict among nine clean notebooks has to read as a conflict, not average away into the mildest
+// thing in there.
+const DRIVE_CHANGE_RANK = { new: 1, pull: 1, push: 2, conflict: 3 };
+const driveWorstChange = states => states.reduce((a, b) => (DRIVE_CHANGE_RANK[b] > DRIVE_CHANGE_RANK[a] ? b : a), states[0]);
+const driveBadgeHtml = (text, color) =>
+  `<span style="color:${color};font-size:11px;margin-right:6px;white-space:nowrap;">${text}</span>`;
+
+// Small colored label showing how a notebook's local copy compares to Drive's.
 function driveSyncBadgeHtml(localNb, remoteNb) {
-  if (!localNb) return `<span style="color:#0F766E;font-size:11px;margin-right:6px;white-space:nowrap;">new in Drive</span>`;
-  const state = driveNotebookSyncState(localNb, remoteNb);
-  const labels = {
-    inSync: null, // nothing worth calling out for the common case
-    pull: ["Drive is newer", "#0F766E"],
-    push: ["you have unsynced changes", "#B45309"],
-    conflict: ["changed in both places", "#B91C1C"],
-  };
-  const l = labels[state];
-  if (!l) return "";
-  return `<span style="color:${l[1]};font-size:11px;margin-right:6px;white-space:nowrap;">${l[0]}</span>`;
+  const l = DRIVE_CHANGE_LABELS[driveRowChangeState(localNb, remoteNb)];
+  return l ? driveBadgeHtml(l[0], l[1]) : "";
 }
 
 function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
@@ -964,11 +976,53 @@ function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
   const row = document.createElement("div");
   row.className = "lib-row lib-folder";
   row.style.paddingLeft = (depth * 14) + "px";
+
+  // Children are built BEFORE the folder's own row markup, because both the badge it shows and
+  // whether it starts open are decided entirely by what turns out to be underneath it.
+  const childWrap = document.createElement("div");
+  childWrap.className = "lib-children";
+  const subFolders = childrenByFolder.get(f.id) || [], notebooks = notebooksByFolder.get(f.id) || [];
+  const changed = []; // every changed state in this whole subtree, not just its direct children
+  for (const sub of subFolders) {
+    const r = driveRestoreFolderRow(sub, childrenByFolder, notebooksByFolder, depth + 1);
+    childWrap.appendChild(r.wrap);
+    changed.push(...r.changed);
+  }
+  for (const nb of notebooks) {
+    const st = driveRemoteNbState(nb);
+    if (st !== "inSync") changed.push(st);
+    childWrap.appendChild(driveRestoreNotebookRow(nb, depth + 1));
+  }
+  const hasChildren = subFolders.length > 0 || notebooks.length > 0;
+  // The whole point: a folder stays shut unless something inside it actually needs attention. Since
+  // this recurses bottom-up, an ancestor of a changed notebook is opened too — so the path down to
+  // it is visible without any hunting, and everything settled stays out of the way.
+  let expanded = changed.length > 0;
+
+  const badge = changed.length
+    ? driveBadgeHtml(`${changed.length} to review`, DRIVE_CHANGE_LABELS[driveWorstChange(changed)][1])
+    : "";
   row.innerHTML = `
+    <span class="lib-toggle">${hasChildren ? (expanded ? "▾" : "▸") : ""}</span>
     <span class="lib-icon">\u{1F4C1}</span>
     <span class="lib-name">${escapeXml(f.name)}</span>
+    ${badge}
     <span class="lib-actions" style="display:flex;"><button type="button" title="Restore this folder">⟳</button></span>`;
   wrap.appendChild(row);
+  if (!expanded) childWrap.style.display = "none";
+
+  // Rows are already built, so this just shows/hides them — no re-render, and no expansion state to
+  // keep anywhere, unlike the sidebar's tree (which rebuilds itself from libExpanded on every change).
+  const toggleEl = row.querySelector(".lib-toggle");
+  const toggle = () => {
+    if (!hasChildren) return;
+    expanded = !expanded;
+    childWrap.style.display = expanded ? "" : "none";
+    toggleEl.textContent = expanded ? "▾" : "▸";
+  };
+  toggleEl.onclick = e => { e.stopPropagation(); toggle(); };
+  row.onclick = () => toggle();
+
   row.querySelector("button").onclick = async e => {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Restore "${f.name}"?`, "This replaces every notebook in this folder (and any subfolders) currently stored on this device with what's in Drive.", "Restore");
@@ -978,12 +1032,8 @@ function driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, depth) {
       if (proceeded) { notifyDialog("Restored from Drive", `"${f.name}" was restored from Google Drive.`); $("driveRestoreDlg").close(); }
     } catch (err) { notifyDialog("Restore failed", (err && err.message ? err.message : String(err))); }
   };
-  const childWrap = document.createElement("div");
-  childWrap.className = "lib-children";
-  for (const sub of (childrenByFolder.get(f.id) || [])) childWrap.appendChild(driveRestoreFolderRow(sub, childrenByFolder, notebooksByFolder, depth + 1));
-  for (const nb of (notebooksByFolder.get(f.id) || [])) childWrap.appendChild(driveRestoreNotebookRow(nb, depth + 1));
   wrap.appendChild(childWrap);
-  return wrap;
+  return { wrap, changed };
 }
 function driveRestoreNotebookRow(nb, depth) {
   const localNb = libNotebooks.find(n => n.id === nb.id);
@@ -1112,7 +1162,6 @@ async function openDriveRestorePicker() {
     status.textContent = "No InkPad backup found in Google Drive yet.";
     return;
   }
-  status.textContent = "";
   const childrenByFolder = new Map(), notebooksByFolder = new Map();
   for (const f of snapshot.folders) {
     const key = f.parentId || null;
@@ -1124,8 +1173,22 @@ async function openDriveRestorePicker() {
     if (!notebooksByFolder.has(key)) notebooksByFolder.set(key, []);
     notebooksByFolder.get(key).push(nb);
   }
-  for (const f of (childrenByFolder.get(null) || [])) tree.appendChild(driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, 0));
-  for (const nb of (notebooksByFolder.get(null) || [])) tree.appendChild(driveRestoreNotebookRow(nb, 0));
+  const changed = [];
+  for (const f of (childrenByFolder.get(null) || [])) {
+    const r = driveRestoreFolderRow(f, childrenByFolder, notebooksByFolder, 0);
+    tree.appendChild(r.wrap);
+    changed.push(...r.changed);
+  }
+  for (const nb of (notebooksByFolder.get(null) || [])) {
+    const st = driveRemoteNbState(nb);
+    if (st !== "inSync") changed.push(st);
+    tree.appendChild(driveRestoreNotebookRow(nb, 0));
+  }
+  // Says up front what the collapsed tree is hiding, so "nothing to do" and "I have to go looking"
+  // are distinguishable without opening a single folder.
+  status.textContent = changed.length
+    ? `${changed.length} notebook${changed.length === 1 ? "" : "s"} to review — folders holding one are already open.`
+    : "Everything in Drive matches this device.";
 
   const knownIds = new Set(snapshot.notebooks.map(n => n.id));
   const tombstonedIds = new Set(libTombstones.map(t => t.id));
