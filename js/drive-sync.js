@@ -938,6 +938,22 @@ async function driveRestoreSelected(notebookIds, snapshot, force, opts = {}) {
   renderLibTree();
 }
 
+// The conflict resolution that doesn't make you pick a loser: "Take Drive's" and "Keep mine" each
+// throw one side away, which is a real decision to have to make about a lesson you may not remember
+// editing. This forks THIS device's copy off as its own notebook under a new id — so Drive's entry
+// for the original is untouched and the fork simply uploads as a brand-new file on the next backup —
+// and only then lets the original take Drive's copy.
+//
+// Order is the whole safety argument: the fork has to be written and persisted BEFORE
+// driveRestoreSelected overwrites the original's docdata, or the copy being preserved is the one
+// that just got clobbered.
+async function driveKeepBothCopies(remoteNb) {
+  const fork = await duplicateNotebook(remoteNb.id, `${remoteNb.name} (this device)`);
+  if (!fork) throw new Error("Couldn't find that notebook on this device.");
+  await driveRestoreSelected([remoteNb.id], null, true);
+  return fork;
+}
+
 async function driveRestoreFolder(folderId, force) {
   const snapshot = await driveFetchLibrarySnapshot();
   if (!snapshot || !snapshot.folderId) throw new Error('No InkPad backup found in Google Drive yet — use "Back up to Drive" first.');
@@ -1127,6 +1143,7 @@ function driveRestoreNotebookRow(nb, depth) {
     <span class="lib-actions" style="display:flex;">
       ${stuck ? `<button type="button" data-act="take" class="drive-resolve" title="Replace this device's copy with Drive's">Take Drive's</button>` : ""}
       ${state === "conflict" ? `<button type="button" data-act="keep" class="drive-resolve" title="Publish this device's copy to Drive, replacing what's there">Keep mine</button>` : ""}
+      ${state === "conflict" ? `<button type="button" data-act="both" class="drive-resolve" title="Split into two notebooks — nothing is discarded">Keep both</button>` : ""}
       <button type="button" data-act="restore" title="Replace this notebook with Drive's copy">⟳</button>
     </span>`;
 
@@ -1152,6 +1169,17 @@ function driveRestoreNotebookRow(nb, depth) {
     // and is the only thing that actually clears the conflict.
     await runPickerRestore(() => driveBackupNow([nb.id]), `Kept this device's copy of "${nb.name}" and pushed it to Drive.`);
     driveSetBadge(row, "kept yours ✓", "#0F766E");
+  };
+
+  const bothBtn = row.querySelector('[data-act=both]');
+  if (bothBtn) bothBtn.onclick = async e => {
+    e.stopPropagation();
+    const forkName = `${nb.name} (this device)`;
+    if (!await confirmDialogAsync(`Keep both copies of "${nb.name}"?`,
+      `This device's copy is kept as a separate notebook called "${forkName}", and "${nb.name}" takes Drive's copy. Nothing is discarded, and the new one backs up to Drive on its own next time.`,
+      "Keep both")) return;
+    await runPickerRestore(() => driveKeepBothCopies(nb), `Kept both — this device's copy is now "${forkName}".`);
+    driveSetBadge(row, "kept both ✓", "#0F766E");
   };
 
   row.querySelector('[data-act=restore]').onclick = async e => {

@@ -727,18 +727,25 @@ async function moveItem(kind, id, newParentId, insertBeforeKey) {
   } catch (_) {} // already warned; the move still applies in-memory
   renderLibTree();
 }
-async function duplicateNotebook(id) {
+// `name` overrides the default "X copy" — used by Drive's keep-both conflict resolution, which forks
+// this device's copy off under its own name before letting Drive's copy overwrite the original.
+// Returns the new notebook (null if the source is gone) so a caller can say what it just made.
+// Note the serialize() branch: for the notebook that's currently open, the in-memory document is the
+// real one, and reading docdata straight from the store would miss everything since the last
+// autosave — exactly the edits a fork exists to preserve.
+async function duplicateNotebook(id, name) {
   const src = libNotebooks.find(n => n.id === id);
-  if (!src) return;
+  if (!src) return null;
   let json = null;
   try { json = id === activeNotebookId ? await serialize() : await storeGet("docdata", id); } catch (_) {}
-  const nb = { id: genId(), name: src.name + " copy", folderId: src.folderId, order: nextOrderIn(src.folderId), createdAt: Date.now(), updatedAt: Date.now() };
+  const nb = { id: genId(), name: name || src.name + " copy", folderId: src.folderId, order: nextOrderIn(src.folderId), createdAt: Date.now(), updatedAt: Date.now() };
   libNotebooks.push(nb);
   try {
     await storePut("notebooks", nb);
     if (json) await storePut("docdata", json, nb.id);
   } catch (_) {} // already warned; still usable in-memory this session
   renderLibTree();
+  return nb;
 }
 function collectFolderDescendantFolders(folderId) {
   const out = [];
