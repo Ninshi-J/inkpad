@@ -74,7 +74,7 @@
 </div>
 
 <!-- Math Shapes Importer Dialog Window -->
-<dialog id="shapeImporterDlg" style="max-width: 480px; width: min(480px, 94vw);">
+<dialog id="shapeImporterDlg" style="max-width: 940px; width: min(940px, 96vw);">
   <div class="shape-field" style="margin-bottom: 12px;">
     <div id="shapeTypeTiles" class="shape-tile-grid">
       <button type="button" class="shape-tile" data-type="plane" data-category="tools" onclick="selectShapeType('plane')">
@@ -161,6 +161,16 @@
       <option value="fraction">Fraction Bar / Circle</option>
     </select>
   </div>
+
+  <!-- Preview first in the DOM and in the layout: it used to be the LAST element, which on a
+       1366x768 laptop put it entirely below the fold — 0px of it visible until you scrolled past
+       every control. The stage owns the space; only the controls column scrolls. -->
+  <div class="shape-body">
+    <div class="shape-stage">
+      <div id="shapePreview"></div>
+      <div id="shapeStageHint" class="shape-stage-hint"></div>
+    </div>
+    <div class="shape-controls">
 
   <div id="planeFields">
     <div class="shape-form-grid">
@@ -760,12 +770,10 @@
     </div>
   </div>
 
-  <div class="shape-field" style="margin-top: 12px;">
-    <label>Live Preview</label>
-    <div id="shapePreview"></div>
-  </div>
+    </div><!-- /.shape-controls -->
+  </div><!-- /.shape-body -->
 
-  <form method="dialog" style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 20px;">
+  <form method="dialog" style="display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 16px;">
     <button type="button" title="Defaults for graph font size, grid thickness, and placed size" onclick="openSettingsDlg('shapes')" style="margin-right: auto;">⚙ Defaults</button>
     <button type="button" onclick="$('shapeImporterDlg').close()">Cancel</button>
     <button type="button" id="insertShapeBtn" onclick="generateAndInsertMathShape()" style="background: var(--accent); color: white; border-color: var(--accent);">Insert Shape</button>

@@ -531,8 +531,11 @@ kbd.listening { background: var(--accent-soft); border-color: var(--accent); }
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px;
 }
 .shape-field {
-  display: flex; flex-direction: column; gap: 4px;
+  /* min-width:0 so a grid column can actually shrink to its share of the narrow controls
+     column — without it the inputs keep their default intrinsic width and overflow. */
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
 }
+.shape-field input, .shape-field select { min-width: 0; max-width: 100%; box-sizing: border-box; }
 .shape-field label { font-size: 12px; font-weight: 500; }
 .shape-field input, .shape-field select {
   font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
@@ -555,12 +558,57 @@ kbd.listening { background: var(--accent-soft); border-color: var(--accent); }
 .shape-tile span { font-size: 11px; text-align: center; line-height: 1.2; }
 .shape-tile:hover { background: #fff; border-color: var(--ink-soft); }
 .shape-tile.active { border-color: var(--accent); background: var(--accent-soft); color: #0B5A54; }
-#shapePreview {
-  display: flex; align-items: center; justify-content: center;
-  min-height: 160px; max-height: 240px; background: #fff;
-  border: 1px dashed var(--line); border-radius: 8px; overflow: hidden; padding: 6px;
+/* Two-column body: the preview is the subject of this dialog, so it gets the room and never
+   scrolls out of reach. Only the controls column scrolls. Stacks below 780px (iPad portrait,
+   phones) where side-by-side would squeeze both halves. */
+/* The cap lives on the body so both columns agree on a height: the stage's SVG grows with its
+   viewBox (a rotate grip orbiting the shape makes that box taller), and without a bound here it
+   pushed the dialog's own Insert/Cancel row off the bottom of a laptop screen. */
+.shape-body { display: flex; gap: 16px; align-items: stretch; margin-top: 4px; max-height: min(64vh, 580px); }
+.shape-stage {
+  flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px;
 }
-#shapePreview svg { max-width: 100%; max-height: 228px; width: auto; height: auto; display: block; }
+.shape-controls {
+  flex: 0 0 302px; min-width: 0; overflow-y: auto; overflow-x: hidden; padding-right: 4px;
+}
+.shape-stage-hint {
+  font-size: 11px; color: var(--ink-soft); text-align: center; min-height: 14px;
+}
+/* position:relative so the inline editor can be placed over the spot that was clicked */
+.shape-stage { position: relative; }
+
+/* ---- direct manipulation overlay (preview only — never part of the inserted shape) ---- */
+/* Hotspots stay invisible until pointed at, so the preview keeps reading as the shape you're
+   about to insert rather than as a diagram of its own controls. */
+.shape-hot { fill: transparent; cursor: text; }
+.shape-hot:hover { fill: var(--accent-soft); }
+.shape-grip { fill: #fff; stroke: var(--accent); cursor: grab; }
+.shape-grip:hover { fill: var(--accent-soft); }
+.shape-grip-rotate { stroke-dasharray: 3 2; }
+#shapePreview.dragging .shape-grip, #shapePreview.dragging { cursor: grabbing; }
+#shapePreview.dragging .shape-hot { pointer-events: none; }
+.shape-inline-edit {
+  position: absolute; width: 84px; z-index: 5; font: inherit; font-size: 13px;
+  padding: 3px 6px; border: 1.5px solid var(--accent); border-radius: 6px;
+  background: #fff; color: var(--ink); box-shadow: 0 2px 8px rgba(0,0,0,.18);
+}
+@media (max-width: 780px) {
+  .shape-body { flex-direction: column; }
+  .shape-controls { flex: 1 1 auto; max-height: 40vh; }
+}
+
+#shapePreview {
+  /* Grid rather than flex so the SVG can be told to fill the box: it keeps its own aspect ratio
+     via preserveAspectRatio and letterboxes itself, which is what makes the shape grow into the
+     new space instead of sitting at its intrinsic pixel size in the middle of it. */
+  display: grid; place-items: center;
+  flex: 1 1 auto; min-height: 220px; background: #fff;
+  border: 1px dashed var(--line); border-radius: 8px; overflow: hidden; padding: 10px;
+  /* The stage is the interaction surface now — stop drags from selecting label text or
+     kicking off the browser's own touch panning mid-drag. */
+  touch-action: none; -webkit-user-select: none; user-select: none;
+}
+#shapePreview svg { width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: block; }
 
 /* ---------- unified settings/defaults dialog: left category nav, right field pane ---------- */
 .settings-body { display: flex; gap: 16px; margin-top: 8px; min-height: 260px; }

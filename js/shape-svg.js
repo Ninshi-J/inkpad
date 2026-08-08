@@ -30,8 +30,16 @@ const estAxisLabelW = (s, fontSize) => s.length * fontSize * 0.55;
 function buildMathShapeSVG() {
   const type = $("shapeTypeSelect").value;
   let svgString = "";
-  const labelSpecs = []; // {x, y, text, fontSize} in the SVG-local coordinate space
+  const labelSpecs = []; // {x, y, text, fontSize, field?} in the SVG-local coordinate space
   let srcBox = null; // {x, y, w, h} — the SVG-local crop box labelSpecs coordinates are relative to
+  /* Interaction metadata for the live preview, in that same SVG-local space. Deliberately built
+     here rather than inferred afterwards: this function is the only place that knows the forward
+     transform from field values to pixels, so it's the only place that can state the inverse
+     honestly. Nothing below is drawn into the SVG — generateAndInsertMathShape() calls this
+     function again for the real insert, so the overlay can never end up in the placed shape.
+       hotspots — {cx, cy, w, h, field, title}: click the thing on the shape, edit that field there.
+       handles  — {cx, cy, kind, title, apply(pt) -> {fieldId: value}}: drag it. */
+  const hotspots = [], handles = [];
   let fnErrors = []; // parse/eval errors from the "Plot Functions" fields, by function
   const size = 500;
 
@@ -140,6 +148,18 @@ function buildMathShapeSVG() {
       innerSvg += `  <text x="${originX - 10}" y="${mapY(y) + 4}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="end">${fmtNum(y)}</text>\n`;
     }
     if (showZero) innerSvg += originZeroSvg(originX, originY, xTickOffset, axisFontSize, fmtNum);
+    /* Click targets sitting on the four axis extremes. The range is the thing you retune most while
+       actually looking at a graph ("that's cut off at the top"), and it was only reachable as four
+       numeric fields off to the side — which means translating what you can see back into which of
+       X/Y Min/Max to change. Q1 passes no min ids: its origin is pinned to (0,0), so there is
+       nothing there to edit. */
+    const rf = o.rangeFields || {};
+    const hotW = Math.max(46, axisFontSize * 2.8), hotH = axisFontSize + 14;
+    const yNudge = axisFontSize * 0.35;
+    if (rf.xMin) hotspots.push({ cx: padLeft, cy: originY + xTickOffset - yNudge, w: hotW, h: hotH, field: rf.xMin, title: "x min" });
+    if (rf.xMax) hotspots.push({ cx: size - padRight, cy: originY + xTickOffset - yNudge, w: hotW, h: hotH, field: rf.xMax, title: "x max" });
+    if (rf.yMax) hotspots.push({ cx: originX - 10 - hotW / 2, cy: padTop + 4 - yNudge, w: hotW, h: hotH, field: rf.yMax, title: "y max" });
+    if (rf.yMin) hotspots.push({ cx: originX - 10 - hotW / 2, cy: size - padBottom + 4 - yNudge, w: hotW, h: hotH, field: rf.yMin, title: "y min" });
     if (labelAxes && wideAxisLabels) {
       const yLabelX = yLabelStripW / 2 + 4;
       const yLabelY = (padTop + (size - padBottom)) / 2;
@@ -236,6 +256,17 @@ function buildMathShapeSVG() {
     // Vertical offset for x-axis tick numbers scales with font size so larger labels
     // still clear the axis line instead of overlapping it.
     const xTickOffset = Math.round(axisFontSize * 0.85) + 8;
+    // Same axis-extreme click targets the shared planeMath/planeQ1 renderer emits — repeated here
+    // rather than shared because this branch deliberately doesn't use that renderer (different
+    // margins, no axis labels, no arrowheads); see graphPlaneSvg's own note.
+    {
+      const oX = mapX(0), oY = mapY(0);
+      const hotW = Math.max(46, axisFontSize * 2.8), hotH = axisFontSize + 14, yNudge = axisFontSize * 0.35;
+      hotspots.push({ cx: padLeft, cy: oY + xTickOffset - yNudge, w: hotW, h: hotH, field: "planeXMin", title: "x min" });
+      hotspots.push({ cx: size - pad, cy: oY + xTickOffset - yNudge, w: hotW, h: hotH, field: "planeXMax", title: "x max" });
+      hotspots.push({ cx: oX - 10 - hotW / 2, cy: pad + 4 - yNudge, w: hotW, h: hotH, field: "planeYMax", title: "y max" });
+      hotspots.push({ cx: oX - 10 - hotW / 2, cy: size - pad + 4 - yNudge, w: hotW, h: hotH, field: "planeYMin", title: "y min" });
+    }
 
     let innerSvg = "";
     if (drawGrid) {
@@ -289,6 +320,7 @@ function buildMathShapeSVG() {
     const yMax = parseFloat($("pmYMax").value) || 5;
     svgString = graphPlaneSvg({
       ...graphFieldsFor("pm"),
+      rangeFields: { xMin: "pmXMin", xMax: "pmXMax", yMin: "pmYMin", yMax: "pmYMax" },
       xMin, xMax, yMin, yMax,
       gridThickness: parseFloat($("pmGridThickness").value) || 1.5,
       negativeArrows: true,
@@ -299,6 +331,7 @@ function buildMathShapeSVG() {
     // maxima are clamped positive so a zero/blank entry can't collapse the axis range.
     svgString = graphPlaneSvg({
       ...graphFieldsFor("q1"),
+      rangeFields: { xMax: "q1XMax", yMax: "q1YMax" }, // no mins: the origin is pinned to (0,0)
       xMin: 0, yMin: 0,
       xMax: Math.max(0.0001, parseFloat($("q1XMax").value) || 10),
       yMax: Math.max(0.0001, parseFloat($("q1YMax").value) || 10),
@@ -334,6 +367,10 @@ function buildMathShapeSVG() {
     const angleOffsetDist = Math.round(47 + scaleT * (15 / 12));
 
     let A = { x: 160, y: 320 }, B = { x: 0, y: 0 }, C = { x: 340, y: 320 };
+    // Is vertex B actually free to be dragged? A right angle pins it, and three numeric sides
+    // construct it by SSS. Offering a handle in either case would be a lie — it would move and
+    // then snap straight back.
+    let bIsFree = false;
     if (isRight) {
       C.x = A.x + 180; C.y = A.y;
       B.x = A.x; B.y = A.y - 140;
@@ -347,6 +384,7 @@ function buildMathShapeSVG() {
     } else {
       B.x = parseInt($("triVertexBX").value) || 250;
       B.y = parseInt($("triVertexBY").value) || 130;
+      bIsFree = true;
       // If all three sides are given as plain numbers (and form a valid triangle), construct the
       // true SSS shape via the law of cosines instead of using the arbitrary vertex-B position.
       const parsedSSS = tryParseDims([lblBottom, lblLeft, lblRight]);
@@ -359,9 +397,11 @@ function buildMathShapeSVG() {
           A = { x: 160, y: 320 };
           C = { x: 160 + bottomPx, y: 320 };
           B = { x: A.x + leftPx * Math.cos(angleA), y: A.y - leftPx * Math.sin(angleA) };
+          bIsFree = false;
         }
       }
     }
+    const bRaw = { x: B.x, y: B.y }; // pre-centring, which is the space the two fields live in
 
     const canvasCenter = { x: 250, y: 250 };
     const rawCentroid = { x: (A.x + B.x + C.x) / 3, y: (A.y + B.y + C.y) / 3 };
@@ -397,7 +437,46 @@ function buildMathShapeSVG() {
       trackBB(p1.x, p1.y); trackBB(p2.x, p2.y); trackBB(p3.x, p3.y);
     }
 
-    function processSide(pStart, pEnd, labelText, drawTick) {
+    /* Drag targets. Vertex B was the worst offender in the whole dialog: two number fields asking
+       for raw SVG pixel coordinates ("Non-Right Vertex B (X): 250") for a point sitting right there
+       on screen.
+
+       Inverting the forward transform is the whole job, and it is done here because this is where
+       that transform was written. Two steps: undo the rotation about canvasCenter, then undo the
+       centring shift. The shift is the subtle one — the shape is re-centred on its centroid every
+       render, so moving B by d moves the DRAWN vertex by only (2/3)d, the other third being the
+       centroid chasing it. Hence the 1.5. Working in deltas from the current position also means
+       the handle stays exactly under the pointer instead of jumping on grab. */
+    if (bIsFree) {
+      handles.push({
+        cx: rotB.x, cy: rotB.y, kind: "vertex", title: "Drag to move this corner",
+        apply: pt => {
+          const un = rotatePoint(pt, canvasCenter, -rotationDeg);
+          return {
+            triVertexBX: Math.round(bRaw.x + (un.x - B.x) * 1.5),
+            triVertexBY: Math.round(bRaw.y + (un.y - B.y) * 1.5),
+          };
+        },
+      });
+    }
+    // Radius is measured from the centre the shape rotates about, so it doesn't itself change as
+    // you rotate — the handle sweeps a circle rather than wandering.
+    const rotR = 34 + Math.max(90,
+      Math.hypot(rotA.x - canvasCenter.x, rotA.y - canvasCenter.y),
+      Math.hypot(rotB.x - canvasCenter.x, rotB.y - canvasCenter.y),
+      Math.hypot(rotC.x - canvasCenter.x, rotC.y - canvasCenter.y));
+    const rotRad = (rotationDeg - 90) * Math.PI / 180;
+    handles.push({
+      cx: canvasCenter.x + rotR * Math.cos(rotRad),
+      cy: canvasCenter.y + rotR * Math.sin(rotRad),
+      kind: "rotate", title: "Drag to rotate",
+      apply: pt => {
+        const deg = Math.atan2(pt.y - canvasCenter.y, pt.x - canvasCenter.x) * 180 / Math.PI + 90;
+        return { triRotation: Math.round((deg % 360 + 360) % 360) };
+      },
+    });
+
+    function processSide(pStart, pEnd, labelText, drawTick, field) {
       let mx = (pStart.x + pEnd.x) / 2, my = (pStart.y + pEnd.y) / 2;
       let dx = pEnd.x - pStart.x, dy = pEnd.y - pStart.y;
       let len = Math.sqrt(dx*dx + dy*dy) || 1;
@@ -411,20 +490,25 @@ function buildMathShapeSVG() {
         trackBB(tx1, ty1); trackBB(tx2, ty2);
       }
       if (labelText && showSideLabels) {
-        labelSpecs.push({ x: mx + nx * sideOffsetDist, y: my + ny * sideOffsetDist + sideVertAdjust, text: labelText, fontSize: +sideFontSize });
+        labelSpecs.push({ x: mx + nx * sideOffsetDist, y: my + ny * sideOffsetDist + sideVertAdjust, text: labelText, fontSize: +sideFontSize, field });
+      }
+      // An empty side still gets a click target, at the spot the label would occupy — otherwise
+      // the only way to fill in a blank side is back in the form column.
+      if (!labelText && showSideLabels && field) {
+        hotspots.push({ cx: mx + nx * sideOffsetDist, cy: my + ny * sideOffsetDist, w: 46, h: sideFontSize + 12, field, title: "add a label" });
       }
     }
 
-    processSide(rotA, rotC, lblBottom, tickB);
-    processSide(rotA, rotB, lblLeft, tickL);
-    processSide(rotB, rotC, lblRight, tickR);
+    processSide(rotA, rotC, lblBottom, tickB, "triBottom");
+    processSide(rotA, rotB, lblLeft, tickL, "triLeft");
+    processSide(rotB, rotC, lblRight, tickR, "triRight");
 
     if (txtAngleA && !isRight) {
       innerSvg += drawAngleArc(rotA, rotB, rotC, 26, canvasCenter);
       trackBB(rotA.x - 26, rotA.y - 26); trackBB(rotA.x + 26, rotA.y + 26);
       if (showAngleLabels) {
         let pos = getBisectorVector(rotA, rotB, rotC, angleOffsetDist, canvasCenter);
-        labelSpecs.push({ x: pos.x, y: pos.y, text: txtAngleA, fontSize: +angleFontSize });
+        labelSpecs.push({ x: pos.x, y: pos.y, text: txtAngleA, fontSize: +angleFontSize, field: "triAngleA" });
       }
     }
     if (txtAngleB) {
@@ -432,7 +516,7 @@ function buildMathShapeSVG() {
       trackBB(rotB.x - 26, rotB.y - 26); trackBB(rotB.x + 26, rotB.y + 26);
       if (showAngleLabels) {
         let pos = getBisectorVector(rotB, rotA, rotC, angleOffsetDist, canvasCenter);
-        labelSpecs.push({ x: pos.x, y: pos.y, text: txtAngleB, fontSize: +angleFontSize });
+        labelSpecs.push({ x: pos.x, y: pos.y, text: txtAngleB, fontSize: +angleFontSize, field: "triAngleB" });
       }
     }
     if (txtAngleC) {
@@ -440,7 +524,7 @@ function buildMathShapeSVG() {
       trackBB(rotC.x - 26, rotC.y - 26); trackBB(rotC.x + 26, rotC.y + 26);
       if (showAngleLabels) {
         let pos = getBisectorVector(rotC, rotA, rotB, angleOffsetDist, canvasCenter);
-        labelSpecs.push({ x: pos.x, y: pos.y, text: txtAngleC, fontSize: +angleFontSize });
+        labelSpecs.push({ x: pos.x, y: pos.y, text: txtAngleC, fontSize: +angleFontSize, field: "triAngleC" });
       }
     }
 
@@ -1027,7 +1111,7 @@ function buildMathShapeSVG() {
     svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${boxX} ${boxY} ${boxW} ${boxH}" width="${boxW}" height="${boxH}">\n<rect width="100%" height="100%" fill="none"/>\n${innerSvg}</svg>`;
   }
 
-  return { svgString, labelSpecs, srcBox, fnErrors };
+  return { svgString, labelSpecs, srcBox, fnErrors, hotspots, handles };
 }
 
 function generateAndInsertMathShape() {
@@ -1073,7 +1157,10 @@ function removeEqRow(btn) {
 // The real insertion places labels as independent canvas objects (never clipped by the shape
 // image's own crop box), but the dialog preview overlays them INSIDE one combined SVG — so that
 // SVG's viewBox has to be widened to actually contain them, or they render outside it and vanish.
-function previewViewBoxFor(srcBox, labelSpecs) {
+// `extras` are handles: they live outside srcBox on purpose (a rotate grip orbits the shape) and
+// must still be inside the PREVIEW's viewBox or they'd be clipped. srcBox itself is untouched, so
+// the shape that actually gets placed is unaffected by where the grips sit.
+function previewViewBoxFor(srcBox, labelSpecs, extras = []) {
   let minX = srcBox.x, minY = srcBox.y, maxX = srcBox.x + srcBox.w, maxY = srcBox.y + srcBox.h;
   for (const s of labelSpecs) {
     const halfW = Math.max(20, String(s.text).length * s.fontSize * 0.32);
@@ -1081,32 +1168,80 @@ function previewViewBoxFor(srcBox, labelSpecs) {
     minX = Math.min(minX, s.x - halfW); maxX = Math.max(maxX, s.x + halfW);
     minY = Math.min(minY, s.y - halfH); maxY = Math.max(maxY, s.y + halfH);
   }
+  for (const e of extras) {
+    minX = Math.min(minX, e.cx - 16); maxX = Math.max(maxX, e.cx + 16);
+    minY = Math.min(minY, e.cy - 16); maxY = Math.max(maxY, e.cy + 16);
+  }
   return { x: Math.floor(minX), y: Math.floor(minY), w: Math.ceil(maxX - minX), h: Math.ceil(maxY - minY) };
 }
 
+// The interaction layer, drawn only into the preview. Hotspots are invisible until hovered so the
+// preview still reads as the shape you're about to insert, not as a diagram of its own controls.
+function shapeHotspotMarkup(labelSpecs, hotspots, scale) {
+  const s = n => n / scale; // keep corner radii a constant on-screen size whatever the zoom is
+  let out = `<g class="shape-overlay-hots">\n`;
+  for (const h of hotspots) {
+    out += `  <rect class="shape-hot" data-field="${h.field}" x="${h.cx - h.w / 2}" y="${h.cy - h.h / 2}" width="${h.w}" height="${h.h}" rx="${s(4)}"><title>Click to edit ${escapeXml(h.title || "")}</title></rect>\n`;
+  }
+  labelSpecs.forEach((l, i) => {
+    if (!l.field) return;
+    const w = Math.max(28, String(l.text).length * l.fontSize * 0.68), hh = l.fontSize * 1.5;
+    out += `  <rect class="shape-hot" data-field="${l.field}" data-label="${i}" x="${l.x - w / 2}" y="${l.y - hh * 0.72}" width="${w}" height="${hh}" rx="${s(4)}"><title>Click to edit this label</title></rect>\n`;
+  });
+  return out + `</g>\n`;
+}
+function shapeGripMarkup(handles, scale) {
+  const s = n => n / scale; // grips stay a constant on-screen size across a 500-unit graph and a 200-unit triangle
+  return `<g class="shape-overlay-grips">\n` + handles.map((h, i) =>
+    `  <circle class="shape-grip shape-grip-${h.kind}" data-handle="${i}" cx="${h.cx}" cy="${h.cy}" r="${s(9)}" stroke-width="${s(2)}"><title>${escapeXml(h.title || "")}</title></circle>\n`
+  ).join("") + `</g>\n`;
+}
+
+let shapePreviewHandles = []; // the live handles for whatever is currently drawn, by index
+let shapeDragging = null;     // {apply} captured at pointerdown — see onShapeStagePointerDown
+
 function renderShapePreview() {
   updateGraphFitHint(); // before the build, so a momentarily-unbuildable graph still gets its hint
-  let svgString, labelSpecs, srcBox, fnErrors;
+  let svgString, labelSpecs, srcBox, fnErrors, hotspots, handles;
   try {
-    ({ svgString, labelSpecs, srcBox, fnErrors } = buildMathShapeSVG());
+    ({ svgString, labelSpecs, srcBox, fnErrors, hotspots, handles } = buildMathShapeSVG());
   } catch (err) {
     return; // fields mid-edit / momentarily invalid — keep showing the last good preview
   }
+  shapePreviewHandles = handles;
   let preview = svgString;
-  if (labelSpecs.length) {
-    const labelsMarkup = labelSpecs.map(s =>
-      `  <text x="${s.x}" y="${s.y}" font-family="Arial, sans-serif" font-size="${s.fontSize}" font-weight="bold" text-anchor="middle">${escapeXml(s.text)}</text>\n`
-    ).join("");
-    preview = svgString.replace("</svg>", labelsMarkup + "</svg>");
-    if (srcBox) {
-      const box = previewViewBoxFor(srcBox, labelSpecs);
-      preview = preview.replace(
-        /viewBox="[^"]*" width="[^"]*" height="[^"]*"/,
-        `viewBox="${box.x} ${box.y} ${box.w} ${box.h}" width="${box.w}" height="${box.h}"`
-      );
-    }
+  // pointer-events="none" so a click on a label falls through to the hotspot rect beneath it —
+  // these preview labels sit ON TOP of their own click targets so a hover tint reads as a
+  // highlight behind the text rather than painting over it.
+  const labelsMarkup = labelSpecs.map(s =>
+    `  <text x="${s.x}" y="${s.y}" font-family="Arial, sans-serif" font-size="${s.fontSize}" font-weight="bold" text-anchor="middle" pointer-events="none">${escapeXml(s.text)}</text>\n`
+  ).join("");
+  let box = srcBox;
+  if (srcBox && (labelSpecs.length || handles.length)) {
+    box = previewViewBoxFor(srcBox, labelSpecs, handles);
+    preview = preview.replace(
+      /viewBox="[^"]*" width="[^"]*" height="[^"]*"/,
+      `viewBox="${box.x} ${box.y} ${box.w} ${box.h}" width="${box.w}" height="${box.h}"`
+    );
   }
+  // Grips are sized in viewBox units, so they need the box-to-pixels ratio to come out a constant
+  // size on screen — a 500-unit-wide graph and a 200-unit-wide triangle otherwise get grips that
+  // differ by more than 2x.
+  const stageW = $("shapePreview").clientWidth || 420;
+  const scale = box ? Math.max(0.05, stageW / box.w) : 1;
+  // Paint order matters: hotspots underneath, then the labels they belong to, then grips on top so
+  // a grip overlapping a label is still the thing you grab.
+  preview = preview.replace("</svg>",
+    shapeHotspotMarkup(labelSpecs, hotspots, scale) + labelsMarkup + shapeGripMarkup(handles, scale) + "</svg>");
   $("shapePreview").innerHTML = preview;
+  const hint = $("shapeStageHint");
+  if (hint) {
+    const bits = [];
+    if (handles.some(h => h.kind === "vertex")) bits.push("drag a corner");
+    if (handles.some(h => h.kind === "rotate")) bits.push("drag the outer grip to rotate");
+    if (hotspots.length || labelSpecs.some(l => l.field)) bits.push("click a value on the shape to edit it");
+    hint.textContent = bits.join(" · ");
+  }
 
   const type = $("shapeTypeSelect").value;
   const FN_STATUS_IDS = { plane: "planeFnStatus", planeMath: "pmFnStatus", planeQ1: "q1FnStatus" };
@@ -1120,6 +1255,109 @@ function renderShapePreview() {
     status.style.display = "none";
   }
 }
+/* ---------------- direct manipulation on the preview ---------------- */
+
+// Screen pixels -> the SVG's own coordinate space, which is what handles' apply() expects. Uses the
+// live CTM rather than any assumption about the viewBox, so it stays correct as the preview
+// rescales (and it re-crops on every render, so it does).
+function shapeSvgPoint(svg, ev) {
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return null;
+  const pt = svg.createSVGPoint();
+  pt.x = ev.clientX; pt.y = ev.clientY;
+  return pt.matrixTransform(ctm.inverse());
+}
+
+// Writes straight into the form field the grip is bound to, then fires `input` so everything
+// already listening (the preview, the graph fit hint, prefs) updates exactly as if it had been
+// typed. The form stays the single source of truth — dragging is another way to write to it, not a
+// parallel state to keep in sync.
+function shapeSetField(id, value) {
+  const el = $(id);
+  if (!el || String(el.value) === String(value)) return;
+  el.value = value;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/* Pointer capture is taken on #shapePreview, NOT on the grip: every move rewrites the stage's
+   innerHTML to redraw the shape, so the grip element under the pointer is destroyed and rebuilt
+   many times per drag. Capturing on the container — which survives — is what keeps the drag alive.
+
+   The handle's apply() is captured once at pointerdown and reused for the whole drag. It closes
+   over the geometry of the build that produced it, but that costs nothing: the transform is exact
+   and affine, so applying a stale one to the pointer's current absolute position lands the vertex
+   under the pointer either way. Re-reading it each move would mean tracking indices across
+   rebuilds for no gain. */
+function onShapeStagePointerDown(e) {
+  const stage = $("shapePreview");
+  const grip = e.target.closest(".shape-grip");
+  if (grip) {
+    const h = shapePreviewHandles[+grip.dataset.handle];
+    if (!h || !h.apply) return;
+    e.preventDefault();
+    closeShapeInlineEditor();
+    shapeDragging = { apply: h.apply };
+    stage.classList.add("dragging");
+    try { stage.setPointerCapture(e.pointerId); } catch (_) {}
+    return;
+  }
+  const hot = e.target.closest(".shape-hot");
+  if (hot) { e.preventDefault(); openShapeInlineEditor(hot.dataset.field, hot); }
+}
+function onShapeStagePointerMove(e) {
+  if (!shapeDragging) return;
+  e.preventDefault();
+  const svg = $("shapePreview").querySelector("svg");
+  const pt = svg && shapeSvgPoint(svg, e);
+  if (!pt) return;
+  const next = shapeDragging.apply({ x: pt.x, y: pt.y });
+  for (const [id, v] of Object.entries(next)) shapeSetField(id, v);
+}
+function onShapeStagePointerUp(e) {
+  if (!shapeDragging) return;
+  shapeDragging = null;
+  $("shapePreview").classList.remove("dragging");
+  try { $("shapePreview").releasePointerCapture(e.pointerId); } catch (_) {}
+}
+
+// A one-field editor floating over the spot you clicked. Deliberately not a re-implementation of
+// the input: it reads and writes the real form field, so validation, defaults and the preview all
+// behave identically whether you type here or in the column.
+function openShapeInlineEditor(fieldId, anchorEl) {
+  const src = $(fieldId);
+  if (!src) return;
+  closeShapeInlineEditor();
+  const box = anchorEl.getBoundingClientRect();
+  const stage = $("shapePreview").getBoundingClientRect();
+  const ed = document.createElement("input");
+  ed.type = src.type === "number" ? "number" : "text";
+  if (src.step) ed.step = src.step;
+  ed.value = src.value;
+  ed.className = "shape-inline-edit";
+  ed.style.left = Math.round(Math.max(2, Math.min(box.left - stage.left + box.width / 2 - 42, stage.width - 88))) + "px";
+  ed.style.top = Math.round(Math.max(2, Math.min(box.top - stage.top + box.height / 2 - 13, stage.height - 30))) + "px";
+  // stopPropagation so the dialog-level listener doesn't render a second time for the same keystroke
+  // — shapeSetField's own dispatch on the real field already triggers exactly one.
+  ed.oninput = ev => { ev.stopPropagation(); shapeSetField(fieldId, ed.value); };
+  ed.onkeydown = ev => {
+    if (ev.key === "Enter" || ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closeShapeInlineEditor(); }
+    else ev.stopPropagation(); // don't let the dialog's own shortcuts eat what's being typed
+  };
+  ed.onblur = () => closeShapeInlineEditor();
+  $("shapePreview").parentElement.appendChild(ed);
+  ed.focus();
+  ed.select();
+}
+function closeShapeInlineEditor() {
+  const old = document.querySelector(".shape-inline-edit");
+  if (old) { old.onblur = null; old.remove(); }
+}
+
+$("shapePreview").addEventListener("pointerdown", onShapeStagePointerDown);
+$("shapePreview").addEventListener("pointermove", onShapeStagePointerMove);
+$("shapePreview").addEventListener("pointerup", onShapeStagePointerUp);
+$("shapePreview").addEventListener("pointercancel", onShapeStagePointerUp);
+
 $("shapeImporterDlg").addEventListener("input", renderShapePreview);
 $("shapeImporterDlg").addEventListener("change", renderShapePreview);
 // Only checkbox commits are notebook-level prefs worth persisting — other fields
