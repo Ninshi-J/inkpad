@@ -1415,8 +1415,29 @@ $("shapePreview").addEventListener("pointermove", onShapeStagePointerMove);
 $("shapePreview").addEventListener("pointerup", onShapeStagePointerUp);
 $("shapePreview").addEventListener("pointercancel", onShapeStagePointerUp);
 
-$("shapeImporterDlg").addEventListener("input", renderShapePreview);
-$("shapeImporterDlg").addEventListener("change", renderShapePreview);
+/* A slider physically cannot leave its range; a typed number can, and these fields drive real
+   geometry — a font size of 500 renders a label bigger than the page it's on. So the bounds the
+   sliders used to enforce are enforced here instead.
+   Only the upper bound is applied while typing: clamping up as well would rewrite "1" to the
+   minimum the instant it was typed, making "16" impossible to enter. The lower bound waits for
+   change (blur or Enter), by which point the number is finished. */
+function clampShapeNumberField(el, both) {
+  if (!el || el.type !== "number" || el.value === "") return;
+  const v = parseFloat(el.value);
+  if (!Number.isFinite(v)) return;
+  const min = el.min === "" ? -Infinity : parseFloat(el.min);
+  const max = el.max === "" ? Infinity : parseFloat(el.max);
+  const next = Math.min(max, both ? Math.max(min, v) : v);
+  if (next !== v) el.value = next;
+}
+$("shapeImporterDlg").addEventListener("input", e => {
+  clampShapeNumberField(e.target, false);
+  renderShapePreview();
+});
+$("shapeImporterDlg").addEventListener("change", e => {
+  clampShapeNumberField(e.target, true);
+  renderShapePreview();
+});
 // Only checkbox commits are notebook-level prefs worth persisting — other fields
 // (dimensions, labels, ...) are per-insert, not saved anywhere.
 $("shapeImporterDlg").addEventListener("change", e => { if (e.target.matches('input[type="checkbox"]')) captureShapePrefsFromDialog(); });

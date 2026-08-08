@@ -164,8 +164,9 @@ function saveShapeDefaults() {
 function applyShapeDefaultsToImporter() {
   for (const prefix of ["plane", "pm", "q1"]) {
     const fontEl = $(`${prefix}FontSize`), gridEl = $(`${prefix}GridThickness`);
-    if (fontEl) { fontEl.value = shapeDefaults.graphFontSize; const v = $(`${prefix}FontVal`); if (v) v.textContent = fontEl.value; }
-    if (gridEl) { gridEl.value = shapeDefaults.graphGridThickness; const v = $(`${prefix}GridThickVal`); if (v) v.textContent = gridEl.value; }
+    // Both are number boxes now, so they show their own value — no separate readout to keep in step.
+    if (fontEl) fontEl.value = shapeDefaults.graphFontSize;
+    if (gridEl) gridEl.value = shapeDefaults.graphGridThickness;
     // Tick number format is seeded the same way rather than being a per-diagram field: a teacher
     // who works to 2 significant figures wants that on every graph, not re-picked each time.
     const fmtEl = $(`${prefix}TickFmt`);
