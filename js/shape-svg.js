@@ -461,19 +461,51 @@ function buildMathShapeSVG() {
     }
     // Radius is measured from the centre the shape rotates about, so it doesn't itself change as
     // you rotate — the handle sweeps a circle rather than wandering.
-    const rotR = 34 + Math.max(90,
+    const maxVertexDist = Math.max(90,
       Math.hypot(rotA.x - canvasCenter.x, rotA.y - canvasCenter.y),
       Math.hypot(rotB.x - canvasCenter.x, rotB.y - canvasCenter.y),
       Math.hypot(rotC.x - canvasCenter.x, rotC.y - canvasCenter.y));
+    const rotR = 34 + maxVertexDist;
     const rotRad = (rotationDeg - 90) * Math.PI / 180;
+    const rotGripX = canvasCenter.x + rotR * Math.cos(rotRad);
+    const rotGripY = canvasCenter.y + rotR * Math.sin(rotRad);
+    /* Reserve a square centred on the pivot, big enough for everything drawn, so the view can't
+       change as the shape turns.
+
+       Without this the crop hugs the rotated shape and its aspect flips through a turn — measured,
+       the pivot slid ~100px across the stage between 0° and 90°. Since the pointer is stationary in
+       screen space while the reference point moves, a drag ended up as much as 47° from where it
+       was dropped, which makes rotating by hand nearly useless.
+
+       Every term below is a distance from the pivot, and rotation preserves those, so the square is
+       identical at every angle. It is applied at rest too, not just mid-drag: switching to it on
+       pointerdown would make the grip jump out from under the pointer at the moment of grabbing it.
+       The cost is that the shape draws about 13% smaller than a tight crop would allow. */
+    const stableR = Math.max(
+      maxVertexDist + sideOffsetDist + 24,  // side labels sit outside the edges
+      maxVertexDist + angleOffsetDist + 24, // angle labels are offset from the corners
+      rotR + 24 + 38,                       // the readout sits 24 past the grip and reaches 38 more
+    );
     handles.push({
-      cx: canvasCenter.x + rotR * Math.cos(rotRad),
-      cy: canvasCenter.y + rotR * Math.sin(rotRad),
-      kind: "rotate", title: "Drag to rotate",
+      cx: rotGripX, cy: rotGripY, kind: "rotate", title: "Drag to rotate",
+      stable: { cx: canvasCenter.x, cy: canvasCenter.y, r: stableR },
       apply: pt => {
-        const deg = Math.atan2(pt.y - canvasCenter.y, pt.x - canvasCenter.x) * 180 / Math.PI + 90;
-        return { triRotation: Math.round((deg % 360 + 360) % 360) };
+        const raw = Math.atan2(pt.y - canvasCenter.y, pt.x - canvasCenter.x) * 180 / Math.PI + 90;
+        const deg = (raw % 360 + 360) % 360;
+        // Magnetic snap to the nearest 15°, but only within 4° of one. That's what makes an exact
+        // 90° easy by hand — which is the job the four preset buttons used to do — while leaving
+        // genuinely odd angles (37°, 52°) reachable, which those buttons never allowed.
+        const near = Math.round(deg / 15) * 15;
+        return { triRotation: Math.abs(deg - near) <= 4 ? (near % 360) : Math.round(deg) };
       },
+    });
+    // The rotation's value, shown on the shape next to its grip and editable by clicking it. This
+    // is the whole replacement for the slider + 0/90/180/270 buttons: drag for coarse, snap for the
+    // right angles, click the number when you want an exact one typed.
+    hotspots.push({
+      cx: canvasCenter.x + (rotR + 24) * Math.cos(rotRad),
+      cy: canvasCenter.y + (rotR + 24) * Math.sin(rotRad),
+      w: 44, h: 20, field: "triRotation", title: "rotation", text: `${Math.round(rotationDeg)}°`, fontSize: 13,
     });
 
     function processSide(pStart, pEnd, labelText, drawTick, field) {
@@ -495,13 +527,25 @@ function buildMathShapeSVG() {
       // An empty side still gets a click target, at the spot the label would occupy — otherwise
       // the only way to fill in a blank side is back in the form column.
       if (!labelText && showSideLabels && field) {
-        hotspots.push({ cx: mx + nx * sideOffsetDist, cy: my + ny * sideOffsetDist, w: 46, h: sideFontSize + 12, field, title: "add a label" });
+        hotspots.push({ cx: mx + nx * sideOffsetDist, cy: my + ny * sideOffsetDist, w: 46, h: sideFontSize + 12, field, title: "this side", placeholder: true });
       }
     }
 
     processSide(rotA, rotC, lblBottom, tickB, "triBottom");
     processSide(rotA, rotB, lblLeft, tickL, "triLeft");
     processSide(rotB, rotC, lblRight, tickR, "triRight");
+
+    /* An empty angle draws nothing at all, so without this there'd be no way to add one now that
+       the three text fields are gone — an invisible click target you have to guess at is not an
+       affordance. A faint outline sits at each unlabelled corner instead. */
+    const anglePlaceholder = (vertex, p1, p2, field, skip) => {
+      if (skip || !showAngleLabels) return;
+      const pos = getBisectorVector(vertex, p1, p2, angleOffsetDist, canvasCenter);
+      hotspots.push({ cx: pos.x, cy: pos.y, w: 34, h: angleFontSize + 8, field, title: "this angle", placeholder: true });
+    };
+    anglePlaceholder(rotA, rotB, rotC, "triAngleA", isRight || !!txtAngleA);
+    anglePlaceholder(rotB, rotA, rotC, "triAngleB", !!txtAngleB);
+    anglePlaceholder(rotC, rotA, rotB, "triAngleC", !!txtAngleC);
 
     if (txtAngleA && !isRight) {
       innerSvg += drawAngleArc(rotA, rotB, rotC, 26, canvasCenter);
@@ -1157,9 +1201,10 @@ function removeEqRow(btn) {
 // The real insertion places labels as independent canvas objects (never clipped by the shape
 // image's own crop box), but the dialog preview overlays them INSIDE one combined SVG — so that
 // SVG's viewBox has to be widened to actually contain them, or they render outside it and vanish.
-// `extras` are handles: they live outside srcBox on purpose (a rotate grip orbits the shape) and
-// must still be inside the PREVIEW's viewBox or they'd be clipped. srcBox itself is untouched, so
-// the shape that actually gets placed is unaffected by where the grips sit.
+// `extras` are grips and hotspots: they live outside srcBox on purpose (a rotate grip orbits the
+// shape, and its degrees readout sits further out still) and must be inside the PREVIEW's viewBox
+// or they'd be silently clipped. srcBox itself is untouched, so the shape that actually gets
+// placed is unaffected by where any of them sit.
 function previewViewBoxFor(srcBox, labelSpecs, extras = []) {
   let minX = srcBox.x, minY = srcBox.y, maxX = srcBox.x + srcBox.w, maxY = srcBox.y + srcBox.h;
   for (const s of labelSpecs) {
@@ -1169,8 +1214,14 @@ function previewViewBoxFor(srcBox, labelSpecs, extras = []) {
     minY = Math.min(minY, s.y - halfH); maxY = Math.max(maxY, s.y + halfH);
   }
   for (const e of extras) {
-    minX = Math.min(minX, e.cx - 16); maxX = Math.max(maxX, e.cx + 16);
-    minY = Math.min(minY, e.cy - 16); maxY = Math.max(maxY, e.cy + 16);
+    if (e.stable) { // a square that every angle of this shape fits inside — see the note at its source
+      minX = Math.min(minX, e.stable.cx - e.stable.r); maxX = Math.max(maxX, e.stable.cx + e.stable.r);
+      minY = Math.min(minY, e.stable.cy - e.stable.r); maxY = Math.max(maxY, e.stable.cy + e.stable.r);
+      continue;
+    }
+    const halfW = (e.w || 0) / 2 + 16, halfH = (e.h || 0) / 2 + 16;
+    minX = Math.min(minX, e.cx - halfW); maxX = Math.max(maxX, e.cx + halfW);
+    minY = Math.min(minY, e.cy - halfH); maxY = Math.max(maxY, e.cy + halfH);
   }
   return { x: Math.floor(minX), y: Math.floor(minY), w: Math.ceil(maxX - minX), h: Math.ceil(maxY - minY) };
 }
@@ -1181,7 +1232,12 @@ function shapeHotspotMarkup(labelSpecs, hotspots, scale) {
   const s = n => n / scale; // keep corner radii a constant on-screen size whatever the zoom is
   let out = `<g class="shape-overlay-hots">\n`;
   for (const h of hotspots) {
-    out += `  <rect class="shape-hot" data-field="${h.field}" x="${h.cx - h.w / 2}" y="${h.cy - h.h / 2}" width="${h.w}" height="${h.h}" rx="${s(4)}"><title>Click to edit ${escapeXml(h.title || "")}</title></rect>\n`;
+    out += `  <rect class="shape-hot${h.placeholder ? " placeholder" : ""}" data-field="${h.field}" x="${h.cx - h.w / 2}" y="${h.cy - h.h / 2}" width="${h.w}" height="${h.h}" rx="${s(4)}" stroke-width="${s(1)}"><title>Click to edit ${escapeXml(h.title || "")}</title></rect>\n`;
+    // A readout is a value the shape has but doesn't otherwise draw (rotation). It replaces a form
+    // control outright, so unlike a hotspot over an existing label it has to render its own text.
+    if (h.text) {
+      out += `  <text class="shape-readout" x="${h.cx}" y="${h.cy + (h.fontSize || 13) * 0.36}" font-size="${h.fontSize || 13}" text-anchor="middle">${escapeXml(h.text)}</text>\n`;
+    }
   }
   labelSpecs.forEach((l, i) => {
     if (!l.field) return;
@@ -1217,8 +1273,8 @@ function renderShapePreview() {
     `  <text x="${s.x}" y="${s.y}" font-family="Arial, sans-serif" font-size="${s.fontSize}" font-weight="bold" text-anchor="middle" pointer-events="none">${escapeXml(s.text)}</text>\n`
   ).join("");
   let box = srcBox;
-  if (srcBox && (labelSpecs.length || handles.length)) {
-    box = previewViewBoxFor(srcBox, labelSpecs, handles);
+  if (srcBox && (labelSpecs.length || handles.length || hotspots.length)) {
+    box = previewViewBoxFor(srcBox, labelSpecs, handles.concat(hotspots));
     preview = preview.replace(
       /viewBox="[^"]*" width="[^"]*" height="[^"]*"/,
       `viewBox="${box.x} ${box.y} ${box.w} ${box.h}" width="${box.w}" height="${box.h}"`
@@ -1296,7 +1352,7 @@ function onShapeStagePointerDown(e) {
     if (!h || !h.apply) return;
     e.preventDefault();
     closeShapeInlineEditor();
-    shapeDragging = { apply: h.apply };
+    shapeDragging = { apply: h.apply, kind: h.kind };
     stage.classList.add("dragging");
     try { stage.setPointerCapture(e.pointerId); } catch (_) {}
     return;
@@ -1318,6 +1374,7 @@ function onShapeStagePointerUp(e) {
   shapeDragging = null;
   $("shapePreview").classList.remove("dragging");
   try { $("shapePreview").releasePointerCapture(e.pointerId); } catch (_) {}
+  renderShapePreview(); // drop back to the tight crop now the sweep no longer needs reserving
 }
 
 // A one-field editor floating over the spot you clicked. Deliberately not a re-implementation of

@@ -234,12 +234,6 @@ function handleDlgRightAngleToggle() {
   renderShapePreview();
 }
 
-function setTriRotationPreset(val) {
-  $("triRotation").value = val;
-  $("triRotVal").textContent = val;
-  renderShapePreview();
-}
-
 function randomiseTriangleFields() {
   const isRight = $("triRightAngle").checked;
   const targetSide = $("triGenTarget").value === "side";
@@ -247,8 +241,7 @@ function randomiseTriangleFields() {
   $("triTickBottom").checked = false;
   $("triTickLeft").checked = false;
   $("triTickRight").checked = false;
-  $("triRotation").value = Math.floor(Math.random() * 361);
-  $("triRotVal").textContent = $("triRotation").value;
+  $("triRotation").value = Math.floor(Math.random() * 361); // shown on the shape, not in a field
 
   if (isRight) {
     const angle = Math.floor(Math.random() * 35) + 25;

@@ -580,13 +580,22 @@ kbd.listening { background: var(--accent-soft); border-color: var(--accent); }
 /* ---- direct manipulation overlay (preview only — never part of the inserted shape) ---- */
 /* Hotspots stay invisible until pointed at, so the preview keeps reading as the shape you're
    about to insert rather than as a diagram of its own controls. */
-.shape-hot { fill: transparent; cursor: text; }
-.shape-hot:hover { fill: var(--accent-soft); }
+/* A faint dashed outline at rest, so "you can click these" is visible rather than something you
+   have to already know. Subtle enough that the preview still reads as the shape. */
+.shape-hot { fill: transparent; cursor: text; stroke: var(--accent); stroke-opacity: .3; stroke-dasharray: 3 3; }
+.shape-hot:hover { fill: var(--accent-soft); stroke-opacity: .85; stroke-dasharray: none; }
+/* An empty side/angle: nothing is drawn there yet, so the outline IS the affordance. */
+.shape-hot.placeholder { stroke-opacity: .5; }
+.shape-readout { font-family: sans-serif; font-weight: 600; fill: var(--ink-soft); pointer-events: none; }
 .shape-grip { fill: #fff; stroke: var(--accent); cursor: grab; }
 .shape-grip:hover { fill: var(--accent-soft); }
 .shape-grip-rotate { stroke-dasharray: 3 2; }
 #shapePreview.dragging .shape-grip, #shapePreview.dragging { cursor: grabbing; }
 #shapePreview.dragging .shape-hot { pointer-events: none; }
+/* Inputs whose control now lives on the preview. They stay in the DOM on purpose — they hold the
+   state everything else reads — but they are never shown, so there's exactly one place to set
+   each value instead of two that can disagree. */
+.shape-onshape-fields { display: none; }
 .shape-inline-edit {
   position: absolute; width: 84px; z-index: 5; font: inherit; font-size: 13px;
   padding: 3px 6px; border: 1.5px solid var(--accent); border-radius: 6px;

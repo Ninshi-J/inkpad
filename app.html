@@ -173,11 +173,14 @@
     <div class="shape-controls">
 
   <div id="planeFields">
-    <div class="shape-form-grid">
-      <div class="shape-field"><label>X Min</label><input type="number" id="planeXMin" value="-5"></div>
-      <div class="shape-field"><label>X Max</label><input type="number" id="planeXMax" value="5"></div>
-      <div class="shape-field"><label>Y Min</label><input type="number" id="planeYMin" value="-5"></div>
-      <div class="shape-field"><label>Y Max</label><input type="number" id="planeYMax" value="5"></div>
+    <!-- Range lives on the graph itself: click the number at the end of an axis to set that
+         bound. Kept in the DOM because these inputs ARE the state — the preview, the fit
+         hint's Apply, and re-editing a placed graph all read and write them. -->
+    <div class="shape-onshape-fields">
+      <input type="number" id="planeXMin" value="-5">
+      <input type="number" id="planeXMax" value="5">
+      <input type="number" id="planeYMin" value="-5">
+      <input type="number" id="planeYMax" value="5">
     </div>
     <div class="shape-form-grid">
       <div class="shape-field"><label>Grid Increment (X)</label><input type="number" id="planeXStep" value="1" min="0.1" step="0.1"></div>
@@ -244,11 +247,14 @@
   </div>
 
   <div id="planeMathFields" style="display:none;">
-    <div class="shape-form-grid">
-      <div class="shape-field"><label>X Min</label><input type="number" id="pmXMin" value="-5"></div>
-      <div class="shape-field"><label>X Max</label><input type="number" id="pmXMax" value="5"></div>
-      <div class="shape-field"><label>Y Min</label><input type="number" id="pmYMin" value="-5"></div>
-      <div class="shape-field"><label>Y Max</label><input type="number" id="pmYMax" value="5"></div>
+    <!-- Range lives on the graph itself: click the number at the end of an axis to set that
+         bound. Kept in the DOM because these inputs ARE the state — the preview, the fit
+         hint's Apply, and re-editing a placed graph all read and write them. -->
+    <div class="shape-onshape-fields">
+      <input type="number" id="pmXMin" value="-5">
+      <input type="number" id="pmXMax" value="5">
+      <input type="number" id="pmYMin" value="-5">
+      <input type="number" id="pmYMax" value="5">
     </div>
     <div class="shape-form-grid">
       <div class="shape-field"><label>Grid Increment (X)</label><input type="number" id="pmXStep" value="1" min="0.1" step="0.1"></div>
@@ -334,9 +340,12 @@
   </div>
 
   <div id="planeQ1Fields" style="display:none;">
-    <div class="shape-form-grid">
-      <div class="shape-field"><label>X Max</label><input type="number" id="q1XMax" value="10" min="0.0001"></div>
-      <div class="shape-field"><label>Y Max</label><input type="number" id="q1YMax" value="10" min="0.0001"></div>
+    <!-- Range lives on the graph itself: click the number at the end of an axis to set that
+         bound. Kept in the DOM because these inputs ARE the state — the preview, the fit
+         hint's Apply, and re-editing a placed graph all read and write them. -->
+    <div class="shape-onshape-fields">
+      <input type="number" id="q1XMax" value="10" min="0.0001">
+      <input type="number" id="q1YMax" value="10" min="0.0001">
     </div>
     <div class="shape-form-grid">
       <div class="shape-field"><label>Grid Increment (X)</label><input type="number" id="q1XStep" value="1" min="0.1" step="0.1"></div>
@@ -432,19 +441,20 @@
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
       <button type="button" class="side-btn randomise" onclick="randomiseTriangleFields()">🎲 Randomise Fields</button>
     </div>
-    <div class="shape-form-grid">
-      <div class="shape-field"><label>Bottom Side Value</label><input type="text" id="triBottom" value="x"></div>
-      <div class="shape-field"><label>Left Side Value</label><input type="text" id="triLeft" value="12"></div>
-      <div class="shape-field"><label>Right Side Value</label><input type="text" id="triRight" value=""></div>
-      <div class="shape-field"><label>Corner A Angle</label><input type="text" id="triAngleA" value="θ"></div>
-    </div>
-    <div class="shape-form-grid">
-      <div class="shape-field"><label>Corner B Angle</label><input type="text" id="triAngleB" value=""></div>
-      <div class="shape-field"><label>Corner C Angle</label><input type="text" id="triAngleC" value=""></div>
-    </div>
-    <div class="shape-form-grid">
-      <div class="shape-field"><label>Non-Right Vertex B (X)</label><input type="number" id="triVertexBX" value="250"></div>
-      <div class="shape-field"><label>Non-Right Vertex B (Y)</label><input type="number" id="triVertexBY" value="130"></div>
+    <!-- Edited on the shape itself now — click a side or angle to type into it, drag the free
+         corner, drag the outer grip to rotate. The inputs stay in the DOM because they ARE the
+         state: the preview, Randomise, the Solving Objective presets and the insert all read
+         these, and dragging writes back to them. Only the form rows are gone. -->
+    <div class="shape-onshape-fields">
+      <input type="text" id="triBottom" value="x">
+      <input type="text" id="triLeft" value="12">
+      <input type="text" id="triRight" value="">
+      <input type="text" id="triAngleA" value="θ">
+      <input type="text" id="triAngleB" value="">
+      <input type="text" id="triAngleC" value="">
+      <input type="number" id="triVertexBX" value="250">
+      <input type="number" id="triVertexBY" value="130">
+      <input type="range" id="triRotation" min="0" max="360" value="0">
     </div>
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
       <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-top:6px;">
@@ -469,18 +479,6 @@
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="triTickBottom"> Tick Bottom</label>
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="triTickLeft"> Tick Left</label>
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="triTickRight"> Tick Right</label>
-    </div>
-    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
-      <div class="shape-field">
-        <label>Rotate Shape: <span id="triRotVal">0</span>°</label>
-        <input type="range" id="triRotation" min="0" max="360" value="0" oninput="$('triRotVal').textContent = this.value">
-        <div style="display:flex; gap:5px; margin-top:4px;">
-          <button type="button" class="side-btn" style="width:auto; flex:1; margin-top:0;" onclick="setTriRotationPreset(0)">0°</button>
-          <button type="button" class="side-btn" style="width:auto; flex:1; margin-top:0;" onclick="setTriRotationPreset(90)">90°</button>
-          <button type="button" class="side-btn" style="width:auto; flex:1; margin-top:0;" onclick="setTriRotationPreset(180)">180°</button>
-          <button type="button" class="side-btn" style="width:auto; flex:1; margin-top:0;" onclick="setTriRotationPreset(270)">270°</button>
-        </div>
-      </div>
     </div>
   </div>
 
