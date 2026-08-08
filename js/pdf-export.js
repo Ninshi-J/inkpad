@@ -72,21 +72,55 @@ async function exportPdf(pages) {
   };
   const pdfFontFor = (t, bold = false, italic = false) =>
     pdfFonts[(FONT_STACKS[t.font] || FONT_STACKS[DEFAULT_FONT_KEY]).pdf][bold][italic];
+  /* Every math span the export will draw, resolved before any wrapping happens.
+
+     wrapParagraphPdf has to measure a formula at the width it will actually be DRAWN at, and the
+     span cache fills in asynchronously — so with a cold cache the wrap would silently fall back to
+     the source width and break lines in the wrong places.
+
+     Sanitized exactly as the draw path sanitizes, because that's what the cache key is built from
+     down there: warming from the raw text would populate different keys and leave the wrap looking
+     at an empty cache anyway. */
+  async function warmMathSpans() {
+    const jobs = [];
+    for (const t of doc.texts) {
+      if (t.del) continue;
+      for (const para of (t.lines || [])) {
+        const s = sanitizeForWinAnsi(para);
+        if (!lineNeedsMathPass(s)) continue;
+        for (const run of splitMathRuns(s)) {
+          if (run.math !== undefined) jobs.push(getMathSpanAsync(run.math, mathSizePx(t.size), t.color));
+        }
+      }
+    }
+    await Promise.all(jobs);
+  }
+  await warmMathSpans();
+
   // Mirrors wrapParagraph()'s greedy word-wrap but measures with pdf-lib's font metrics instead
   // of a canvas context, and operates on the already WinAnsi-sanitized text (the substituted
   // ASCII stand-ins for e.g. "θ" render at a different width than the glyph they replace).
   // Same atom rule as the canvas (js/state.js): a "$...$" run is never split, because each half
-  // would lose its matching delimiter and export as raw LaTeX. Math is measured by its source
-  // width here rather than its rendered width -- an overestimate, so a line may break slightly
-  // early, but it can never split a formula, which is the failure that actually matters.
-  function wrapParagraphPdf(font, text, maxWidth, size) {
+  // would lose its matching delimiter and export as raw LaTeX.
+  //
+  // A formula is measured by its RENDERED width, matching atomWidth() on the canvas. Measuring the
+  // LaTeX source instead — as this did — massively overestimates: "$\Delta GPE = mg\Delta h$" is
+  // 26 source characters against an image about 9 characters wide, so a line that fitted on screen
+  // wrapped in the PDF, and the extra line then overflowed the box it was sized for.
+  function wrapParagraphPdf(font, text, maxWidth, size, t) {
     if (!text) return [""];
     const lines = [];
     let cur = "", curW = 0;
-    const widthOf = s => { try { return font.widthOfTextAtSize(s, size); } catch (_) { return 0; } };
+    const widthOf = a => {
+      if (a.math !== undefined && t) {
+        const span = getMathSpan(a.math, mathSizePx(t.size), t.color);
+        if (span && span.w && !span.failed) return span.w * PT; // span.w is world px; wrap works in points
+      }
+      try { return font.widthOfTextAtSize(a.s, size); } catch (_) { return 0; }
+    };
     for (const a of textAtoms(text)) {
       if (!cur && a.space) continue;
-      const w = widthOf(a.s);
+      const w = widthOf(a);
       if (cur && !a.space && curW + w > maxWidth) {
         lines.push(cur.replace(/ +$/, ""));
         cur = a.s; curW = w;
@@ -259,7 +293,7 @@ async function exportPdf(pages) {
       const [r, g, b] = hexToRgb01(t.color);
       const font = pdfFontFor(t);
       const paras = (t.lines.length ? t.lines : [""]).map(sanitizeForWinAnsi);
-      const lines = t.w ? paras.flatMap(p => wrapParagraphPdf(font, p, t.w * PT, t.size * PT)) : paras;
+      const lines = t.w ? paras.flatMap(p => wrapParagraphPdf(font, p, t.w * PT, t.size * PT, t)) : paras;
       const ascent = pdfAscentFor(t);
       for (let k = 0; k < lines.length; k++) {
         const ln = lines[k];
