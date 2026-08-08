@@ -1232,6 +1232,7 @@ function shapeHotspotMarkup(labelSpecs, hotspots, scale) {
   const s = n => n / scale; // keep corner radii a constant on-screen size whatever the zoom is
   let out = `<g class="shape-overlay-hots">\n`;
   for (const h of hotspots) {
+    if (h.field === shapeEditingField) continue; // see note on shapeEditingField
     out += `  <rect class="shape-hot${h.placeholder ? " placeholder" : ""}" data-field="${h.field}" x="${h.cx - h.w / 2}" y="${h.cy - h.h / 2}" width="${h.w}" height="${h.h}" rx="${s(4)}" stroke-width="${s(1)}"><title>Click to edit ${escapeXml(h.title || "")}</title></rect>\n`;
     // A readout is a value the shape has but doesn't otherwise draw (rotation). It replaces a form
     // control outright, so unlike a hotspot over an existing label it has to render its own text.
@@ -1240,7 +1241,7 @@ function shapeHotspotMarkup(labelSpecs, hotspots, scale) {
     }
   }
   labelSpecs.forEach((l, i) => {
-    if (!l.field) return;
+    if (!l.field || l.field === shapeEditingField) return;
     const w = Math.max(28, String(l.text).length * l.fontSize * 0.68), hh = l.fontSize * 1.5;
     out += `  <rect class="shape-hot" data-field="${l.field}" data-label="${i}" x="${l.x - w / 2}" y="${l.y - hh * 0.72}" width="${w}" height="${hh}" rx="${s(4)}"><title>Click to edit this label</title></rect>\n`;
   });
@@ -1255,6 +1256,15 @@ function shapeGripMarkup(handles, scale) {
 
 let shapePreviewHandles = []; // the live handles for whatever is currently drawn, by index
 let shapeDragging = null;     // {apply} captured at pointerdown — see onShapeStagePointerDown
+/* The field an inline editor is currently open on, if any. Its own box is left undrawn while that
+   editor is up, because the box's position is a function of the value being typed: the rotation
+   readout orbits the shape, so typing "90" swung it away from the editor sitting still on top of
+   it, and a tick box that slid out from under the caret read as a bug. The editor stands in for it
+   until it's dismissed.
+
+   Note the hotspot is only skipped when DRAWING — it's still passed to previewViewBoxFor, so the
+   space it occupies stays reserved and the whole preview doesn't rescale mid-keystroke. */
+let shapeEditingField = null;
 
 function renderShapePreview() {
   updateGraphFitHint(); // before the build, so a momentarily-unbuildable graph still gets its hint
@@ -1402,12 +1412,17 @@ function openShapeInlineEditor(fieldId, anchorEl) {
   };
   ed.onblur = () => closeShapeInlineEditor();
   $("shapePreview").parentElement.appendChild(ed);
+  // Set before the redraw so the box this editor covers is already gone by the time it appears,
+  // rather than flashing away on the first keystroke.
+  shapeEditingField = fieldId;
+  renderShapePreview();
   ed.focus();
   ed.select();
 }
 function closeShapeInlineEditor() {
   const old = document.querySelector(".shape-inline-edit");
   if (old) { old.onblur = null; old.remove(); }
+  if (shapeEditingField) { shapeEditingField = null; renderShapePreview(); } // bring its box back
 }
 
 $("shapePreview").addEventListener("pointerdown", onShapeStagePointerDown);
