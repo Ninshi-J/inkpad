@@ -237,6 +237,24 @@ async function renderMathSpan(src, sizePx, color) {
    a formula actually uses are carried, which for ordinary maths is two (KaTeX_Main regular and
    KaTeX_Math italic) and about 74KB. Measured identical on screen to embedding the lot. */
 
+/* The dialog preview is an INLINE svg, so it's part of this document and the page's own stylesheet
+   reaches inside its <foreignObject> — measured: an unstyled fraction laid out 127px wide, the
+   same one 69px once this is present. So the preview needs no embedded fonts whatsoever, and only
+   a shape that leaves as a standalone data: URL has to carry them.
+   Uses the string already fetched for the raster spans, so this costs no extra network. */
+let katexCssInDocument = false;
+function ensureKatexCssInDocument() {
+  if (katexCssInDocument) return;
+  katexCssInDocument = true;
+  loadInlinedKatexCss().then(css => {
+    const el = document.createElement("style");
+    el.id = "katexInlinedCss";
+    el.textContent = css;
+    document.head.appendChild(el);
+    if (shapeMathOnReady) shapeMathOnReady(); // labels laid out before this need re-measuring
+  }).catch(() => { katexCssInDocument = false; });
+}
+
 // The inlined stylesheet split into its @font-face rules and everything else, so a caller can
 // rebuild it with just the faces it needs.
 let katexCssParts = null; // resolved value, for the synchronous accessors below

@@ -59,6 +59,7 @@ function shapeLabelSvg(text, opts) {
   const plain = () =>
     `  <text x="${x}" y="${y}" font-size="${fontSize}" text-anchor="${anchor}" fill="${fill}"${tf} ${attrs}>${escapeXml(text)}</text>\n`;
   if (!lineHasMath(text)) return plain();
+  ensureKatexCssInDocument(); // what makes the preview render without carrying any fonts itself
   const m = getShapeMath(text, fontSize, cssFont);
   if (!m || m.failed || !m.w) return plain(); // still rendering, or KaTeX is unreachable
   for (const k of m.faceKeys) shapeMathFaces.add(k);
@@ -83,16 +84,20 @@ function shapeLabelMetrics(text, fontSize, cssFont = "") {
   return { w: Math.max(28, str.length * fontSize * 0.62), h: fontSize * 1.35 };
 }
 
-/* Puts the fonts this build's labels need into the SVG, once, right after its opening tag. Applied
-   as a post-step rather than inside each of a dozen per-shape assembly points, which would be a
-   dozen chances to forget one. A shape with no maths in it gains nothing at all.
-   Idempotent: re-running replaces its own previous block, which is what lets the preview inject
-   again after its labels have registered fonts of their own. */
+/* Puts the fonts this build's labels need into the SVG, once, right after its opening tag.
+
+   Only for a shape on its way OUT of the app — placed on the page, exported, shared. That copy is
+   a standalone data: URL which can load nothing external, so its fonts have to travel with it. The
+   dialog preview is an inline SVG inside this document and picks the same stylesheet up from the
+   page for free (see ensureKatexCssInDocument), so it is deliberately NOT run over the preview.
+
+   Which means most shapes pay nothing: a triangle's labels leave the SVG entirely and become text
+   objects at placement, so there is no maths left in the file to need a font. In practice only a
+   graph — whose axis titles must stay inside the SVG to survive re-editing — ever carries one. */
 function injectShapeMathCss(svg) {
   const css = katexCssForFaces([...shapeMathFaces]);
-  const stripped = svg.replace(/<style data-katex="1">[\s\S]*?<\/style>\n?/, "");
-  if (!css) return stripped;
-  return stripped.replace(/^(<svg[^>]*>\n?)/, `$1<style data-katex="1">${css}</style>\n`);
+  if (!css) return svg;
+  return svg.replace(/^(<svg[^>]*>\n?)/, `$1<style data-katex="1">${css}</style>\n`);
 }
 
 function buildMathShapeSVG() {
@@ -1228,11 +1233,16 @@ function buildMathShapeSVG() {
     svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${boxX} ${boxY} ${boxW} ${boxH}" width="${boxW}" height="${boxH}">\n<rect width="100%" height="100%" fill="none"/>\n${innerSvg}</svg>`;
   }
 
-  return { svgString: injectShapeMathCss(svgString), labelSpecs, srcBox, fnErrors, hotspots, handles };
+  // Returned WITHOUT the font payload — only the placement path adds it (see injectShapeMathCss).
+  return { svgString, labelSpecs, srcBox, fnErrors, hotspots, handles };
 }
 
 function generateAndInsertMathShape() {
-  const { svgString, labelSpecs, srcBox } = buildMathShapeSVG();
+  const built = buildMathShapeSVG();
+  const { labelSpecs, srcBox } = built;
+  // Leaving the app, so it has to stand on its own from here — this is the one place the fonts
+  // get embedded.
+  const svgString = injectShapeMathCss(built.svgString);
   const target = editingShapeTarget; // capture before .close() clears it (see shape-tools.js)
   const genParams = captureShapeGenParams(); // null for non-graph shapes — not re-editable
   $("shapeImporterDlg").close();
@@ -1377,9 +1387,9 @@ function renderShapePreview() {
   // a grip overlapping a label is still the thing you grab.
   preview = preview.replace("</svg>",
     shapeHotspotMarkup(labelSpecs, hotspots, scale) + labelsMarkup + shapeGripMarkup(handles, scale) + "</svg>");
-  // Again, now that labelsMarkup has registered any fonts of its own — buildMathShapeSVG only knew
-  // about the shape's built-in labels.
-  $("shapePreview").innerHTML = injectShapeMathCss(preview);
+  // No font payload here: this SVG is inline in the page, so the page's own stylesheet reaches
+  // into its foreignObjects.
+  $("shapePreview").innerHTML = preview;
   const hint = $("shapeStageHint");
   if (hint) {
     const bits = [];
