@@ -10,6 +10,10 @@ function applyEntry(e, dir) { // dir: -1 undo, +1 redo
       e.items.forEach(it => shiftObject(it.ref, it.kind, dx, dy));
       break;
     }
+    case "tableEdit": {
+      tableRestore(e.ref, undoing ? e.before : e.after);
+      break;
+    }
     case "replaceShape": {
       const snap = undoing ? e.before : e.after;
       e.ref.data = snap.data; e.ref.img = snap.img; e.ref.shapeGen = snap.shapeGen;
@@ -109,6 +113,7 @@ function snapshotItem(kind, ref) {
   if (kind === "stroke") return { pts: ref.pts.map(p => ({ ...p })), w: ref.w };
   if (kind === "image") return { x: ref.x, y: ref.y, w: ref.w, h: ref.h, rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY };
   if (kind === "text") return { x: ref.x, y: ref.y, size: ref.size, color: ref.color, font: ref.font, w: ref.w, lines: ref.lines.slice() };
+  if (kind === "table") return tableSnapshot(ref);
   return { x: ref.x, y: ref.y, w: ref.w, h: ref.h }; // tape
 }
 const MAGNET_90_THRESHOLD_DEG = 4;
@@ -141,6 +146,11 @@ function applyGroupTransform(items, snaps, pivot, scaleFactor, dAngle) {
       ref.x = c.x; ref.y = c.y;
       ref.size = Math.max(6, snap.size * scaleFactor);
       if (snap.w) ref.w = Math.max(20, snap.w * scaleFactor); // keep the wrap width in proportion with the font
+    } else if (kind === "table") {
+      // Its own branch rather than the tape fallback: a table's font and its column widths have to
+      // scale together, or the box shrinks while 20px text stays put and overflows every cell.
+      const c = tf(snap.x + snap.w / 2, snap.y + snap.h / 2);
+      tableApplyScale(ref, snap, c.x, c.y, scaleFactor);
     } else { // tape
       const c = tf(snap.x + snap.w / 2, snap.y + snap.h / 2);
       const nw = Math.max(8, snap.w * scaleFactor), nh = Math.max(8, snap.h * scaleFactor);

@@ -32,6 +32,17 @@ function toggleShapeFormFields() {
   $("boxplotFields").style.display = type === "boxplot" ? "block" : "none";
   // Class start/width only mean anything while the bars are numbered, not named.
   if (type === "histogram") $("hgClassFields").style.display = $("hgLabels").value.trim() ? "none" : "";
+  if (type === "table") {
+    const kind = $("tbPreset").value;
+    document.querySelectorAll("#tableFields .table-sample-only").forEach(el => {
+      el.style.display = kind === "sample" ? "" : "none";
+    });
+    // A sample space fills every cell itself, and only a two-way table has totals to add.
+    document.querySelectorAll("#tableFields .table-body-only").forEach(el => {
+      el.style.display = kind === "sample" ? "none" : "";
+    });
+    $("tbTotalsField").style.display = kind === "twoWay" ? "" : "none";
+  }
   // A third circle brings three more regions with it — hidden rather than disabled so the
   // two-set form stays as short as it was.
   if (type === "venn") {

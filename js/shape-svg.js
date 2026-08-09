@@ -1321,9 +1321,12 @@ function buildMathShapeSVG() {
 }
 
 function generateAndInsertMathShape() {
+  const type = $("shapeTypeSelect").value; // decides which placed-size default applies
+  // A table isn't an image at all — it's a live object whose cells get typed into afterwards, so
+  // it skips the whole SVG/placement pipeline (see js/table-obj.js).
+  if (type === "table") { insertTableFromDialog(); return; }
   const built = buildMathShapeSVG();
   const { labelSpecs, srcBox } = built;
-  const type = $("shapeTypeSelect").value; // decides which placed-size default applies
   // Leaving the dialog, so record which faces its maths needs — the fonts themselves are spliced
   // in on the way to an <img> or a file, not stored (see stampShapeMathFaces).
   const svgString = stampShapeMathFaces(built.svgString);

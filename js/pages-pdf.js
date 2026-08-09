@@ -1,7 +1,7 @@
 "use strict";
 function resetDocState() {
   stopPlayback(); stopRecord();
-  doc.strokes = []; doc.tapes = []; doc.texts = []; doc.images = []; doc.timers = [];
+  doc.strokes = []; doc.tapes = []; doc.texts = []; doc.images = []; doc.timers = []; doc.tables = [];
   audio.segments.forEach(s => URL.revokeObjectURL(s.url));
   audio.segments = []; audio.totalMs = 0; audio.posMs = 0;
   S.pages = 1;
@@ -255,6 +255,7 @@ function deleteCurrentPage() {
   visit(doc.texts, "text", o => o.y);
   visit(doc.images, "image", o => o.y);
   visit(doc.timers, "timer", o => o.y);
+  visit(doc.tables, "table", o => o.y);
   S.pages--;
   const pageStylesBefore = S.pageStyles || {};
   const pageStylesAfter = remapPageStyles(p, -1, true);
@@ -280,6 +281,7 @@ function insertPageAt(atIndex, count = 1) {
   visit(doc.texts, "text", o => o.y);
   visit(doc.images, "image", o => o.y);
   visit(doc.timers, "timer", o => o.y);
+  visit(doc.tables, "table", o => o.y);
   S.pages += count;
   const pageStylesBefore = S.pageStyles || {};
   const pageStylesAfter = remapPageStyles(atIndex, count, false);
@@ -396,7 +398,7 @@ async function openExportDialog() {
 
 function buildFilteredDoc(pages) {
   const st = stride();
-  const out = { strokes: [], tapes: [], texts: [], images: [], timers: [] };
+  const out = { strokes: [], tapes: [], texts: [], images: [], timers: [], tables: [] };
   pages.forEach((srcP, i) => {
     const top = srcP * st, bot = top + st;
     const shift = i * st - top;
@@ -406,6 +408,7 @@ function buildFilteredDoc(pages) {
     doc.texts.forEach(t => { if (!t.del && inP(t.y)) out.texts.push({ ...t, y: t.y + shift }); });
     doc.images.forEach(im => { if (!im.del && inP(im.y)) out.images.push({ ...im, y: im.y + shift }); });
     doc.timers.forEach(t => { if (!t.del && inP(t.y)) out.timers.push({ ...t, y: t.y + shift }); });
+    doc.tables.forEach(t => { if (!t.del && inP(t.y)) out.tables.push({ ...t, y: t.y + shift }); });
   });
   return { ...out, pageCount: pages.length };
 }
@@ -436,6 +439,7 @@ async function serialize(pages) {
     texts: doc.texts.filter(t => !t.del),
     images: doc.images.filter(i => !i.del),
     timers: doc.timers.filter(t => !t.del),
+    tables: doc.tables.filter(t => !t.del),
     pageCount: S.pages,
   };
   const segs = [];
@@ -487,6 +491,7 @@ async function serialize(pages) {
       x: t.x, y: t.y, w: t.w, h: t.h, mode: t.mode, durationMs: t.durationMs,
       baseMs: t.running ? timerObjElapsedMs(t) : t.baseMs, layer: t.layer,
     })),
+    tables: src.tables.map(tableToJson),
     audio: segs,
     ...(Object.keys(pdfSourcesOut).length ? { pdfSources: pdfSourcesOut } : {}),
     // One shared copy of the KaTeX faces this notebook's shapes need, rather than ~82KB inside
@@ -516,6 +521,7 @@ function deserialize(json) {
   doc.tapes = (d.tapes || []).map(t => ({ ...t, del: false }));
   doc.texts = (d.texts || []).map(t => ({ ...t, del: false }));
   doc.timers = (d.timers || []).map(t => ({ ...t, running: false, startWall: null, del: false }));
+  doc.tables = (d.tables || []).map(tableFromJson);
 
   // Persisted PDF source bytes (if this file was saved with them) get remapped onto fresh
   // in-memory ids — this session may already have allocated ids for PDFs imported before this

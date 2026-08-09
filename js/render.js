@@ -51,6 +51,7 @@ function render() {
   drawTexts();
   drawTapes();
   drawTimerObjs();
+  drawTables();
   ctx.restore();
 
   drawSelection();

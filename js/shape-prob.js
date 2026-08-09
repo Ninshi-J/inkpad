@@ -200,72 +200,10 @@ function buildVennSvg() {
 }
 
 /* ---------------- table ----------------
-   A two-way probability table is just a table with a Total row and column, so this is the general
-   tool and the checkbox is the specialisation. Cells are usually left EMPTY on purpose — the point
-   of putting one on a worksheet is that a student writes in it. */
-function buildTableSvg() {
-  const cols = probList($("tbCols").value, ["", ""]);
-  const rows = probList($("tbRows").value, ["", ""]);
-  const totals = $("tbTotals").checked;
-  const shaded = $("tbShade").checked;
-  const headFill = $("tbHeadColour").value || PROB_HEADER_FILL;
-  const stripeFill = $("tbStripe").checked ? ($("tbStripeColour").value || "#F4F7FB") : null;
-  const corner = $("tbCorner").value.trim();
-  const fontSize = Math.max(8, probNum($("tbFontSize").value, 22));
-  // One line per row, cells separated by commas — the shape of the thing you're describing.
-  const body = String($("tbBody").value || "").split("\n").map(line => probList(line, []));
-
-  const colHead = totals ? cols.concat("Total") : cols.slice();
-  const rowHead = totals ? rows.concat("Total") : rows.slice();
-  const nc = colHead.length, nr = rowHead.length;
-
-  // Column widths follow the longest thing in each column so a "No Mac" header isn't clipped.
-  const textW = s => shapeLabelMetrics(String(s || ""), fontSize, SHAPE_LABEL_CSS).w;
-  const pad = fontSize * 0.9;
-  const cellOf = (r, c) => (body[r] && body[r][c] != null) ? body[r][c] : "";
-  const headW = Math.max(90, ...rowHead.map(textW), textW(corner)) + pad * 2;
-  const colW = colHead.map((h, c) =>
-    Math.max(90, textW(h), ...rowHead.map((_, r) => textW(cellOf(r, c)))) + pad * 2);
-  const rowH = Math.round(fontSize * 2.2);
-
-  const W = Math.round(headW + colW.reduce((a, b) => a + b, 0)) + 4;
-  const H = rowH * (nr + 1) + 4;
-  const x0 = 2, y0 = 2;
-  const colX = [x0 + headW];
-  for (let c = 0; c < nc; c++) colX.push(colX[c] + colW[c]);
-
-  let inner = "";
-  const cellRect = (x, y, w, h, fill) =>
-    `  <rect x="${pn(x)}" y="${pn(y)}" width="${pn(w)}" height="${pn(h)}" fill="${fill}" ` +
-    `stroke="#2D4E86" stroke-width="1.8"/>\n`;
-  const head = shaded ? headFill : "#FFFFFF";
-  // Header row and column first, so the body cells' strokes overlay them consistently.
-  inner += cellRect(x0, y0, headW, rowH, head);
-  for (let c = 0; c < nc; c++) inner += cellRect(colX[c], y0, colW[c], rowH, head);
-  for (let r = 0; r < nr; r++) {
-    inner += cellRect(x0, y0 + rowH * (r + 1), headW, rowH, head);
-    // Striping alternate rows makes a wide table readable across. Off by default: a table meant
-    // to be written in by hand wants nothing competing with the pencil.
-    const bodyFill = stripeFill && r % 2 === 1 ? stripeFill : "#FFFFFF";
-    for (let c = 0; c < nc; c++) inner += cellRect(colX[c], y0 + rowH * (r + 1), colW[c], rowH, bodyFill);
-  }
-  const put = (text, cxp, cyp, bold, fill) => {
-    if (!text) return;
-    inner += shapeLabelSvg(text, { x: cxp, y: cyp + fontSize * 0.35, fontSize, fill: fill || PROB_INK,
-      attrs: bold ? SHAPE_LABEL_ATTRS : SHAPE_LABEL_ATTRS.replace('font-weight="bold"', 'font-weight="normal"'),
-      cssFont: bold ? SHAPE_LABEL_CSS : SHAPE_LABEL_CSS.replace("font-weight:bold;", "") });
-  };
-  put(corner, x0 + headW / 2, y0 + rowH / 2, true, "#1B4F91");
-  colHead.forEach((h, c) => put(h, colX[c] + colW[c] / 2, y0 + rowH / 2, true, "#1B4F91"));
-  rowHead.forEach((h, r) => put(h, x0 + headW / 2, y0 + rowH * (r + 1) + rowH / 2, true, "#1B4F91"));
-  for (let r = 0; r < nr; r++) {
-    for (let c = 0; c < nc; c++) {
-      put(cellOf(r, c), colX[c] + colW[c] / 2, y0 + rowH * (r + 1) + rowH / 2, false);
-    }
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">\n` +
-    `<rect width="100%" height="100%" fill="none"/>\n${inner}</svg>`;
-}
+   The dialog preview only. A table is placed as a live object rather than an image (see
+   js/table-obj.js), so this builds the very object that will be inserted and renders THAT, which
+   is the only way the preview and the result cannot drift apart. */
+function buildTableSvg() { return tableToSvg(buildTableFromDialog()); }
 
 /* ---------------- tree ----------------
    Stage sizes are given as a list ("2,2" for two coin tosses, "3,3" for the blood-group example),

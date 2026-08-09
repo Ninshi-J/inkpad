@@ -365,6 +365,39 @@ async function exportPdf(pages) {
       const [tr, tg, tb] = hexToRgb01(t.color || "#FFD682");
       page.drawRectangle({ x: X(t.x), y: Y(t.y + t.h), width: t.w * PT, height: t.h * PT, color: rgb(tr, tg, tb) });
     }
+
+    // Tables are drawn cell by cell rather than as one image: they're vector everywhere else, and
+    // a worksheet's whole point is the empty cells staying crisp at print size.
+    for (const tb of doc.tables) {
+      if (tb.del || tb.y < top || tb.y >= bot || !isLayerVisible(tb.layer)) continue;
+      const [gr, gg, gb] = hexToRgb01(tb.gridColour);
+      const [hr, hg, hb] = hexToRgb01(tb.headFill);
+      const [sr2, sg2, sb2] = hexToRgb01(tb.stripeFill || "#FFFFFF");
+      const [xr, xg, xb] = hexToRgb01(tb.textColour);
+      for (let r = 0; r < tableRows(tb); r++) {
+        for (let c = 0; c < tableCols(tb); c++) {
+          if (tableSkip(tb, r, c)) continue;
+          const q = tableCellRect(tb, r, c);
+          const head = tableIsHead(tb, r, c);
+          const striped = !head && tb.stripeFill && (r - tb.headRows) % 2 === 1;
+          page.drawRectangle({
+            x: X(q.x), y: Y(q.y + q.h), width: q.w * PT, height: q.h * PT,
+            color: head ? rgb(hr, hg, hb) : (striped ? rgb(sr2, sg2, sb2) : rgb(1, 1, 1)),
+            borderColor: rgb(gr, gg, gb), borderWidth: 1,
+          });
+          const raw = sanitizeForWinAnsi(String(tb.cells[r][c] || ""));
+          if (!raw) continue;
+          // Tables always draw in the default sans face, matching drawOneTable on the canvas.
+          const f = pdfFontFor({ font: DEFAULT_FONT_KEY }, head, false);
+          let tw = 0;
+          try { tw = f.widthOfTextAtSize(raw, tb.fontSize); } catch (_) { tw = 0; }
+          page.drawText(raw, {
+            x: X(q.x + q.w / 2 - tw / 2), y: Y(q.y + q.h / 2 + tb.fontSize * 0.35),
+            size: tb.fontSize * PT, font: f, color: head ? rgb(gr, gg, gb) : rgb(xr, xg, xb),
+          });
+        }
+      }
+    }
   }
 
   const bytes = await pdfDoc.save();
@@ -528,6 +561,27 @@ async function buildPageSvg(srcP) {
   for (const t of doc.tapes) {
     if (t.del || t.revealed || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
     body += `<rect x="${t.x}" y="${t.y - top}" width="${t.w}" height="${t.h}" fill="${t.color || "#FFD682"}"/>\n`;
+  }
+
+  for (const tb of doc.tables) {
+    if (tb.del || tb.y < top || tb.y >= bot || !isLayerVisible(tb.layer)) continue;
+    const fam = FONT_STACKS[DEFAULT_FONT_KEY].css;
+    for (let r = 0; r < tableRows(tb); r++) {
+      for (let c = 0; c < tableCols(tb); c++) {
+        if (tableSkip(tb, r, c)) continue;
+        const q = tableCellRect(tb, r, c);
+        const head = tableIsHead(tb, r, c);
+        const striped = !head && tb.stripeFill && (r - tb.headRows) % 2 === 1;
+        const fill = head ? tb.headFill : (striped ? tb.stripeFill : "#FFFFFF");
+        body += `<rect x="${q.x}" y="${q.y - top}" width="${q.w}" height="${q.h}" fill="${fill}" ` +
+          `stroke="${tb.gridColour}" stroke-width="1.6"/>\n`;
+        const text = String(tb.cells[r][c] || "");
+        if (!text) continue;
+        body += `<text xml:space="preserve" x="${q.x + q.w / 2}" y="${q.y - top + q.h / 2 + tb.fontSize * 0.35}" ` +
+          `font-family="${fam}" font-size="${tb.fontSize}"${head ? ' font-weight="bold"' : ""} ` +
+          `text-anchor="middle" fill="${head ? tb.gridColour : tb.textColour}">${escapeXml(text)}</text>\n`;
+      }
+    }
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n` +

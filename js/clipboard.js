@@ -6,6 +6,7 @@ function cloneForClipboard(kind, ref) {
   if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, color: ref.color, layer: ref.layer };
   if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, bg: ref.bg ?? null, lines: ref.lines.slice(), layer: ref.layer };
   if (kind === "timer") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, mode: ref.mode, durationMs: ref.durationMs, layer: ref.layer };
+  if (kind === "table") return { kind, ...tableToJson(ref) };
   return {
     kind, img: ref.img, data: ref.data, x: ref.x, y: ref.y, w: ref.w, h: ref.h,
     rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY,
@@ -200,6 +201,9 @@ function insertClipboardWithOffset(dx, dy) {
       // copy, which would otherwise reference a stale wall-clock instant.
       copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, mode: it.mode, durationMs: it.durationMs, running: false, baseMs: 0, startWall: null, del: false, layer };
       doc.timers.push(copy);
+    } else if (it.kind === "table") {
+      copy = tableFromJson({ ...it, x: it.x + dx, y: it.y + dy, layer });
+      doc.tables.push(copy);
     } else {
       copy = {
         img: it.img, data: it.data, x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, rot: it.rot, flipX: it.flipX, flipY: it.flipY, del: false, _pdfBusy: false, layer,
@@ -267,6 +271,7 @@ function duplicateSelection() {
     } else if (kind === "tape") { copy = { ...ref, x: ref.x + 20, y: ref.y + 20 }; doc.tapes.push(copy); }
     else if (kind === "text") { copy = { ...ref, x: ref.x + 20, y: ref.y + 20, lines: ref.lines.slice() }; doc.texts.push(copy); }
     else if (kind === "timer") { copy = { ...ref, x: ref.x + 20, y: ref.y + 20, running: false, baseMs: 0, startWall: null }; doc.timers.push(copy); }
+    else if (kind === "table") { copy = tableFromJson({ ...tableToJson(ref), x: ref.x + 20, y: ref.y + 20 }); doc.tables.push(copy); }
     else { copy = { ...ref, x: ref.x + 20, y: ref.y + 20, _pdfBusy: false }; doc.images.push(copy); }
     added.push({ kind, ref: copy });
   }
@@ -294,6 +299,7 @@ function stampableClone(kind, ref) {
   if (kind === "tape") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, color: ref.color };
   if (kind === "text") return { kind, x: ref.x, y: ref.y, color: ref.color, size: ref.size, font: ref.font, w: ref.w, bg: ref.bg ?? null, lines: ref.lines.slice() };
   if (kind === "timer") return { kind, x: ref.x, y: ref.y, w: ref.w, h: ref.h, mode: ref.mode, durationMs: ref.durationMs };
+  if (kind === "table") return { kind, ...tableToJson(ref) };
   return {
     kind, data: ref.data, x: ref.x, y: ref.y, w: ref.w, h: ref.h, rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY,
     ...(ref.shapeGen ? { shapeGen: ref.shapeGen } : {}),
@@ -400,6 +406,9 @@ function instantiateStampItems(items, dx, dy) {
     } else if (it.kind === "timer") {
       copy = { x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, mode: it.mode, durationMs: it.durationMs, running: false, baseMs: 0, startWall: null, del: false, layer };
       doc.timers.push(copy);
+    } else if (it.kind === "table") {
+      copy = tableFromJson({ ...it, x: it.x + dx, y: it.y + dy, layer });
+      doc.tables.push(copy);
     } else {
       const img = new Image();
       img.onload = () => { needsDraw = true; mmCache.clear(); };

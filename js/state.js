@@ -362,6 +362,9 @@ const doc = {
   // live-only, not persisted) plus baseMs gives current elapsed while running — same pattern as
   // the floating timer widget's own `timer` object in js/timer.js, just per-object instead of global.
   timers: [],   // {x,y,w,h, mode:'down'|'up', durationMs, running, baseMs, startWall, del}
+  // Unlike every other generated diagram, a table is a live object rather than a placed image —
+  // its cells are typed into on the canvas after it's made. See js/table-obj.js.
+  tables: [],   // {x,y,w,h, cells[][], colW[], rowH[], headRows, headCols, spans, fontSize, ...}
 };
 function timerObjElapsedMs(t) { return t.running ? t.baseMs + (performance.now() - t.startWall) : t.baseMs; }
 function timerObjRemainingMs(t) { return Math.max(0, t.durationMs - timerObjElapsedMs(t)); }

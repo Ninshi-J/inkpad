@@ -800,6 +800,8 @@ function finishLasso(partial) {
     if (!im.del && isLayerVisible(im.layer) && pointInPoly(im.x + im.w / 2, im.y + im.h / 2, poly)) sel.items.push({ kind: "image", ref: im });
   for (const t of doc.timers)
     if (!t.del && isLayerVisible(t.layer) && pointInPoly(t.x + t.w / 2, t.y + t.h / 2, poly)) sel.items.push({ kind: "timer", ref: t });
+  for (const t of doc.tables)
+    if (!t.del && isLayerVisible(t.layer) && pointInPoly(t.x + t.w / 2, t.y + t.h / 2, poly)) sel.items.push({ kind: "table", ref: t });
 }
 
 function pickObjectAt(x, y) {
@@ -818,6 +820,10 @@ function pickObjectAt(x, y) {
   }
   const tm = timerObjAt(x, y);
   if (tm) return { kind: "timer", ref: tm };
+  // Last: a table is a large filled rectangle, so hit-testing it before the smaller things drawn
+  // on top of it would make anything written over a table unselectable.
+  const tb = tableAt(x, y);
+  if (tb) return { kind: "table", ref: tb };
   return null;
 }
 function deleteSelection() {
