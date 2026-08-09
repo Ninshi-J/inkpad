@@ -26,6 +26,23 @@ function sanitizeForWinAnsi(str) {
   }
   return out;
 }
+/* WinAnsi only constrains what the PDF's own fonts can draw. Math never touches them — KaTeX
+   typesets it to an image — so running the sanitizer over a "$...$" run corrupts the LaTeX for
+   nothing: a character with no WinAnsi equivalent became "?", and KaTeX then faithfully set a
+   question mark. An invisible space pasted into a formula was enough to print "KE_f?+ GPE_f".
+
+   Text runs are re-escaped on the way out because splitMathRuns unescapes "\$" to "$" as it goes,
+   and everything downstream parses the joined line again — without restoring the backslash, a
+   literal dollar in prose would come back as a math delimiter on that second pass.
+
+   A side benefit: the math source now reaching getMathSpan is byte-identical to the editor's, so
+   both share one cache entry and the PDF embeds exactly the image that was on screen. */
+function sanitizeOutsideMath(line) {
+  if (!lineNeedsMathPass(line)) return sanitizeForWinAnsi(line);
+  return splitMathRuns(line)
+    .map(r => (r.math !== undefined ? `$${r.math}$` : sanitizeForWinAnsi(r.text).replace(/\$/g, "\\$")))
+    .join("");
+}
 function dataURLToBytes(dataURL) {
   const bin = atob(dataURL.split(",")[1]);
   const bytes = new Uint8Array(bin.length);
@@ -78,15 +95,15 @@ async function exportPdf(pages) {
      span cache fills in asynchronously — so with a cold cache the wrap would silently fall back to
      the source width and break lines in the wrong places.
 
-     Sanitized exactly as the draw path sanitizes, because that's what the cache key is built from
-     down there: warming from the raw text would populate different keys and leave the wrap looking
-     at an empty cache anyway. */
+     Run through the same sanitizer the draw path uses, because that's what the cache key is built
+     from down there — warming under different keys would leave the wrap looking at an empty cache
+     anyway. (sanitizeOutsideMath leaves the math itself alone, so these keys match the editor's.) */
   async function warmMathSpans() {
     const jobs = [];
     for (const t of doc.texts) {
       if (t.del) continue;
       for (const para of (t.lines || [])) {
-        const s = sanitizeForWinAnsi(para);
+        const s = sanitizeOutsideMath(para);
         if (!lineNeedsMathPass(s)) continue;
         for (const run of splitMathRuns(s)) {
           if (run.math !== undefined) jobs.push(getMathSpanAsync(run.math, mathSizePx(t.size), t.color));
@@ -97,8 +114,8 @@ async function exportPdf(pages) {
   }
   await warmMathSpans();
 
-  // Mirrors wrapParagraph()'s greedy word-wrap but measures with pdf-lib's font metrics instead
-  // of a canvas context, and operates on the already WinAnsi-sanitized text (the substituted
+  // Mirrors wrapParagraph()'s greedy word-wrap but measures with pdf-lib's font metrics instead of
+  // a canvas context, and operates on text already sanitized OUTSIDE its math (the substituted
   // ASCII stand-ins for e.g. "θ" render at a different width than the glyph they replace).
   // Same atom rule as the canvas (js/state.js): a "$...$" run is never split, because each half
   // would lose its matching delimiter and export as raw LaTeX.
@@ -292,7 +309,7 @@ async function exportPdf(pages) {
       }
       const [r, g, b] = hexToRgb01(t.color);
       const font = pdfFontFor(t);
-      const paras = (t.lines.length ? t.lines : [""]).map(sanitizeForWinAnsi);
+      const paras = (t.lines.length ? t.lines : [""]).map(sanitizeOutsideMath);
       const lines = t.w ? paras.flatMap(p => wrapParagraphPdf(font, p, t.w * PT, t.size * PT, t)) : paras;
       const ascent = pdfAscentFor(t);
       for (let k = 0; k < lines.length; k++) {
@@ -333,7 +350,9 @@ async function exportPdf(pages) {
             page.drawImage(pngImg, { x: X(curX), y: Y(imgBottomWorld), width: span.w * PT, height: span.h * PT });
             curX += span.w;
           } else {
-            const raw = `$${run.math}$`;
+            // Only reached when KaTeX failed: this prints the source with a PDF font, so unlike
+            // the rendered path it genuinely does need WinAnsi sanitizing.
+            const raw = sanitizeForWinAnsi(`$${run.math}$`);
             page.drawText(raw, { x: X(curX), y: Y(baseline), size: t.size * PT, font, color: rgb(r, g, b) });
             curX += font.widthOfTextAtSize(raw, t.size);
           }
