@@ -119,6 +119,11 @@ textEdit.addEventListener("keydown", e => {
     // keeps it a useful in-box indent key, and plain spaces (not a literal tab char) render
     // identically here, on the canvas, and in PDF export instead of drifting between them.
     e.preventDefault();
+    // Inside a formula the same key expands a maths abbreviation instead ("fr" -> \frac{}{}).
+    // Only inside one, and only when what's left of the cursor is actually in the table — so
+    // indenting is never taken away, which matters because typed spaces are the only indent
+    // this app has.
+    if (expandMathAbbrev()) { e.stopPropagation(); return; }
     const s = textEdit.selectionStart, en = textEdit.selectionEnd;
     const val = textEdit.value;
     textEdit.value = val.slice(0, s) + "    " + val.slice(en);
@@ -475,6 +480,33 @@ function insertMathSnippet(tpl) {
   ta.dispatchEvent(new Event("input"));
   closeMathHelper();
   ta.focus();
+}
+/* Type-and-Tab: turns the abbreviation immediately left of the cursor into its LaTeX (see
+   MATH_ABBREV in js/math-help.js). Returns false — leaving Tab to indent as it always has — for
+   anything it doesn't handle, which is deliberately most cases:
+
+     * not inside a "$...$" run. Two-letter abbreviations are only safe because a formula has no
+       English prose in it for "in" or "to" to be a word of;
+     * something is selected. Tab on a selection reads as "indent this", not "expand";
+     * the letters aren't in the table, including when there are none (Tab at the start of a line
+       is the ordinary indent case).
+
+   The abbreviation is deleted first and then re-inserted through insertMathSnippet() rather than
+   handled here, so the "$1" cursor placement and the "$...$" wrapping rules stay in one place. */
+function expandMathAbbrev() {
+  if (!editingText) return false;
+  const ta = textEdit;
+  if (ta.selectionStart !== ta.selectionEnd) return false;
+  const pos = ta.selectionStart;
+  if (!isCursorInsideMathRun(ta.value, pos)) return false;
+  const m = /[A-Za-z]+$/.exec(ta.value.slice(0, pos));
+  const tpl = m && MATH_ABBREV[m[0]];
+  if (!tpl) return false;
+  const start = pos - m[0].length;
+  ta.value = ta.value.slice(0, start) + ta.value.slice(pos);
+  ta.selectionStart = ta.selectionEnd = start;
+  insertMathSnippet(tpl);
+  return true;
 }
 function toggleMathHelper(btnEl) {
   const panel = $("mathHelperPanel");

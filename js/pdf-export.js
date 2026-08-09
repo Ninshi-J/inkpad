@@ -136,7 +136,7 @@ async function exportPdf(pages) {
       try { return font.widthOfTextAtSize(a.s, size); } catch (_) { return 0; }
     };
     for (const a of textAtoms(text)) {
-      if (!cur && a.space) continue;
+      if (!cur && a.space && lines.length) continue; // keep a paragraph's own indent — see wrapParagraph
       const w = widthOf(a);
       if (cur && !a.space && curW + w > maxWidth) {
         lines.push(cur.replace(/ +$/, ""));
@@ -467,7 +467,11 @@ async function svgTextEl(t, top) {
     if (!ln) continue;
     const baseline = t.y - top + k * t.size * 1.3 + t.size * ascent;
     if (!lineNeedsMathPass(ln) && !lineHasFormatting(ln)) {
-      out += `<text x="${t.x}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(ln)}</text>\n`;
+      // xml:space="preserve" on every <text>: SVG follows XML's default of collapsing leading and
+      // repeated spaces, which would silently flatten a typed indent that the canvas and the PDF
+      // both keep. The canvas positions each run by measured width, so nothing here relies on the
+      // collapsing behaviour.
+      out += `<text xml:space="preserve" x="${t.x}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(ln)}</text>\n`;
       continue;
     }
     let curX = t.x;
@@ -475,7 +479,7 @@ async function svgTextEl(t, top) {
       if (run.text !== undefined) {
         for (const fr of splitFormatRuns(run.text)) {
           const style = `${fr.bold ? ' font-weight="bold"' : ""}${fr.italic ? ' font-style="italic"' : ""}${fr.underline ? ' text-decoration="underline"' : ""}`;
-          out += `<text x="${curX}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}"${style}>${escapeXml(fr.text)}</text>\n`;
+          out += `<text xml:space="preserve" x="${curX}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}"${style}>${escapeXml(fr.text)}</text>\n`;
           measureCtx.font = `${fr.italic ? "italic " : ""}${fr.bold ? "bold " : ""}${t.size}px ${fontCss(t)}`;
           curX += measureCtx.measureText(fr.text).width;
         }
@@ -489,7 +493,7 @@ async function svgTextEl(t, top) {
         curX += span.w;
       } else {
         const raw = `$${run.math}$`;
-        out += `<text x="${curX}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(raw)}</text>\n`;
+        out += `<text xml:space="preserve" x="${curX}" y="${baseline}" font-family="${family}" font-size="${t.size}" fill="${t.color}">${escapeXml(raw)}</text>\n`;
         curX += measureCtx.measureText(raw).width;
       }
     }

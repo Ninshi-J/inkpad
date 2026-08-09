@@ -377,6 +377,13 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
   font-size: 11px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; unicode-bidi: plaintext;
 }
+/* The type-and-Tab shortcut, pushed to the right edge so a column of them lines up and can be
+   skimmed. flex:none stops it being squeezed by a long command next to it. */
+.mhelp-item .mhelp-abbr {
+  flex: none; margin-left: auto; font-size: 10px; font-family: inherit;
+  padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--accent-soft); color: var(--ink-soft); white-space: nowrap;
+}
 
 /* ---------- dialogs ---------- */
 dialog {

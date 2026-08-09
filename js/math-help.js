@@ -196,6 +196,50 @@ const MATH_HELP = [
 // Cursor-marker stripped: what actually renders as the preview.
 function mathHelpSample(entry) { return entry.s || entry.i.replace("$1", ""); }
 
+/* ---------------- type-and-Tab abbreviations ----------------
+   Typing the abbreviation and pressing Tab INSIDE a "$...$" run expands it (see
+   expandMathAbbrev in js/text-edit.js). Outside a formula Tab still indents, untouched — that
+   restriction is what makes two-letter abbreviations safe: there's no English prose inside a
+   formula for "in" or "to" to be part of.
+
+   Templates use the same "$1 = cursor lands here" convention as MATH_HELP above, and go through
+   the same insertMathSnippet(), so a selection becomes the argument and the "$...$" wrapping
+   rules are shared. Case matters, which is how "de"/"De" give delta and Delta.
+
+   Deliberately not exhaustive — the cheat sheet is for finding the rare thing, this is for the
+   handful typed constantly. Anything not listed just falls through to an indent. */
+const MATH_ABBREV = {
+  // structures
+  fr: "\\frac{$1}{}", sq: "\\sqrt{$1}", cb: "\\sqrt[3]{$1}",
+  ve: "\\vec{$1}", ha: "\\hat{$1}", ba: "\\bar{$1}", do: "\\dot{$1}", dd: "\\ddot{$1}",
+  su: "\\sum_{$1}^{}", pr: "\\prod_{$1}^{}", in: "\\int_{$1}^{}", li: "\\lim_{$1}",
+  pd: "\\partial", tx: "\\text{$1}",
+  // units and degrees — upright, with the thin space that stops "5m" jamming together
+  un: "\\,\\mathrm{$1}", deg: "^{\\circ}",
+  // greek, lower case
+  al: "\\alpha", be: "\\beta", ga: "\\gamma", de: "\\delta", ep: "\\epsilon", ze: "\\zeta",
+  et: "\\eta", th: "\\theta", ka: "\\kappa", la: "\\lambda", mu: "\\mu", nu: "\\nu",
+  xi: "\\xi", pi: "\\pi", rh: "\\rho", si: "\\sigma", ta: "\\tau", ph: "\\phi",
+  ch: "\\chi", ps: "\\psi", om: "\\omega",
+  // greek, capitals
+  Ga: "\\Gamma", De: "\\Delta", Th: "\\Theta", La: "\\Lambda", Xi: "\\Xi", Pi: "\\Pi",
+  Si: "\\Sigma", Ph: "\\Phi", Ps: "\\Psi", Om: "\\Omega",
+  // operators and relations
+  ti: "\\times", cd: "\\cdot", di: "\\div", pm: "\\pm", mp: "\\mp",
+  ap: "\\approx", eq: "\\equiv", ne: "\\neq", le: "\\leq", ge: "\\geq",
+  ll: "\\ll", gg: "\\gg", pp: "\\propto", inf: "\\infty",
+  to: "\\to", ar: "\\rightarrow", im: "\\Rightarrow",
+  // named functions
+  sin: "\\sin", cos: "\\cos", tan: "\\tan", ln: "\\ln", lg: "\\log",
+};
+// Reverse lookup, so the cheat sheet can show "there's a shortcut for this one".
+const MATH_ABBREV_BY_TPL = (() => {
+  const m = {};
+  for (const [k, v] of Object.entries(MATH_ABBREV)) if (!m[v]) m[v] = k;
+  return m;
+})();
+const mathAbbrevFor = tpl => MATH_ABBREV_BY_TPL[tpl] || null;
+
 let mathHelpBuilt = false;
 function ensureKatexPageCss(css) {
   if (document.getElementById("katexPageCss")) return;
@@ -229,7 +273,8 @@ async function openMathHelpDlg() {
           cell.className = "mhelp-item";
           // Searchable haystack: the command itself plus plain-English keywords, so
           // "perpendicular" finds \perp even sharing no letters with it.
-          cell.dataset.find = `${e.i} ${e.s || ""} ${e.k || ""} ${cat}`.toLowerCase();
+          const abbr = mathAbbrevFor(e.i);
+          cell.dataset.find = `${e.i} ${e.s || ""} ${e.k || ""} ${cat} ${abbr || ""}`.toLowerCase();
           const prev = document.createElement("span");
           prev.className = "mhelp-prev";
           try { prev.innerHTML = katex.renderToString(mathHelpSample(e), { throwOnError: false, displayMode: false }); }
@@ -237,6 +282,14 @@ async function openMathHelpDlg() {
           const code = document.createElement("code");
           code.textContent = e.i.replace("$1", "");
           cell.append(prev, code);
+          // Nobody discovers a typing shortcut on their own, so the ones that have one say so.
+          if (abbr) {
+            const tag = document.createElement("kbd");
+            tag.className = "mhelp-abbr";
+            tag.textContent = `${abbr} ⇥`;
+            tag.title = `Inside $…$, type "${abbr}" and press Tab`;
+            cell.append(tag);
+          }
           cell.onclick = () => useMathHelpEntry(e);
           grid.appendChild(cell);
         }

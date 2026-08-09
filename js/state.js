@@ -196,7 +196,11 @@ function wrapParagraph(text, maxWidth, t) {
   const lines = [];
   let cur = "", curW = 0;
   for (const a of textAtoms(text)) {
-    if (!cur && a.space) continue; // a break already consumed the gap; don't indent the new line
+    // A wrap break already consumed the gap, so a CONTINUATION line shouldn't open with it. A
+    // paragraph's own leading spaces are different: with no real indent feature, typed spaces are
+    // how a list or a sub-question gets stepped in, and dropping them flattened the whole box to
+    // the left margin. Only skip the gap once this paragraph has already produced a line.
+    if (!cur && a.space && lines.length) continue;
     const w = atomWidth(a, t);
     if (cur && !a.space && curW + w > maxWidth) {
       lines.push(cur.replace(/ +$/, ""));
@@ -461,11 +465,21 @@ function pageDims(p) {
   const landscape = pageStyle(p).landscape;
   return { w: PAPERS[S.paper][landscape ? 1 : 0], h: PAPERS[S.paper][landscape ? 0 : 1], landscape };
 }
-// Every page reserves a slot as tall as portrait orientation (the taller of the two, for any
-// standard paper), regardless of that page's own orientation — so a per-page landscape/portrait
-// override never overlaps neighboring pages, and page-index arithmetic (curPage, scroll, PDF
-// export, insert/delete-page shifting) can keep treating `stride()` as one fixed constant.
-const stride = () => PAPERS[S.paper][1] + PAGE_GAP;
+/* Every page reserves the same slot height, so page-index arithmetic (curPage, scroll, PDF
+   export, insert/delete-page shifting) stays a single division by a constant. That slot has to
+   fit the tallest page the document can contain — but only the tallest one it ACTUALLY contains.
+   Reserving portrait height unconditionally left a portrait-sized hole under every page of an
+   all-landscape document: widescreen 16:9 draws 720 tall, so each page sat in a 1308 slot with
+   588px of blank beneath it. Portrait is the taller orientation for every paper here, so any
+   portrait page anywhere (global or a per-page override) still takes the tall slot and nothing
+   can overlap. */
+function documentIsAllLandscape() {
+  if (!S.landscape) return false;
+  const o = S.pageStyles;
+  if (o) for (const k in o) if (o[k] && o[k].landscape === false) return false;
+  return true;
+}
+const stride = () => PAPERS[S.paper][documentIsAllLandscape() ? 0 : 1] + PAGE_GAP;
 // While the page fits within the viewport, it stays centered (ignoring scrollX) exactly like
 // before — horizontal panning only kicks in once zoomed in far enough that it doesn't fit, the
 // same way a native scroll container only shows a scrollbar when content overflows.
