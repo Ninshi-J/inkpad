@@ -25,10 +25,79 @@ const TICK_FMTS = {
 const tickFmtFrom = selId => TICK_FMTS[$(selId) ? $(selId).value : "auto"] || TICK_FMT_AUTO;
 // Rough rendered width of an axis label. The SVG is built as a string with no measuring context
 // available, and 0.55em per character averages out well for the bold italic serif used here.
-const estAxisLabelW = (s, fontSize) => s.length * fontSize * 0.55;
+// How wide an axis title draws, which decides how much margin the plot gives up to it. Character
+// count is right for prose but wildly over-reserves for a formula — "$\frac{1}{2}mv^2$ (J)" counts
+// 22 characters and draws about eight wide — so a rendered formula is measured instead.
+const estAxisLabelW = (s, fontSize) =>
+  lineHasMath(s) ? shapeLabelMetrics(s, fontSize, AXIS_LABEL_CSS).w : s.length * fontSize * 0.55;
+
+/* ---------------- labels that can contain "$...$" ----------------
+   A label goes out as a plain <text> unless it holds maths, in which case the KaTeX output is
+   nested in a <foreignObject> so it stays real vector text like the rest of the diagram rather
+   than a pasted-in bitmap.
+
+   Two things make this work. The faces each label needs are collected here and emitted once per
+   SVG (see shapeMathStyleTag) — a placed shape is a self-contained data: URL that can load nothing
+   external, so the fonts have to travel with it, and repeating them per label would be absurd.
+   And the same helper builds the preview and the placed shape, so what you design is what you get.
+
+   A formula's first render is asynchronous. Until it lands the label falls back to its raw source,
+   and shapeMathOnReady redraws the preview when it's ready. */
+let shapeMathFaces = new Set(); // reset per build; graphPlaneSvg builds its own string, so this can't be a return value
+// An axis title's typography, in the two forms the two rendering routes need: SVG attributes for a
+// plain <text>, and the equivalent CSS so the prose around a formula matches it inside a
+// <foreignObject>. Kept adjacent so they can't drift apart.
+const AXIS_LABEL_ATTRS = 'font-family="serif" font-style="italic" font-weight="bold"';
+const AXIS_LABEL_CSS = "font-family:serif; font-style:italic; font-weight:bold;";
+// The same pair for a shape's own labels (a triangle's sides and angles, a solid's edges).
+const SHAPE_LABEL_ATTRS = 'font-family="Arial, sans-serif" font-weight="bold" pointer-events="none"';
+const SHAPE_LABEL_CSS = "font-family:Arial,sans-serif; font-weight:bold;";
+
+function shapeLabelSvg(text, opts) {
+  const { x, y, fontSize, anchor = "middle", fill = "#000", attrs = "", transform = "", cssFont = "" } = opts;
+  const tf = transform ? ` transform="${transform}"` : "";
+  const plain = () =>
+    `  <text x="${x}" y="${y}" font-size="${fontSize}" text-anchor="${anchor}" fill="${fill}"${tf} ${attrs}>${escapeXml(text)}</text>\n`;
+  if (!lineHasMath(text)) return plain();
+  const m = getShapeMath(text, fontSize, cssFont);
+  if (!m || m.failed || !m.w) return plain(); // still rendering, or KaTeX is unreachable
+  for (const k of m.faceKeys) shapeMathFaces.add(k);
+  // <text> is placed by its baseline and pulled sideways by text-anchor; a <foreignObject> is
+  // placed by its top-left corner. baselineOffset is the gap between the two.
+  const left = anchor === "start" ? x : anchor === "end" ? x - m.w : x - m.w / 2;
+  return `  <foreignObject x="${left}" y="${y + m.baselineOffset}" width="${Math.ceil(m.w) + 2}" height="${Math.ceil(m.h) + 2}"${tf}>\n` +
+    `    <div xmlns="http://www.w3.org/1999/xhtml"><span style="${m.style} color:${fill};">${m.html}</span></div>\n` +
+    `  </foreignObject>\n`;
+}
+/* How wide and tall a label actually draws. A character-count estimate is fine for plain text but
+   badly wrong for maths — "$\frac{1}{2}mv^2$" is 17 source characters and draws about six wide —
+   and these numbers decide the preview's crop box, its click targets, and the centring of the text
+   object each label becomes when placed. Uses the real measurement whenever the formula has
+   finished rendering, and falls back to the old estimate until it has. */
+function shapeLabelMetrics(text, fontSize, cssFont = "") {
+  const str = String(text);
+  if (lineHasMath(str)) {
+    const m = getShapeMath(str, fontSize, cssFont);
+    if (m && !m.failed && m.w) return { w: m.w, h: m.h };
+  }
+  return { w: Math.max(28, str.length * fontSize * 0.62), h: fontSize * 1.35 };
+}
+
+/* Puts the fonts this build's labels need into the SVG, once, right after its opening tag. Applied
+   as a post-step rather than inside each of a dozen per-shape assembly points, which would be a
+   dozen chances to forget one. A shape with no maths in it gains nothing at all.
+   Idempotent: re-running replaces its own previous block, which is what lets the preview inject
+   again after its labels have registered fonts of their own. */
+function injectShapeMathCss(svg) {
+  const css = katexCssForFaces([...shapeMathFaces]);
+  const stripped = svg.replace(/<style data-katex="1">[\s\S]*?<\/style>\n?/, "");
+  if (!css) return stripped;
+  return stripped.replace(/^(<svg[^>]*>\n?)/, `$1<style data-katex="1">${css}</style>\n`);
+}
 
 function buildMathShapeSVG() {
   const type = $("shapeTypeSelect").value;
+  shapeMathFaces = new Set();
   let svgString = "";
   const labelSpecs = []; // {x, y, text, fontSize, field?} in the SVG-local coordinate space
   let srcBox = null; // {x, y, w, h} — the SVG-local crop box labelSpecs coordinates are relative to
@@ -163,14 +232,18 @@ function buildMathShapeSVG() {
     if (labelAxes && wideAxisLabels) {
       const yLabelX = yLabelStripW / 2 + 4;
       const yLabelY = (padTop + (size - padBottom)) / 2;
-      innerSvg += `  <text x="${yLabelX}" y="${yLabelY}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="middle" transform="rotate(-90 ${yLabelX} ${yLabelY})">${escapeXml(yAxisLabel)}</text>\n`;
+      innerSvg += shapeLabelSvg(yAxisLabel, { x: yLabelX, y: yLabelY, fontSize: axisLabelSize,
+        transform: `rotate(-90 ${yLabelX} ${yLabelY})`, attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
       const xLabelX = (padLeft + (size - padRight)) / 2;
       const xLabelY = (size - padBottom) + xTickOffset + axisLabelSize - 2;
-      innerSvg += `  <text x="${xLabelX}" y="${xLabelY}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="middle">${escapeXml(xAxisLabel)}</text>\n`;
+      innerSvg += shapeLabelSvg(xAxisLabel, { x: xLabelX, y: xLabelY, fontSize: axisLabelSize,
+        attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
     } else if (labelAxes) {
       // "y" sits on the y-axis, above its arrowhead; "x" sits outside the plot, past the x-axis arrowhead.
-      innerSvg += `  <text x="${size - padRight + 10}" y="${originY + 5}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="start">${escapeXml(xAxisLabel)}</text>\n`;
-      innerSvg += `  <text x="${originX}" y="${padTop - 12}" font-family="serif" font-style="italic" font-weight="bold" font-size="${axisLabelSize}" text-anchor="middle">${escapeXml(yAxisLabel)}</text>\n`;
+      innerSvg += shapeLabelSvg(xAxisLabel, { x: size - padRight + 10, y: originY + 5, fontSize: axisLabelSize,
+        anchor: "start", attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
+      innerSvg += shapeLabelSvg(yAxisLabel, { x: originX, y: padTop - 12, fontSize: axisLabelSize,
+        attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
     }
 
     // Clips plotted curves to the grid box — without it, steep functions (e.g. y=6x) compute
@@ -1155,7 +1228,7 @@ function buildMathShapeSVG() {
     svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${boxX} ${boxY} ${boxW} ${boxH}" width="${boxW}" height="${boxH}">\n<rect width="100%" height="100%" fill="none"/>\n${innerSvg}</svg>`;
   }
 
-  return { svgString, labelSpecs, srcBox, fnErrors, hotspots, handles };
+  return { svgString: injectShapeMathCss(svgString), labelSpecs, srcBox, fnErrors, hotspots, handles };
 }
 
 function generateAndInsertMathShape() {
@@ -1208,8 +1281,8 @@ function removeEqRow(btn) {
 function previewViewBoxFor(srcBox, labelSpecs, extras = []) {
   let minX = srcBox.x, minY = srcBox.y, maxX = srcBox.x + srcBox.w, maxY = srcBox.y + srcBox.h;
   for (const s of labelSpecs) {
-    const halfW = Math.max(20, String(s.text).length * s.fontSize * 0.32);
-    const halfH = s.fontSize * 0.9;
+    const m = shapeLabelMetrics(s.text, s.fontSize, SHAPE_LABEL_CSS);
+    const halfW = Math.max(20, m.w / 2), halfH = Math.max(s.fontSize * 0.9, m.h * 0.7);
     minX = Math.min(minX, s.x - halfW); maxX = Math.max(maxX, s.x + halfW);
     minY = Math.min(minY, s.y - halfH); maxY = Math.max(maxY, s.y + halfH);
   }
@@ -1242,7 +1315,8 @@ function shapeHotspotMarkup(labelSpecs, hotspots, scale) {
   }
   labelSpecs.forEach((l, i) => {
     if (!l.field || l.field === shapeEditingField) return;
-    const w = Math.max(28, String(l.text).length * l.fontSize * 0.68), hh = l.fontSize * 1.5;
+    const m = shapeLabelMetrics(l.text, l.fontSize, SHAPE_LABEL_CSS);
+    const w = Math.max(28, m.w + 8), hh = Math.max(l.fontSize * 1.5, m.h + 6);
     out += `  <rect class="shape-hot" data-field="${l.field}" data-label="${i}" x="${l.x - w / 2}" y="${l.y - hh * 0.72}" width="${w}" height="${hh}" rx="${s(4)}"><title>Click to edit this label</title></rect>\n`;
   });
   return out + `</g>\n`;
@@ -1279,9 +1353,13 @@ function renderShapePreview() {
   // pointer-events="none" so a click on a label falls through to the hotspot rect beneath it —
   // these preview labels sit ON TOP of their own click targets so a hover tint reads as a
   // highlight behind the text rather than painting over it.
-  const labelsMarkup = labelSpecs.map(s =>
-    `  <text x="${s.x}" y="${s.y}" font-family="Arial, sans-serif" font-size="${s.fontSize}" font-weight="bold" text-anchor="middle" pointer-events="none">${escapeXml(s.text)}</text>\n`
-  ).join("");
+  // Routed through the same helper the shape's own labels use, so a "$...$" side length previews as
+  // the maths it will become. It really does become that: placement turns each of these into a
+  // normal text object (finalizePendingPlacement), and those have supported inline maths all along
+  // — so before this the preview was the only place showing raw LaTeX.
+  const labelsMarkup = labelSpecs.map(s => shapeLabelSvg(s.text, {
+    x: s.x, y: s.y, fontSize: s.fontSize, attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS,
+  })).join("");
   let box = srcBox;
   if (srcBox && (labelSpecs.length || handles.length || hotspots.length)) {
     box = previewViewBoxFor(srcBox, labelSpecs, handles.concat(hotspots));
@@ -1299,7 +1377,9 @@ function renderShapePreview() {
   // a grip overlapping a label is still the thing you grab.
   preview = preview.replace("</svg>",
     shapeHotspotMarkup(labelSpecs, hotspots, scale) + labelsMarkup + shapeGripMarkup(handles, scale) + "</svg>");
-  $("shapePreview").innerHTML = preview;
+  // Again, now that labelsMarkup has registered any fonts of its own — buildMathShapeSVG only knew
+  // about the shape's built-in labels.
+  $("shapePreview").innerHTML = injectShapeMathCss(preview);
   const hint = $("shapeStageHint");
   if (hint) {
     const bits = [];
@@ -1445,6 +1525,10 @@ function clampShapeNumberField(el, both) {
   const next = Math.min(max, both ? Math.max(min, v) : v);
   if (next !== v) el.value = next;
 }
+// A formula's first render is async (KaTeX and its fonts come off a CDN), so the label falls back
+// to raw source for that one frame and this redraws it once the real thing is available.
+shapeMathOnReady = () => { if ($("shapeImporterDlg").open) renderShapePreview(); };
+
 $("shapeImporterDlg").addEventListener("input", e => {
   clampShapeNumberField(e.target, false);
   renderShapePreview();

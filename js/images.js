@@ -79,10 +79,12 @@ function finalizePendingPlacement(x, y) {
       const size = Math.max(10, Math.round(spec.fontSize * scale));
       // labelSpecs.x is where the label should be visually CENTERED (it's built assuming
       // text-anchor="middle", same as the live preview's SVG overlay), but doc.texts renders
-      // left-anchored like any other text object — shift left by half the estimated rendered
-      // width so the centered appearance survives the switch from SVG text to canvas fillText.
+      // left-anchored like any other text object — shift left by half the rendered width so the
+      // centered appearance survives the switch from SVG text to canvas fillText. A character
+      // count is hopeless for a formula, so ask for its real measured width when it has one.
+      const half = shapeLabelMetrics(text, size, SHAPE_LABEL_CSS).w / 2;
       const t = {
-        x: x + (spec.x - p.srcBox.x) * scale - text.length * size * 0.28, y: y + (spec.y - p.srcBox.y) * scale,
+        x: x + (spec.x - p.srcBox.x) * scale - half, y: y + (spec.y - p.srcBox.y) * scale,
         color: "#000000", size,
         lines: [text], del: false, layer: im.layer,
       };
