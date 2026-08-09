@@ -17,6 +17,7 @@ const ICONS = {
   // detail sits right where the axes cross. This is the Quadrant-1 tile's icon instead: axes meet
   // at a corner, leaving the diagonal line room to read clearly as "a graph" even shrunk down.
   graphTools: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 21h18M3 21V3"/><path d="M4 18c3-5 6-9 9-12" stroke-width="1.4"/></svg>',
+  probTools: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg>',
   // A plain clock face (no top crown) vs. the stopwatch's crown+stem below — the two need to read
   // as different objects at a glance since they're now separate tools/objects, not one with a mode toggle.
   timerObj: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8.5" r="6"/><path d="M8 5v3.5l2.7 1.6"/></svg>',
@@ -122,6 +123,7 @@ function buildToolButtons(host) {
     btn(ICONS.shape2d, () => openShapeDialog("2d"), "2D Shapes — triangles, circles, polygons, and more"),
     btn(ICONS.shape3d, () => openShapeDialog("3d"), "3D Shapes — cubes, prisms, cylinders, cones, pyramids"),
     btn(ICONS.graphTools, () => openShapeDialog("tools"), "Graphing Tools — coordinate planes and number lines"),
+    btn(ICONS.probTools, () => openShapeDialog("data"), "Probability & Data — spinners, Venn diagrams, tables, tree diagrams"),
     btn("🏷️ Stamps", openStampDlg, "Reusable stamps — save a selection once, insert it again on any page"),
   );
   host.appendChild(gImporter);

@@ -1305,6 +1305,12 @@ function buildMathShapeSVG() {
     svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${boxX} ${boxY} ${boxW} ${boxH}" width="${boxW}" height="${boxH}">\n<rect width="100%" height="100%" fill="none"/>\n${innerSvg}</svg>`;
   }
 
+  // Probability and data diagrams (js/shape-prob.js). srcBox stays null on purpose — that's what
+  // makes them re-editable, so reopening one can change five spinner sections to six.
+  else if (PROB_SHAPE_BUILDERS[type]) {
+    svgString = PROB_SHAPE_BUILDERS[type]();
+  }
+
   // Returned unmarked — only the placement path stamps it (see stampShapeMathFaces).
   return { svgString, labelSpecs, srcBox, fnErrors, hotspots, handles };
 }

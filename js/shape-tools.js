@@ -23,6 +23,17 @@ function toggleShapeFormFields() {
   $("solid3dPerspectiveField").style.display = ["cylinder", "cone"].includes(type) ? "block" : "none";
   $("numberlineFields").style.display = type === "numberline" ? "block" : "none";
   $("fractionFields").style.display = type === "fraction" ? "block" : "none";
+  $("spinnerFields").style.display = type === "spinner" ? "block" : "none";
+  $("vennFields").style.display = type === "venn" ? "block" : "none";
+  $("tableFields").style.display = type === "table" ? "block" : "none";
+  $("treeFields").style.display = type === "tree" ? "block" : "none";
+  // A third circle brings three more regions with it — hidden rather than disabled so the
+  // two-set form stays as short as it was.
+  if (type === "venn") {
+    const three = $("vnSets").value === "3";
+    document.querySelectorAll("#vennFields .venn-3only").forEach(el => { el.style.display = three ? "" : "none"; });
+    $("vnShadeField").style.display = three ? "none" : "";
+  }
 }
 
 const SHAPE_CATEGORY = {
@@ -30,6 +41,13 @@ const SHAPE_CATEGORY = {
   polygon: "2d", fraction: "2d",
   cube: "3d", prism: "3d", cylinder: "3d", cone: "3d", pyramid: "3d",
   plane: "tools", planeMath: "tools", planeQ1: "tools", numberline: "tools",
+  spinner: "data", venn: "data", table: "data", tree: "data",
+};
+// Which generator builds each probability/data diagram (js/shape-prob.js). Keyed rather than
+// branched so buildMathShapeSVG's if-chain doesn't grow another four arms.
+const PROB_SHAPE_BUILDERS = {
+  spinner: () => buildSpinnerSvg(), venn: () => buildVennSvg(),
+  table: () => buildTableSvg(), tree: () => buildTreeSvg(),
 };
 function selectShapeCategory(category) {
   document.querySelectorAll("#shapeTypeTiles .shape-tile").forEach(t => {
@@ -45,7 +63,7 @@ function selectShapeType(type) {
   toggleShapeFormFields();
   renderShapePreview();
 }
-const SHAPE_CATEGORY_DEFAULT = { "2d": "triangle", "3d": "cube", tools: "plane" };
+const SHAPE_CATEGORY_DEFAULT = { "2d": "triangle", "3d": "cube", tools: "plane", data: "spinner" };
 // Opens the shape-importer dialog straight to one of its three category tabs — used by the
 // toolbar's three shape buttons (2D/3D/Graphing Tools) instead of one generic "Diagrams" button.
 // Keeps whatever type was last selected if it already belongs to that category (so re-opening the
@@ -68,7 +86,13 @@ function openShapeDialog(category) {
    and once placed there's no reliable way to tell which of those the user has since repositioned
    or hand-edited — regenerating could silently discard or duplicate that work. A plain graph image
    has no such ambiguity, so re-editing it is just "swap the image, same spot, same size." */
-const SHAPE_GEN_FIELD_CONTAINERS = { plane: "planeFields", planeMath: "planeMathFields", planeQ1: "planeQ1Fields" };
+const SHAPE_GEN_FIELD_CONTAINERS = {
+  plane: "planeFields", planeMath: "planeMathFields", planeQ1: "planeQ1Fields",
+  // The probability diagrams qualify for the same reason the graphs do: they place as one
+  // self-contained image with no separate auto-generated text objects, so regenerating one can't
+  // orphan or duplicate anything the user has since moved.
+  spinner: "spinnerFields", venn: "vennFields", table: "tableFields", tree: "treeFields",
+};
 const SHAPE_GEN_FN_LIST_IDS = { planeMath: "pmFnList", planeQ1: "q1FnList" };
 let editingShapeTarget = null; // the doc.images ref currently being re-edited, or null for a fresh insert
 // Snapshots every field inside the current graph type's own fields container (plus its dynamic
@@ -107,6 +131,9 @@ function applyShapeGenParams(gen) {
   // the checkbox that gates them) since setting .checked directly above doesn't fire it.
   if (gen.type === "planeMath") toggleAxisLabelInputs("pmLabelAxes", "pmAxisXLabel", "pmAxisYLabel");
   if (gen.type === "planeQ1") toggleAxisLabelInputs("q1LabelAxes", "q1AxisXLabel", "q1AxisYLabel");
+  // selectShapeType() above ran before vnSets was restored, so the third circle's fields were
+  // shown or hidden against the wrong value — settle them now the form is actually filled in.
+  if (gen.type === "venn") toggleShapeFormFields();
   renderShapePreview();
 }
 // Opens the importer pre-filled with the graph's own generating values (stored on the image at

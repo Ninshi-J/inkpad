@@ -1,0 +1,341 @@
+"use strict";
+/* ============================================================================
+   Probability & data diagrams — spinner, Venn, table, tree.
+
+   Kept out of shape-svg.js only for size; these are ordinary shape generators and are dispatched
+   from buildMathShapeSVG() like every other type. Each returns a complete <svg> string.
+
+   All four differ from a triangle in one way that matters: they return NO srcBox, which is what
+   marks a shape as re-editable (see the note above editGeneratedShape in shape-tools.js). A
+   spinner's numbers or a tree's branch labels are positioned by the generator, so if they were
+   spun out into free-floating text objects at placement they'd stay put when you reopened the
+   dialog and changed five sections to six. Keeping them inside the SVG means "✎ Edit" can just
+   regenerate the whole picture. Labels still go through shapeLabelSvg(), so "$...$" works in any
+   of them.
+
+   Everything is laid out in a 0..W by 0..H user-space box; the placed size is decided later from
+   the shape defaults, so these only have to get proportions right. */
+
+// Section fills, in the order a spinner or Venn uses them. Chosen to stay distinguishable in
+// greyscale print as well as on screen, since these get photocopied.
+const PROB_FILLS = ["#E2483F", "#F2C438", "#3B93D6", "#5FA860", "#E88C28", "#8E6BBF", "#DE7CA8", "#7FBEC4"];
+const PROB_INK = "#1F2933";
+const PROB_HEADER_FILL = "#DCE9F5";
+
+// "a, b , c" -> ["a","b","c"], dropping blanks. Commas because that's what someone types.
+function probList(raw, fallback) {
+  const out = String(raw == null ? "" : raw).split(",").map(s => s.trim()).filter(s => s !== "");
+  return out.length ? out : (fallback || []);
+}
+const probNum = (raw, dflt) => { const v = parseFloat(raw); return Number.isFinite(v) ? v : dflt; };
+// A rounded value that still reads as an integer when it is one — SVG coordinates with long
+// decimal tails bloat the string for no visual gain.
+const pn = v => Math.round(v * 100) / 100;
+
+/* ---------------- spinner ----------------
+   Sections are equal unless weights are given, which is the whole point of the "is this spinner
+   fair?" question — an unequal spinner has to be drawable. */
+function buildSpinnerSvg() {
+  const labels = probList($("spLabels").value, ["1", "2", "3", "4"]).slice(0, 16);
+  const n = labels.length;
+  const weightsIn = probList($("spWeights").value, []).map(s => Math.max(0.01, probNum(s, 1)));
+  const weights = Array.from({ length: n }, (_, i) => weightsIn.length ? (weightsIn[i % weightsIn.length]) : 1);
+  const total = weights.reduce((a, b) => a + b, 0);
+  const fontSize = Math.max(8, probNum($("spFontSize").value, 26));
+  const coloured = $("spColour").checked;
+  const pointer = $("spPointer").checked;
+
+  const S = 500, cx = S / 2, cy = S / 2, r = 195;
+  const pt = a => `${pn(cx + r * Math.cos(a))} ${pn(cy + r * Math.sin(a))}`;
+  let inner = "";
+  let a0 = -Math.PI / 2; // first boundary at 12 o'clock, like a drawn-by-hand spinner
+  const mids = [];
+  for (let i = 0; i < n; i++) {
+    const sweep = (weights[i] / total) * Math.PI * 2;
+    const a1 = a0 + sweep;
+    const fill = coloured ? PROB_FILLS[i % PROB_FILLS.length] : "#FFFFFF";
+    if (n === 1) {
+      inner += `  <circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${PROB_INK}" stroke-width="3"/>\n`;
+    } else {
+      const large = sweep > Math.PI ? 1 : 0;
+      inner += `  <path d="M ${cx} ${cy} L ${pt(a0)} A ${r} ${r} 0 ${large} 1 ${pt(a1)} Z" ` +
+        `fill="${fill}" stroke="${PROB_INK}" stroke-width="3" stroke-linejoin="round"/>\n`;
+    }
+    mids.push((a0 + a1) / 2);
+    a0 = a1;
+  }
+  // Outline last so the sector strokes can't sit on top of it and thin it unevenly.
+  inner += `  <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${PROB_INK}" stroke-width="3.5"/>\n`;
+  labels.forEach((text, i) => {
+    const lr = r * 0.66;
+    inner += shapeLabelSvg(text, {
+      x: cx + lr * Math.cos(mids[i]), y: cy + lr * Math.sin(mids[i]) + fontSize * 0.35,
+      fontSize, fill: PROB_INK, attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS,
+    });
+  });
+  if (pointer) {
+    // A stubby arrow rather than a full needle, so it can't be mistaken for a sector boundary.
+    inner += `  <path d="M ${cx} ${cy - 8} L ${cx + r * 0.72} ${cy - 3} L ${cx + r * 0.72} ${cy - 13} ` +
+      `L ${cx + r * 0.86} ${cy} L ${cx + r * 0.72} ${cy + 13} L ${cx + r * 0.72} ${cy + 3} ` +
+      `L ${cx} ${cy + 8} Z" fill="${PROB_INK}"/>\n`;
+    inner += `  <circle cx="${cx}" cy="${cy}" r="11" fill="#FFFFFF" stroke="${PROB_INK}" stroke-width="3"/>\n`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${S} ${S}" width="${S}" height="${S}">\n` +
+    `<rect width="100%" height="100%" fill="none"/>\n${inner}</svg>`;
+}
+
+/* ---------------- Venn ----------------
+   The rectangle is the universal set, so the "outside" value has somewhere to live — that region
+   is the one students forget, and a Venn drawn as two bare circles gives it nowhere to go. */
+function buildVennSvg() {
+  const three = $("vnSets").value === "3";
+  const fontSize = Math.max(8, probNum($("vnFontSize").value, 24));
+  const setFont = fontSize * 1.05;
+  const labelA = $("vnLabelA").value.trim() || "A";
+  const labelB = $("vnLabelB").value.trim() || "B";
+  const labelC = $("vnLabelC").value.trim() || "C";
+  const uni = $("vnUniversal").value.trim();
+  const shade = $("vnShade").value; // none | a | b | both | either
+
+  // Three circles need the extra depth for C's name, which sits below its circle rather than
+  // beside it — at 470 it collided with the universal set's own border.
+  const W = 520, H = three ? 505 : 380;
+  const bx = 20, by = 20, bw = W - 40, bh = H - 40;
+  let inner = `  <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="#FFFFFF" ` +
+    `stroke="${PROB_INK}" stroke-width="2.5"/>\n`;
+
+  const cy0 = three ? by + bh * 0.42 : by + bh * 0.52;
+  const r = three ? 108 : 118;
+  const dx = three ? 62 : 68;
+  const circles = three
+    ? [{ x: W / 2 - dx, y: cy0, t: labelA }, { x: W / 2 + dx, y: cy0, t: labelB },
+       { x: W / 2, y: cy0 + dx * 1.7, t: labelC }]
+    : [{ x: W / 2 - dx, y: cy0, t: labelA }, { x: W / 2 + dx, y: cy0, t: labelB }];
+
+  // Shading is drawn under the outlines, clipped to the circles, so an intersection reads as one
+  // solid region rather than two overlapping translucent discs.
+  if (shade !== "none" && !three) {
+    const [A, B] = circles;
+    inner += `  <defs>\n` +
+      `    <clipPath id="vnA"><circle cx="${A.x}" cy="${A.y}" r="${r}"/></clipPath>\n` +
+      `    <clipPath id="vnB"><circle cx="${B.x}" cy="${B.y}" r="${r}"/></clipPath>\n` +
+      `  </defs>\n`;
+    const tint = "#BBD8EE";
+    if (shade === "both") {
+      inner += `  <g clip-path="url(#vnA)"><circle cx="${B.x}" cy="${B.y}" r="${r}" fill="${tint}"/></g>\n`;
+    } else if (shade === "either") {
+      inner += `  <circle cx="${A.x}" cy="${A.y}" r="${r}" fill="${tint}"/>\n` +
+        `  <circle cx="${B.x}" cy="${B.y}" r="${r}" fill="${tint}"/>\n`;
+    } else {
+      const only = shade === "a" ? A : B, other = shade === "a" ? B : A;
+      inner += `  <defs><mask id="vnOnly">` +
+        `<circle cx="${only.x}" cy="${only.y}" r="${r}" fill="#fff"/>` +
+        `<circle cx="${other.x}" cy="${other.y}" r="${r}" fill="#000"/></mask></defs>\n` +
+        `  <circle cx="${only.x}" cy="${only.y}" r="${r}" fill="${tint}" mask="url(#vnOnly)"/>\n`;
+    }
+  }
+  for (const c of circles) {
+    inner += `  <circle cx="${c.x}" cy="${c.y}" r="${r}" fill="none" stroke="#2D4E86" stroke-width="2.8"/>\n`;
+  }
+  // Set names outside their circle where there's room, so they never collide with a region value.
+  const nameAt = (c, i) => {
+    if (three && i === 2) return { x: c.x, y: c.y + r + setFont * 1.1 };
+    return { x: c.x + (i === 0 ? -r * 0.72 : r * 0.72), y: c.y - r - setFont * 0.35 };
+  };
+  circles.forEach((c, i) => {
+    const p = nameAt(c, i);
+    inner += shapeLabelSvg(c.t, { x: p.x, y: p.y, fontSize: setFont, fill: "#2D4E86",
+      attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
+  });
+  if (uni) {
+    inner += shapeLabelSvg(uni, { x: bx + 16, y: by + setFont + 4, fontSize: setFont, anchor: "start",
+      fill: PROB_INK, attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
+  }
+  // Region values, at the visual centre of each region rather than the centroid of the circles —
+  // an intersection's centre is between the two, an "only" region's is pushed away from it.
+  const put = (text, x, y) => {
+    if (!text) return;
+    inner += shapeLabelSvg(text, { x, y: y + fontSize * 0.35, fontSize, fill: PROB_INK,
+      attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
+  };
+  const v = id => ($(id) ? $(id).value.trim() : "");
+  if (!three) {
+    const [A, B] = circles;
+    put(v("vnOnlyA"), A.x - r * 0.42, A.y);
+    put(v("vnOnlyB"), B.x + r * 0.42, B.y);
+    put(v("vnAB"), W / 2, A.y);
+  } else {
+    const [A, B, C] = circles;
+    const mid = (p, q) => ({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 });
+    const centre = { x: (A.x + B.x + C.x) / 3, y: (A.y + B.y + C.y) / 3 };
+    put(v("vnOnlyA"), A.x - r * 0.5, A.y - r * 0.22);
+    put(v("vnOnlyB"), B.x + r * 0.5, B.y - r * 0.22);
+    put(v("vnOnlyC"), C.x, C.y + r * 0.55);
+    put(v("vnAB"), mid(A, B).x, mid(A, B).y - r * 0.36);
+    put(v("vnAC"), mid(A, C).x - r * 0.3, mid(A, C).y + r * 0.14);
+    put(v("vnBC"), mid(B, C).x + r * 0.3, mid(B, C).y + r * 0.14);
+    put(v("vnABC"), centre.x, centre.y);
+  }
+  put(v("vnOutside"), bx + bw - 34, by + bh - 24);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">\n` +
+    `<rect width="100%" height="100%" fill="none"/>\n${inner}</svg>`;
+}
+
+/* ---------------- table ----------------
+   A two-way probability table is just a table with a Total row and column, so this is the general
+   tool and the checkbox is the specialisation. Cells are usually left EMPTY on purpose — the point
+   of putting one on a worksheet is that a student writes in it. */
+function buildTableSvg() {
+  const cols = probList($("tbCols").value, ["", ""]);
+  const rows = probList($("tbRows").value, ["", ""]);
+  const totals = $("tbTotals").checked;
+  const shaded = $("tbShade").checked;
+  const corner = $("tbCorner").value.trim();
+  const fontSize = Math.max(8, probNum($("tbFontSize").value, 22));
+  // One line per row, cells separated by commas — the shape of the thing you're describing.
+  const body = String($("tbBody").value || "").split("\n").map(line => probList(line, []));
+
+  const colHead = totals ? cols.concat("Total") : cols.slice();
+  const rowHead = totals ? rows.concat("Total") : rows.slice();
+  const nc = colHead.length, nr = rowHead.length;
+
+  // Column widths follow the longest thing in each column so a "No Mac" header isn't clipped.
+  const textW = s => shapeLabelMetrics(String(s || ""), fontSize, SHAPE_LABEL_CSS).w;
+  const pad = fontSize * 0.9;
+  const cellOf = (r, c) => (body[r] && body[r][c] != null) ? body[r][c] : "";
+  const headW = Math.max(90, ...rowHead.map(textW), textW(corner)) + pad * 2;
+  const colW = colHead.map((h, c) =>
+    Math.max(90, textW(h), ...rowHead.map((_, r) => textW(cellOf(r, c)))) + pad * 2);
+  const rowH = Math.round(fontSize * 2.2);
+
+  const W = Math.round(headW + colW.reduce((a, b) => a + b, 0)) + 4;
+  const H = rowH * (nr + 1) + 4;
+  const x0 = 2, y0 = 2;
+  const colX = [x0 + headW];
+  for (let c = 0; c < nc; c++) colX.push(colX[c] + colW[c]);
+
+  let inner = "";
+  const cellRect = (x, y, w, h, fill) =>
+    `  <rect x="${pn(x)}" y="${pn(y)}" width="${pn(w)}" height="${pn(h)}" fill="${fill}" ` +
+    `stroke="#2D4E86" stroke-width="1.8"/>\n`;
+  const head = shaded ? PROB_HEADER_FILL : "#FFFFFF";
+  // Header row and column first, so the body cells' strokes overlay them consistently.
+  inner += cellRect(x0, y0, headW, rowH, head);
+  for (let c = 0; c < nc; c++) inner += cellRect(colX[c], y0, colW[c], rowH, head);
+  for (let r = 0; r < nr; r++) {
+    inner += cellRect(x0, y0 + rowH * (r + 1), headW, rowH, head);
+    for (let c = 0; c < nc; c++) inner += cellRect(colX[c], y0 + rowH * (r + 1), colW[c], rowH, "#FFFFFF");
+  }
+  const put = (text, cxp, cyp, bold, fill) => {
+    if (!text) return;
+    inner += shapeLabelSvg(text, { x: cxp, y: cyp + fontSize * 0.35, fontSize, fill: fill || PROB_INK,
+      attrs: bold ? SHAPE_LABEL_ATTRS : SHAPE_LABEL_ATTRS.replace('font-weight="bold"', 'font-weight="normal"'),
+      cssFont: bold ? SHAPE_LABEL_CSS : SHAPE_LABEL_CSS.replace("font-weight:bold;", "") });
+  };
+  put(corner, x0 + headW / 2, y0 + rowH / 2, true, "#1B4F91");
+  colHead.forEach((h, c) => put(h, colX[c] + colW[c] / 2, y0 + rowH / 2, true, "#1B4F91"));
+  rowHead.forEach((h, r) => put(h, x0 + headW / 2, y0 + rowH * (r + 1) + rowH / 2, true, "#1B4F91"));
+  for (let r = 0; r < nr; r++) {
+    for (let c = 0; c < nc; c++) {
+      put(cellOf(r, c), colX[c] + colW[c] / 2, y0 + rowH * (r + 1) + rowH / 2, false);
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">\n` +
+    `<rect width="100%" height="100%" fill="none"/>\n${inner}</svg>`;
+}
+
+/* ---------------- tree ----------------
+   Stage sizes are given as a list ("2,2" for two coin tosses, "3,3" for the blood-group example),
+   which is what decides both the branching and the height: the leaf count is their product, and
+   every node sits at the mean height of its own children. */
+function buildTreeSvg() {
+  const counts = probList($("trStages").value, ["2", "2"])
+    .map(s => Math.min(8, Math.max(1, Math.round(probNum(s, 2))))).slice(0, 4);
+  const fontSize = Math.max(8, probNum($("trFontSize").value, 22));
+  // "B,A,O ; B,A,O" — one group per stage. A single group is reused for every stage, which is the
+  // common case (the same outcomes repeated).
+  const labelGroups = String($("trLabels").value || "").split(";").map(g => probList(g, []));
+  const probGroups = String($("trProbs").value || "").split(";").map(g => probList(g, []));
+  const showOutcomes = $("trOutcomes").checked;
+  const groupFor = (groups, stage) => {
+    const g = groups.length === 1 ? groups[0] : (groups[stage] || []);
+    return g || [];
+  };
+
+  const leaves = counts.reduce((a, b) => a * b, 1);
+  const rowH = Math.max(fontSize * 1.9, 34);
+  const colW = Math.max(150, fontSize * 7);
+  const padL = 30, padT = 26;
+  const labelW = shapeLabelMetrics("MM", fontSize, SHAPE_LABEL_CSS).w;
+
+  // Build the node tree first: each leaf gets its own row, each parent the mean of its children.
+  let nodes = [];      // {stage, x, y, label, prob, path[]}
+  let edges = [];      // {x1,y1,x2,y2,prob}
+  let rowCursor = 0;
+  const build = (stage, path) => {
+    if (stage === counts.length) {
+      const y = padT + rowCursor * rowH + rowH / 2;
+      rowCursor++;
+      return y;
+    }
+    const kids = [];
+    for (let i = 0; i < counts[stage]; i++) kids.push({ i, y: build(stage + 1, path.concat(i)) });
+    const y = (kids[0].y + kids[kids.length - 1].y) / 2;
+    const x = padL + stage * colW;
+    for (const k of kids) {
+      const kx = padL + (stage + 1) * colW;
+      const labels = groupFor(labelGroups, stage), probs = groupFor(probGroups, stage);
+      // Start clear of this node's OWN label (the root has none, so it starts almost at the dot)
+      // and stop short of the child's, or a branch runs straight through the letter it points at.
+      const from = stage === 0 ? x + 8 : x + labelW * 0.62;
+      edges.push({ x1: from, y1: y, x2: kx - labelW * 0.62, y2: k.y, prob: probs[k.i] || "" });
+      nodes.push({ x: kx, y: k.y, label: labels[k.i] || "", stage: stage + 1, idx: k.i });
+    }
+    return y;
+  };
+  const rootY = build(0, []);
+
+  const W = Math.round(padL + counts.length * colW + (showOutcomes ? colW * 0.9 : labelW * 1.4));
+  const H = Math.round(padT * 2 + leaves * rowH);
+
+  let inner = "";
+  for (const e of edges) {
+    inner += `  <line x1="${pn(e.x1)}" y1="${pn(e.y1)}" x2="${pn(e.x2)}" y2="${pn(e.y2)}" ` +
+      `stroke="#2D4E86" stroke-width="2.4" stroke-linecap="round"/>\n`;
+    if (e.prob) {
+      // Off the middle of the branch, on the side the branch is heading: sibling branches meet at
+      // their parent, so two labels both nudged the same way end up almost on top of each other.
+      const rises = e.y2 < e.y1 - 1;
+      inner += shapeLabelSvg(e.prob, {
+        x: (e.x1 + e.x2) / 2, y: (e.y1 + e.y2) / 2 + (rises ? -fontSize * 0.5 : fontSize * 0.95),
+        fontSize: fontSize * 0.82, fill: "#4A5568",
+        attrs: SHAPE_LABEL_ATTRS.replace('font-weight="bold"', 'font-weight="normal"'),
+        cssFont: SHAPE_LABEL_CSS.replace("font-weight:bold;", ""),
+      });
+    }
+  }
+  inner += `  <circle cx="${pn(padL)}" cy="${pn(rootY)}" r="4" fill="#2D4E86"/>\n`;
+  for (const nd of nodes) {
+    inner += shapeLabelSvg(nd.label, { x: nd.x, y: nd.y + fontSize * 0.35, fontSize, fill: PROB_INK,
+      attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
+  }
+  if (showOutcomes) {
+    // The combined outcome for each leaf, read off the labels down its own path.
+    const leafNodes = nodes.filter(n => n.stage === counts.length).sort((a, b) => a.y - b.y);
+    const combos = [];
+    const walk = (stage, acc) => {
+      if (stage === counts.length) { combos.push(acc); return; }
+      const labels = groupFor(labelGroups, stage);
+      for (let i = 0; i < counts[stage]; i++) walk(stage + 1, acc + (labels[i] || ""));
+    };
+    walk(0, "");
+    leafNodes.forEach((n, i) => {
+      inner += shapeLabelSvg(combos[i] || "", {
+        x: padL + counts.length * colW + labelW * 1.6, y: n.y + fontSize * 0.35,
+        fontSize, anchor: "start", fill: "#4A5568", attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS,
+      });
+    });
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">\n` +
+    `<rect width="100%" height="100%" fill="none"/>\n${inner}</svg>`;
+}
