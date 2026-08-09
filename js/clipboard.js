@@ -403,7 +403,7 @@ function instantiateStampItems(items, dx, dy) {
     } else {
       const img = new Image();
       img.onload = () => { needsDraw = true; mmCache.clear(); };
-      img.src = it.data;
+      setShapeImgSrc(img, it.data);
       copy = { img, data: it.data, x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, rot: it.rot || 0, flipX: !!it.flipX, flipY: !!it.flipY, del: false, _pdfBusy: false, layer };
       if (it.shapeGen) copy.shapeGen = it.shapeGen;
       doc.images.push(copy);

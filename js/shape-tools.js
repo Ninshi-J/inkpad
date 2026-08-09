@@ -128,7 +128,7 @@ $("shapeImporterDlg").addEventListener("close", () => { editingShapeTarget = nul
 // of mutating the existing doc.images ref's img/data in place rather than replacing the object,
 // so the current selection and any other reference to it stay valid across the edit.
 function replaceGeneratedShape(im, svgString, genParams) {
-  const dataUrl = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
+  const dataUrl = SHAPE_SVG_URL_PREFIX + encodeURIComponent(svgString);
   const img = new Image();
   const before = { data: im.data, img: im.img, shapeGen: im.shapeGen };
   img.onload = () => {
@@ -136,7 +136,7 @@ function replaceGeneratedShape(im, svgString, genParams) {
     pushUndo({ op: "replaceShape", ref: im, before, after: { data: dataUrl, img, shapeGen: genParams } });
     markDirty(); needsDraw = true; mmCache.clear();
   };
-  img.src = dataUrl;
+  setShapeImgSrc(img, dataUrl); // fonts are spliced into the <img> only, never the stored data
 }
 
 /* ---------------- shape/graph defaults (device/user-level, like the keymap — not tied to any

@@ -262,20 +262,7 @@ let katexCssPartsReady = null;
 function loadKatexCssParts() {
   if (katexCssPartsReady) return katexCssPartsReady;
   katexCssPartsReady = loadInlinedKatexCss().then(css => {
-    const faces = [];
-    const base = css.replace(/@font-face\s*\{[^}]*\}/g, block => {
-      const pick = (re, dflt) => {
-        const m = block.match(re);
-        return m ? m[1].trim().replace(/^["']|["']$/g, "") : dflt;
-      };
-      faces.push({
-        key: katexFaceKey(pick(/font-family:\s*([^;}]+)/, ""), pick(/font-weight:\s*([^;}]+)/, "400"),
-          pick(/font-style:\s*([^;}]+)/, "normal")),
-        css: block,
-      });
-      return "";
-    });
-    katexCssParts = { base, faces };
+    katexCssParts = katexCssPartsFromText(css);
     return katexCssParts;
   }).catch(err => { katexCssPartsReady = null; throw err; });
   return katexCssPartsReady;
@@ -286,12 +273,50 @@ function katexFaceKey(family, weight, style) {
   const w = ({ normal: "400", bold: "700" })[String(weight).trim()] || String(weight).trim();
   return `${String(family).trim()}|${w}|${String(style).trim()}`;
 }
-// The stylesheet an SVG needs to render the given faces, and nothing more. "" before the CSS has
-// loaded — callers only ask once a span has rendered, which can't happen before then.
+/* A notebook's own copy of the stylesheet its graphs need (see serialize/deserialize in
+   pages-pdf.js), which is what lets a saved graph render with no network at all.
+
+   It has to be saved, because nothing else caches it: KaTeX comes off a CDN and sw.js never
+   touches cross-origin requests, so the fetch above happens fresh every session. Held here rather
+   than read out of `doc` so katexCssForFaces stays a plain lookup. */
+let katexCssSaved = null; // { base, faces: { faceKey: "@font-face{...}" } } | null
+function registerSavedKatexCss(saved) {
+  katexCssSaved = saved && typeof saved.base === "string" && saved.faces ? saved : null;
+}
+// The stylesheet an SVG needs to render the given faces, and nothing more. The live stylesheet
+// wins when it's loaded; the notebook's saved copy covers the offline/not-yet-fetched case. "" when
+// neither is available — the caller then leaves the shape unstyled and retries (see setShapeImgSrc).
 function katexCssForFaces(faceKeys) {
-  if (!katexCssParts || !faceKeys || !faceKeys.length) return "";
-  const want = new Set(faceKeys);
-  return katexCssParts.base + katexCssParts.faces.filter(f => want.has(f.key)).map(f => f.css).join("");
+  const src = katexCssParts || katexCssSaved;
+  if (!src || !faceKeys || !faceKeys.length) return "";
+  return src.base + [...new Set(faceKeys)].map(k => src.faces[k] || "").join("");
+}
+// The subset a notebook has to carry to stand on its own: the base rules once, plus only the faces
+// its own shapes ask for (two, for ordinary maths). Prefers the live stylesheet but falls back to
+// what the notebook was opened with, so re-saving an offline session doesn't drop the fonts.
+function katexCssBundleFor(faceKeys) {
+  const src = katexCssParts || katexCssSaved;
+  const keys = [...new Set(faceKeys || [])];
+  if (!src || !keys.length) return null;
+  const faces = {};
+  for (const k of keys) if (src.faces[k]) faces[k] = src.faces[k];
+  return Object.keys(faces).length ? { base: src.base, faces } : null;
+}
+/* Reads a stylesheet back apart into the same { base, faces } shape loadKatexCssParts produces.
+   Used to migrate notebooks saved before the fonts were hoisted, which have a full copy embedded
+   in every graph — see demoteShapeMathCss. */
+function katexCssPartsFromText(css) {
+  const faces = {};
+  const base = String(css).replace(/@font-face\s*\{[^}]*\}/g, block => {
+    const pick = (re, dflt) => {
+      const m = block.match(re);
+      return m ? m[1].trim().replace(/^["']|["']$/g, "") : dflt;
+    };
+    faces[katexFaceKey(pick(/font-family:\s*([^;}]+)/, ""), pick(/font-weight:\s*([^;}]+)/, "400"),
+      pick(/font-style:\s*([^;}]+)/, "normal"))] = block;
+    return "";
+  });
+  return { base, faces };
 }
 
 const shapeMathCache = new Map(); // key -> {html, style, w, h, baselineOffset, faceKeys} | Promise

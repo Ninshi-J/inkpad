@@ -29,7 +29,9 @@ function addImageFromDataURL(data, atX, atY) {
 // content), a ghost preview follows the cursor until the user clicks the canvas to place it.
 let pendingPlacement = null; // { img, dataUrl, w, h, labelSpecs, srcBox, genParams }
 function beginShapePlacement(svgString, labelSpecs, srcBox, genParams) {
-  const dataUrl = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgString);
+  // dataUrl is the stored form — no fonts, just a note of which ones it needs. setShapeImgSrc
+  // splices them in for the copy the browser actually decodes (see shape-svg.js).
+  const dataUrl = SHAPE_SVG_URL_PREFIX + encodeURIComponent(svgString);
   const img = new Image();
   img.onload = () => {
     // Capped at a fraction of the page in both dimensions (never enlarged) — these are typically
@@ -48,7 +50,7 @@ function beginShapePlacement(svgString, labelSpecs, srcBox, genParams) {
     pendingPlacement = { img, dataUrl, w, h, labelSpecs, srcBox, genParams };
     needsDraw = true;
   };
-  img.src = dataUrl;
+  setShapeImgSrc(img, dataUrl);
 }
 // Keeps a w×h object fully on the page its top-left lands on, instead of letting it spill past
 // whichever edge is nearest. Shared by shape placement and clipboard-image paste.

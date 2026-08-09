@@ -84,20 +84,92 @@ function shapeLabelMetrics(text, fontSize, cssFont = "") {
   return { w: Math.max(28, str.length * fontSize * 0.62), h: fontSize * 1.35 };
 }
 
-/* Puts the fonts this build's labels need into the SVG, once, right after its opening tag.
+/* ---------------- a shape's font payload, stored by reference ----------------
 
-   Only for a shape on its way OUT of the app — placed on the page, exported, shared. That copy is
-   a standalone data: URL which can load nothing external, so its fonts have to travel with it. The
-   dialog preview is an inline SVG inside this document and picks the same stylesheet up from the
-   page for free (see ensureKatexCssInDocument), so it is deliberately NOT run over the preview.
+   A placed shape is a standalone data: URL that can load nothing external, so to draw maths it
+   needs the KaTeX stylesheet and its woff2 faces physically inside it — about 82KB. But
+   doc.images[].data is serialized verbatim (see serialize in pages-pdf.js), so embedding that in
+   each shape would put 82KB into IndexedDB and every Drive sync per graph on the page.
 
-   Which means most shapes pay nothing: a triangle's labels leave the SVG entirely and become text
-   objects at placement, so there is no maths left in the file to need a font. In practice only a
-   graph — whose axis titles must stay inside the SVG to survive re-editing — ever carries one. */
-function injectShapeMathCss(svg) {
-  const css = katexCssForFaces([...shapeMathFaces]);
+   So the stored SVG carries a ~40-byte list of the faces it needs instead, and the notebook saves
+   one shared copy of the stylesheet for all of them (see katexCssBundleFor). The fonts are spliced
+   back in at the two moments a copy has to stand on its own: decoding into an <img>, and export.
+   Same shape as pdfSources — a notebook-level side table the images point into.
+
+   Most shapes are not marked at all: a triangle's labels leave the SVG and become text objects
+   at placement, so there is no maths left in the file to need a font. In practice only a graph —
+   whose axis titles must stay inside to survive re-editing — is ever stamped. The dialog preview
+   is an inline SVG in this document and picks the stylesheet up from the page for free (see
+   ensureKatexCssInDocument), so it is not stamped either. */
+const SHAPE_MATH_FACE_ATTR = "data-katex-faces";
+const SHAPE_SVG_URL_PREFIX = "data:image/svg+xml;charset=utf-8,";
+// Face keys are "Family|weight|style" built from KaTeX's own stylesheet (see katexFaceKey), so
+// they hold nothing that needs XML-escaping and no commas to confuse the join.
+function stampShapeMathFaces(svg) {
+  const faces = [...shapeMathFaces];
+  if (!faces.length) return svg;
+  return svg.replace(/^<svg\b/, `<svg ${SHAPE_MATH_FACE_ATTR}="${faces.join(",")}"`);
+}
+const shapeMathFaceList = svg => {
+  const m = new RegExp(`<svg\\b[^>]*\\b${SHAPE_MATH_FACE_ATTR}="([^"]*)"`).exec(String(svg));
+  return m && m[1] ? m[1].split(",") : [];
+};
+// Puts the fonts back. Unchanged for anything that was never stamped, and unchanged when neither
+// the live stylesheet nor a saved one is available yet — callers retry, see setShapeImgSrc.
+function inflateShapeMathCss(svg) {
+  const css = katexCssForFaces(shapeMathFaceList(svg));
   if (!css) return svg;
   return svg.replace(/^(<svg[^>]*>\n?)/, `$1<style data-katex="1">${css}</style>\n`);
+}
+// The same, for the data: URL form the images actually hold. The attribute NAME survives
+// encodeURIComponent untouched (letters and hyphens are unreserved), so this stays a cheap string
+// test for the overwhelmingly common case of an image that isn't a maths-labelled shape at all.
+const shapeDataHasMath = d => typeof d === "string" && d.includes(SHAPE_MATH_FACE_ATTR);
+function inflateShapeDataUrl(data) {
+  if (!shapeDataHasMath(data) || !data.startsWith(SHAPE_SVG_URL_PREFIX)) return data;
+  const svg = decodeURIComponent(data.slice(SHAPE_SVG_URL_PREFIX.length));
+  const out = inflateShapeMathCss(svg);
+  return out === svg ? data : SHAPE_SVG_URL_PREFIX + encodeURIComponent(out);
+}
+function shapeDataFaceKeys(data) {
+  if (!shapeDataHasMath(data) || !data.startsWith(SHAPE_SVG_URL_PREFIX)) return [];
+  try { return shapeMathFaceList(decodeURIComponent(data.slice(SHAPE_SVG_URL_PREFIX.length))); }
+  catch (_) { return []; }
+}
+/* Points an <img> at a shape, fonts included. The stylesheet may not be there yet — a notebook
+   saved before the fonts were hoisted has none of its own, and KaTeX is fetched fresh each session
+   — so when it isn't, this draws the shape unstyled now and re-points the same <img> once it
+   arrives rather than leaving a blank. The existing onload handlers redraw either way. */
+function setShapeImgSrc(img, data) {
+  const withFonts = inflateShapeDataUrl(data);
+  img.src = withFonts;
+  if (withFonts !== data || !shapeDataHasMath(data)) return;
+  loadKatexCssParts().then(() => {
+    const retry = inflateShapeDataUrl(data);
+    if (retry !== data) img.src = retry;
+  }).catch(() => {});
+}
+/* Migration for notebooks saved before the hoist, whose graphs each embed the whole stylesheet.
+   Lifts it out into the shared copy and leaves the same marker a fresh shape gets, so reopening one
+   and saving it shrinks the file — and so its fonts still work offline, which was the only thing
+   that embedded copy was buying. Returns the slimmed SVG, or the original if it wasn't embedded. */
+function demoteShapeMathCss(svg) {
+  const m = /<style data-katex="1">([\s\S]*?)<\/style>\n?/.exec(svg);
+  if (!m) return svg;
+  const parts = katexCssPartsFromText(m[1]);
+  const keys = Object.keys(parts.faces);
+  if (!keys.length) return svg;
+  registerSavedKatexCss({ base: parts.base, faces: parts.faces });
+  const bare = svg.replace(m[0], "");
+  return shapeMathFaceList(bare).length ? bare
+    : bare.replace(/^<svg\b/, `<svg ${SHAPE_MATH_FACE_ATTR}="${keys.join(",")}"`);
+}
+function demoteShapeDataUrl(data) {
+  if (typeof data !== "string" || !data.startsWith(SHAPE_SVG_URL_PREFIX) ||
+      !data.includes("data-katex")) return data;
+  const svg = decodeURIComponent(data.slice(SHAPE_SVG_URL_PREFIX.length));
+  const out = demoteShapeMathCss(svg);
+  return out === svg ? data : SHAPE_SVG_URL_PREFIX + encodeURIComponent(out);
 }
 
 function buildMathShapeSVG() {
@@ -1233,16 +1305,16 @@ function buildMathShapeSVG() {
     svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${boxX} ${boxY} ${boxW} ${boxH}" width="${boxW}" height="${boxH}">\n<rect width="100%" height="100%" fill="none"/>\n${innerSvg}</svg>`;
   }
 
-  // Returned WITHOUT the font payload — only the placement path adds it (see injectShapeMathCss).
+  // Returned unmarked — only the placement path stamps it (see stampShapeMathFaces).
   return { svgString, labelSpecs, srcBox, fnErrors, hotspots, handles };
 }
 
 function generateAndInsertMathShape() {
   const built = buildMathShapeSVG();
   const { labelSpecs, srcBox } = built;
-  // Leaving the app, so it has to stand on its own from here — this is the one place the fonts
-  // get embedded.
-  const svgString = injectShapeMathCss(built.svgString);
+  // Leaving the dialog, so record which faces its maths needs — the fonts themselves are spliced
+  // in on the way to an <img> or a file, not stored (see stampShapeMathFaces).
+  const svgString = stampShapeMathFaces(built.svgString);
   const target = editingShapeTarget; // capture before .close() clears it (see shape-tools.js)
   const genParams = captureShapeGenParams(); // null for non-graph shapes — not re-editable
   $("shapeImporterDlg").close();

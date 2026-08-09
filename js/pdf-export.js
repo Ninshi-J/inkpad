@@ -384,7 +384,9 @@ async function exportPdf(pages) {
    (a real filled, pressure-varying polygon) rather than the PDF path's flat-per-segment lines. */
 function svgImageEl(im, top) {
   const localY = im.y - top;
-  const href = im.data;
+  // A nested <image> is its own isolated document, same as an <img> — a maths-labelled shape needs
+  // its fonts physically present here or the export renders it in a fallback face.
+  const href = inflateShapeDataUrl(im.data);
   if (im.rot || im.flipX || im.flipY) {
     const cx = im.x + im.w / 2, cy = localY + im.h / 2;
     const deg = (im.rot || 0) * 180 / Math.PI;

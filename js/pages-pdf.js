@@ -451,6 +451,11 @@ async function serialize(pages) {
     }
     if (pdfSourceB64Cache.has(im.pdfSrcId)) pdfSourcesOut[im.pdfSrcId] = pdfSourceB64Cache.get(im.pdfSrcId);
   }
+  // The union of the KaTeX faces the maths-labelled shapes on the page ask for — two, typically,
+  // and nothing at all for a notebook with no maths in a shape.
+  const katexFaces = [];
+  for (const im of src.images) katexFaces.push(...shapeDataFaceKeys(im.data));
+  const katexCssOut = katexFaces.length ? katexCssBundleFor(katexFaces) : null;
   return JSON.stringify({
     v: 1, settings: { ...S, pages: src.pageCount },
     strokes: src.strokes.map(s => ({
@@ -484,6 +489,10 @@ async function serialize(pages) {
     })),
     audio: segs,
     ...(Object.keys(pdfSourcesOut).length ? { pdfSources: pdfSourcesOut } : {}),
+    // One shared copy of the KaTeX faces this notebook's shapes need, rather than ~82KB inside
+    // each of them (see stampShapeMathFaces). Saved rather than refetched because KaTeX comes off
+    // a CDN that sw.js never caches, so without this a graph would need the network to draw.
+    ...(katexCssOut ? { katexCss: katexCssOut } : {}),
   });
 }
 function blobToB64(blob) {
@@ -518,16 +527,23 @@ function deserialize(json) {
     srcIdRemap[oldId] = newId;
   }
 
+  // Before any image decodes: this notebook's own copy of the maths fonts, which is what a graph
+  // gets spliced with in setShapeImgSrc below.
+  registerSavedKatexCss(d.katexCss || null);
+
   doc.images = [];
   for (const i of (d.images || [])) {
     const img = new Image();
+    // Saved before the fonts were hoisted out of each shape? Lift them into the shared copy now,
+    // so this notebook shrinks the next time it's saved (see demoteShapeDataUrl).
+    const data = i.data ? demoteShapeDataUrl(i.data) : i.data;
     // A whole-page PDF image saved without its raster (see serialize()) has no i.data yet —
     // left blank here, it draws as nothing until restorePdfLiveLinks() re-renders it below.
-    if (i.data) {
+    if (data) {
       img.onload = () => { needsDraw = true; mmCache.clear(); };
-      img.src = i.data;
+      setShapeImgSrc(img, data);
     }
-    const im = { img, data: i.data || null, x: i.x, y: i.y, w: i.w, h: i.h, rot: i.rot || 0, flipX: !!i.flipX, flipY: !!i.flipY, layer: i.layer, del: false };
+    const im = { img, data: data || null, x: i.x, y: i.y, w: i.w, h: i.h, rot: i.rot || 0, flipX: !!i.flipX, flipY: !!i.flipY, layer: i.layer, del: false };
     if (i.shapeGen) im.shapeGen = i.shapeGen;
     if (i.pdfSrcId != null && srcIdRemap[i.pdfSrcId] != null) {
       im.pdfSrcId = srcIdRemap[i.pdfSrcId];
