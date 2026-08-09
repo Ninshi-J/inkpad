@@ -105,6 +105,18 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12h4M7 12l5-6M7 12l5 6M12 6h3M12 18h3M15 6l4-3M15 6l4 3M15 18l4-3M15 18l4 3"/></svg>
         <span>Tree Diagram</span>
       </button>
+      <button type="button" class="shape-tile" data-type="stemleaf" data-category="data" onclick="selectShapeType('stemleaf')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 4v16"/><path d="M6 7h2M6 11h2M6 15h2M13 7h6M13 11h4M13 15h7"/></svg>
+        <span>Stem-and-Leaf</span>
+      </button>
+      <button type="button" class="shape-tile" data-type="histogram" data-category="data" onclick="selectShapeType('histogram')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 20h18M3 20V3"/><rect x="6" y="13" width="4" height="7"/><rect x="10" y="8" width="4" height="12"/><rect x="14" y="11" width="4" height="9"/></svg>
+        <span>Histogram</span>
+      </button>
+      <button type="button" class="shape-tile" data-type="boxplot" data-category="data" onclick="selectShapeType('boxplot')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12h4M17 12h4M3 9v6M21 9v6"/><rect x="7" y="7" width="10" height="10"/><path d="M12 7v10"/></svg>
+        <span>Box Plot</span>
+      </button>
       <button type="button" class="shape-tile" data-type="triangle" data-category="2d" onclick="selectShapeType('triangle')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3 L21 20 L3 20 Z" stroke-linejoin="round"/></svg>
         <span>Triangle</span>
@@ -179,6 +191,9 @@
       <option value="venn">Venn Diagram</option>
       <option value="table">Table / Two-way Table</option>
       <option value="tree">Tree Diagram</option>
+      <option value="stemleaf">Stem-and-Leaf Plot</option>
+      <option value="histogram">Frequency Histogram</option>
+      <option value="boxplot">Box Plot</option>
     </select>
   </div>
 
@@ -756,6 +771,9 @@
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="nlShowLabels" checked> Show tick labels</label>
     </div>
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="nlArrows" checked> Extend arrows past the ends</label>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
       <div class="shape-field">
         <label for="nlFontSize">Label Text Size (px)</label>
         <input type="number" id="nlFontSize" min="14" max="36" step="1" value="20">
@@ -775,6 +793,10 @@
     <div class="shape-form-grid">
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="spColour" checked> Colour the sections</label>
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="spPointer"> Draw the pointer</label>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Section Colours — one per section, blanks keep the default</label>
+        <input type="text" id="spColourList" value="" placeholder="e.g. red, , , red, #5FA860"></div>
     </div>
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
       <div class="shape-field"><label for="spFontSize">Label Text Size (px)</label>
@@ -812,17 +834,22 @@
       <div class="shape-field"><label>B and C</label><input type="text" id="vnBC" value=""></div>
       <div class="shape-field"><label>All three</label><input type="text" id="vnABC" value=""></div>
     </div>
-    <div class="shape-form-grid" id="vnShadeField" style="grid-template-columns: 1fr;">
-      <div class="shape-field"><label>Shade Region</label>
-        <select id="vnShade">
-          <option value="none">Nothing shaded</option>
-          <option value="a">A only</option>
-          <option value="b">B only</option>
-          <option value="both">A and B (intersection)</option>
-          <option value="either">A or B (union)</option>
-        </select></div>
-    </div>
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Shade Regions — tick any combination</label>
+        <div class="shape-region-grid">
+          <label><input type="checkbox" id="vnShade_a"> A only</label>
+          <label><input type="checkbox" id="vnShade_b"> B only</label>
+          <label class="venn-3only" style="display:none;"><input type="checkbox" id="vnShade_c"> C only</label>
+          <label><input type="checkbox" id="vnShade_ab"> A ∩ B</label>
+          <label class="venn-3only" style="display:none;"><input type="checkbox" id="vnShade_ac"> A ∩ C</label>
+          <label class="venn-3only" style="display:none;"><input type="checkbox" id="vnShade_bc"> B ∩ C</label>
+          <label class="venn-3only" style="display:none;"><input type="checkbox" id="vnShade_abc"> All three</label>
+          <label><input type="checkbox" id="vnShade_out"> Outside</label>
+        </div></div>
+    </div>
+    <div class="shape-form-grid">
+      <div class="shape-field"><label>Shade Colour</label>
+        <input type="color" id="vnShadeColour" value="#bbd8ee" class="shape-colour"></div>
       <div class="shape-field"><label for="vnFontSize">Text Size (px)</label>
         <input type="number" id="vnFontSize" min="10" max="60" step="1" value="24"></div>
     </div>
@@ -849,6 +876,15 @@
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="tbTotals" checked> Add a Total row and column</label>
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="tbShade" checked> Shade the headings</label>
     </div>
+    <div class="shape-form-grid">
+      <div class="shape-field"><label>Heading Colour</label>
+        <input type="color" id="tbHeadColour" value="#dce9f5" class="shape-colour"></div>
+      <div class="shape-field"><label>Stripe Colour</label>
+        <input type="color" id="tbStripeColour" value="#f4f7fb" class="shape-colour"></div>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="tbStripe"> Shade alternate rows</label>
+    </div>
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
       <div class="shape-field"><label for="tbFontSize">Text Size (px)</label>
         <input type="number" id="tbFontSize" min="10" max="60" step="1" value="22"></div>
@@ -870,10 +906,104 @@
     </div>
     <div class="shape-form-grid">
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="trOutcomes"> List the outcomes on the right</label>
+      <div class="shape-field"><label>Branch Colour</label>
+        <input type="color" id="trColour" value="#2d4e86" class="shape-colour"></div>
     </div>
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
       <div class="shape-field"><label for="trFontSize">Text Size (px)</label>
         <input type="number" id="trFontSize" min="10" max="60" step="1" value="22"></div>
+    </div>
+  </div>
+
+  <div id="stemleafFields" style="display: none;">
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Data (commas or spaces)</label>
+        <input type="text" id="slData" value="12, 15, 21, 23, 23, 28, 31, 34, 42" placeholder="12, 15, 21, 23"></div>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Second Data Set &mdash; fill this in for a back-to-back plot</label>
+        <input type="text" id="slDataB" value="" placeholder="(blank for a single plot)"></div>
+    </div>
+    <div class="shape-form-grid">
+      <div class="shape-field"><label>Heading (right side)</label><input type="text" id="slTitle" value="" placeholder="(blank)"></div>
+      <div class="shape-field"><label>Heading (left side)</label><input type="text" id="slTitleB" value="" placeholder="(blank)"></div>
+    </div>
+    <div class="shape-form-grid">
+      <div class="shape-field"><label>One Stem Step Is Worth</label>
+        <select id="slUnit"><option value="10">10 (leaf = units)</option><option value="100">100 (leaf = tens)</option><option value="1">1 (leaf = tenths)</option></select></div>
+      <div class="shape-field"><label for="slFontSize">Text Size (px)</label>
+        <input type="number" id="slFontSize" min="10" max="60" step="1" value="22"></div>
+    </div>
+  </div>
+
+  <div id="histogramFields" style="display: none;">
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Frequencies (one per bar)</label>
+        <input type="text" id="hgFreqs" value="2, 6, 7, 5" placeholder="2, 6, 7, 5"></div>
+    </div>
+    <div class="shape-form-grid" id="hgClassFields">
+      <div class="shape-field"><label>First Class Starts At</label><input type="number" id="hgStart" value="100"></div>
+      <div class="shape-field"><label>Class Width</label><input type="number" id="hgWidth" value="100"></div>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Bar Names &mdash; fill in to label bars instead of class boundaries</label>
+        <input type="text" id="hgLabels" value="" placeholder="(blank for a numbered scale)"></div>
+    </div>
+    <div class="shape-form-grid">
+      <div class="shape-field"><label>Horizontal Axis</label><input type="text" id="hgXLabel" value="Pages"></div>
+      <div class="shape-field"><label>Vertical Axis</label><input type="text" id="hgYLabel" value="Frequency"></div>
+    </div>
+    <div class="shape-form-grid">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="hgGap"> Separate the bars (bar chart)</label>
+      <div class="shape-field"><label>Bar Colour</label>
+        <input type="color" id="hgFill" value="#8286bc" class="shape-colour"></div>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Individual Bar Colours — blanks keep the colour above</label>
+        <input type="text" id="hgBarColours" value="" placeholder="e.g. , , red"></div>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="hgFromZero"> Start the scale at 0, leaving a gap before the first class</label>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label for="hgFontSize">Text Size (px)</label>
+        <input type="number" id="hgFontSize" min="10" max="60" step="1" value="20"></div>
+    </div>
+  </div>
+
+  <div id="boxplotFields" style="display: none;">
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Values Are</label>
+        <select id="bxMode">
+          <option value="summary">The five-number summary</option>
+          <option value="raw">Raw data &mdash; work the summary out for me</option>
+        </select></div>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Data</label>
+        <input type="text" id="bxData" value="2, 5, 8, 11, 15" placeholder="min, Q1, median, Q3, max"></div>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <div class="shape-field"><label>Second Data Set &mdash; fill in to compare two on one scale</label>
+        <input type="text" id="bxData2" value="" placeholder="(blank for one box plot)"></div>
+    </div>
+    <div class="shape-form-grid">
+      <div class="shape-field"><label>Label</label><input type="text" id="bxLabel" value="" placeholder="(blank)"></div>
+      <div class="shape-field"><label>Second Label</label><input type="text" id="bxLabel2" value="" placeholder="(blank)"></div>
+    </div>
+    <div class="shape-form-grid">
+      <div class="shape-field"><label>Scale Step &mdash; 0 chooses one</label><input type="number" id="bxStep" value="0" min="0" step="0.5"></div>
+      <div class="shape-field"><label for="bxFontSize">Text Size (px)</label>
+        <input type="number" id="bxFontSize" min="10" max="60" step="1" value="20"></div>
+    </div>
+    <div class="shape-form-grid">
+      <div class="shape-field"><label>Box Fill</label>
+        <input type="color" id="bxFill" value="#ffffff" class="shape-colour"></div>
+      <div class="shape-field"><label>Line Colour</label>
+        <input type="color" id="bxColour" value="#2d4e86" class="shape-colour"></div>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="bxShowValues"> Print the five values above the box</label>
     </div>
   </div>
 
@@ -1023,12 +1153,23 @@
             <input type="range" id="sdGraphGridThickness" min="0.5" max="4" step="0.5" value="2" oninput="$('sdGraphGridVal').textContent = this.value">
           </div>
           <div class="shape-field">
-            <label>Default graph size: <span id="sdGraphSizeVal">31</span>% of page</label>
-            <input type="range" id="sdGraphSizeFrac" min="15" max="50" step="1" value="31" oninput="$('sdGraphSizeVal').textContent = this.value">
+            <label for="sdShapeSizeFrac">Placed size — shapes (% of page)</label>
+            <input type="number" id="sdShapeSizeFrac" min="5" max="100" step="1" value="25">
           </div>
           <div class="shape-field">
-            <label>Default shape size: <span id="sdShapeSizeVal">25</span>% of page</label>
-            <input type="range" id="sdShapeSizeFrac" min="15" max="50" step="1" value="25" oninput="$('sdShapeSizeVal').textContent = this.value">
+            <label for="sdGraphSizeFrac">Placed size — coordinate planes (% of page)</label>
+            <input type="number" id="sdGraphSizeFrac" min="5" max="100" step="1" value="31">
+          </div>
+          <div class="shape-field">
+            <label for="sdChartSizeFrac">Placed size — data charts (% of page)</label>
+            <input type="number" id="sdChartSizeFrac" min="5" max="100" step="1" value="55">
+          </div>
+          <div style="font-size: 11.5px; color: var(--ink-soft); line-height: 1.6;">
+            The percentage is of the page <b>width</b> in practice — a portrait page is tall enough
+            that the height limit almost never bites. Because of that, the wider a picture is the
+            smaller its own text ends up, which is why spinners, tables, box plots and the rest get
+            their own figure: at the coordinate plane's 31% a box plot's scale numbers landed on the
+            page at under 8px. Type any value from 5 to 100.
           </div>
         </div>
       </div>
@@ -1338,6 +1479,7 @@
 <script src="js/shape-tools.js"></script>
 <script src="js/shape-svg.js"></script>
 <script src="js/shape-prob.js"></script>
+<script src="js/shape-stats.js"></script>
 <script src="js/settings-ui.js"></script>
 <script src="js/dialogs.js"></script>
 <script src="js/pages-pdf.js"></script>

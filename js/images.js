@@ -28,7 +28,7 @@ function addImageFromDataURL(data, atX, atY) {
 // Instead of dropping a generated shape at a fixed spot (which could land on top of existing
 // content), a ghost preview follows the cursor until the user clicks the canvas to place it.
 let pendingPlacement = null; // { img, dataUrl, w, h, labelSpecs, srcBox, genParams }
-function beginShapePlacement(svgString, labelSpecs, srcBox, genParams) {
+function beginShapePlacement(svgString, labelSpecs, srcBox, genParams, shapeType) {
   // dataUrl is the stored form — no fonts, just a note of which ones it needs. setShapeImgSrc
   // splices them in for the copy the browser actually decodes (see shape-svg.js).
   const dataUrl = SHAPE_SVG_URL_PREFIX + encodeURIComponent(svgString);
@@ -37,12 +37,16 @@ function beginShapePlacement(svgString, labelSpecs, srcBox, genParams) {
     // Capped at a fraction of the page in both dimensions (never enlarged) — these are typically
     // viewed zoomed in on a fraction of the page, so a shape sized near the full page width
     // overflows that view and, without the page-bounds clamp below, can spill past the page edge
-    // entirely. Coordinate-plane graphs (the only shapes with no srcBox — they place the whole
-    // generated SVG rather than a cropped-and-labeled region) get a larger default cap: they carry
-    // axis numbers/labels that need to stay legible, unlike a plain triangle or solid.
-    // Both fractions are user-configurable — see shapeDefaults (shape-tools.js) / the
-    // "⚙ Defaults" button in the Math Shape Importer.
-    const sizeFrac = srcBox ? shapeDefaults.shapeSizeFrac : shapeDefaults.graphSizeFrac;
+    // entirely. All three fractions are user-configurable — see shapeDefaults (shape-tools.js) /
+    // the "⚙ Defaults" button in the Math Shape Importer.
+    //
+    // Which fraction applies is looked up from the type, NOT inferred from srcBox being absent as
+    // it used to be. That test meant "is it a coordinate plane" only while the planes were the
+    // one thing placed whole; every re-editable chart since (spinner, table, box plot, ...) also
+    // has no srcBox, so they were all silently taking the graph figure. They need their own,
+    // because they are wide and text-heavy: at the graph's 31% a box plot's scale labels landed
+    // on the page at under 8px, half the size of the text around them.
+    const sizeFrac = shapeSizeFracFor(shapeType, srcBox);
     const maxW = pageW() * sizeFrac, maxH = pageH() * sizeFrac;
     let w = img.naturalWidth, h = img.naturalHeight;
     const scale = Math.min(1, maxW / w, maxH / h);

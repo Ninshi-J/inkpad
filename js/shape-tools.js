@@ -27,12 +27,19 @@ function toggleShapeFormFields() {
   $("vennFields").style.display = type === "venn" ? "block" : "none";
   $("tableFields").style.display = type === "table" ? "block" : "none";
   $("treeFields").style.display = type === "tree" ? "block" : "none";
+  $("stemleafFields").style.display = type === "stemleaf" ? "block" : "none";
+  $("histogramFields").style.display = type === "histogram" ? "block" : "none";
+  $("boxplotFields").style.display = type === "boxplot" ? "block" : "none";
+  // Class start/width only mean anything while the bars are numbered, not named.
+  if (type === "histogram") $("hgClassFields").style.display = $("hgLabels").value.trim() ? "none" : "";
   // A third circle brings three more regions with it — hidden rather than disabled so the
   // two-set form stays as short as it was.
   if (type === "venn") {
     const three = $("vnSets").value === "3";
-    document.querySelectorAll("#vennFields .venn-3only").forEach(el => { el.style.display = three ? "" : "none"; });
-    $("vnShadeField").style.display = three ? "none" : "";
+    document.querySelectorAll("#vennFields .venn-3only").forEach(el => {
+      // The region checkboxes are inline labels inside a grid; the field rows are blocks.
+      el.style.display = three ? (el.tagName === "LABEL" ? "flex" : "") : "none";
+    });
   }
 }
 
@@ -42,12 +49,15 @@ const SHAPE_CATEGORY = {
   cube: "3d", prism: "3d", cylinder: "3d", cone: "3d", pyramid: "3d",
   plane: "tools", planeMath: "tools", planeQ1: "tools", numberline: "tools",
   spinner: "data", venn: "data", table: "data", tree: "data",
+  stemleaf: "data", histogram: "data", boxplot: "data",
 };
 // Which generator builds each probability/data diagram (js/shape-prob.js). Keyed rather than
 // branched so buildMathShapeSVG's if-chain doesn't grow another four arms.
 const PROB_SHAPE_BUILDERS = {
   spinner: () => buildSpinnerSvg(), venn: () => buildVennSvg(),
   table: () => buildTableSvg(), tree: () => buildTreeSvg(),
+  stemleaf: () => buildStemLeafSvg(), histogram: () => buildHistogramSvg(),
+  boxplot: () => buildBoxPlotSvg(),
 };
 function selectShapeCategory(category) {
   document.querySelectorAll("#shapeTypeTiles .shape-tile").forEach(t => {
@@ -92,6 +102,7 @@ const SHAPE_GEN_FIELD_CONTAINERS = {
   // self-contained image with no separate auto-generated text objects, so regenerating one can't
   // orphan or duplicate anything the user has since moved.
   spinner: "spinnerFields", venn: "vennFields", table: "tableFields", tree: "treeFields",
+  stemleaf: "stemleafFields", histogram: "histogramFields", boxplot: "boxplotFields",
 };
 const SHAPE_GEN_FN_LIST_IDS = { planeMath: "pmFnList", planeQ1: "q1FnList" };
 let editingShapeTarget = null; // the doc.images ref currently being re-edited, or null for a fresh insert
@@ -171,7 +182,31 @@ function replaceGeneratedShape(im, svgString, genParams) {
    thickness. Persisted in localStorage and mirrored into the same settings snapshot as
    keymap/palette/text defaults (see currentSettingsSnapshot/applySettingsSnapshot in storage.js),
    so it follows a teacher between devices the same way those already do. */
-const SHAPE_DEFAULTS_FALLBACK = { graphFontSize: 20, graphGridThickness: 2, graphSizeFrac: 0.3125, shapeSizeFrac: 0.25, tickFormat: "auto" };
+/* How big a placed shape is, as a fraction of the page width/height it has to fit inside.
+
+   Three classes, because one number cannot serve all of them. A triangle is compact and mostly
+   line work, so a quarter of the page is generous. A coordinate plane is square and carries axis
+   numbers. A data chart is wide, short and almost entirely text — and the fraction applies to the
+   WIDTH, so the wider the picture the smaller its text ends up. Measured on A4 portrait at the old
+   shared 31%: a histogram's axis numbers landed at 8px and a box plot's at 7.8px, against body
+   text of 16-20px. 55% brings those to roughly 14px, which is the point of the separate class. */
+const SHAPE_SIZE_CLASS = {
+  plane: "graph", planeMath: "graph", planeQ1: "graph",
+  spinner: "chart", venn: "chart", table: "chart", tree: "chart",
+  stemleaf: "chart", histogram: "chart", boxplot: "chart",
+  // The number line predates the split and was taking the compact "shape" figure despite being
+  // 500 units wide and nothing but tick labels — they were landing at 7.9px.
+  numberline: "chart",
+};
+function shapeSizeFracFor(type, srcBox) {
+  const cls = SHAPE_SIZE_CLASS[type] || (srcBox ? "shape" : "graph");
+  if (cls === "chart") return shapeDefaults.chartSizeFrac;
+  return cls === "graph" ? shapeDefaults.graphSizeFrac : shapeDefaults.shapeSizeFrac;
+}
+const SHAPE_DEFAULTS_FALLBACK = {
+  graphFontSize: 20, graphGridThickness: 2, tickFormat: "auto",
+  graphSizeFrac: 0.3125, shapeSizeFrac: 0.25, chartSizeFrac: 0.55,
+};
 let shapeDefaults = { ...SHAPE_DEFAULTS_FALLBACK };
 function loadShapeDefaults() {
   shapeDefaults = { ...SHAPE_DEFAULTS_FALLBACK };
@@ -213,18 +248,25 @@ function setGraphTickFmtDefault(v) {
 function populateShapeDefaultsFields() {
   $("sdGraphFontSize").value = shapeDefaults.graphFontSize; $("sdGraphFontVal").textContent = shapeDefaults.graphFontSize;
   $("sdGraphGridThickness").value = shapeDefaults.graphGridThickness; $("sdGraphGridVal").textContent = shapeDefaults.graphGridThickness;
-  const graphPct = Math.round(shapeDefaults.graphSizeFrac * 100);
-  $("sdGraphSizeFrac").value = graphPct; $("sdGraphSizeVal").textContent = graphPct;
-  const shapePct = Math.round(shapeDefaults.shapeSizeFrac * 100);
-  $("sdShapeSizeFrac").value = shapePct; $("sdShapeSizeVal").textContent = shapePct;
+  $("sdGraphSizeFrac").value = Math.round(shapeDefaults.graphSizeFrac * 100);
+  $("sdShapeSizeFrac").value = Math.round(shapeDefaults.shapeSizeFrac * 100);
+  $("sdChartSizeFrac").value = Math.round(shapeDefaults.chartSizeFrac * 100);
 }
 function resetShapeDefaultsFields() {
   $("sdGraphFontSize").value = SHAPE_DEFAULTS_FALLBACK.graphFontSize; $("sdGraphFontVal").textContent = SHAPE_DEFAULTS_FALLBACK.graphFontSize;
   $("sdGraphGridThickness").value = SHAPE_DEFAULTS_FALLBACK.graphGridThickness; $("sdGraphGridVal").textContent = SHAPE_DEFAULTS_FALLBACK.graphGridThickness;
-  const graphPct = Math.round(SHAPE_DEFAULTS_FALLBACK.graphSizeFrac * 100);
-  $("sdGraphSizeFrac").value = graphPct; $("sdGraphSizeVal").textContent = graphPct;
-  const shapePct = Math.round(SHAPE_DEFAULTS_FALLBACK.shapeSizeFrac * 100);
-  $("sdShapeSizeFrac").value = shapePct; $("sdShapeSizeVal").textContent = shapePct;
+  $("sdGraphSizeFrac").value = Math.round(SHAPE_DEFAULTS_FALLBACK.graphSizeFrac * 100);
+  $("sdShapeSizeFrac").value = Math.round(SHAPE_DEFAULTS_FALLBACK.shapeSizeFrac * 100);
+  $("sdChartSizeFrac").value = Math.round(SHAPE_DEFAULTS_FALLBACK.chartSizeFrac * 100);
+}
+/* One typed percentage from the settings dialog. Clamped rather than validated-and-rejected: the
+   field is free text now (it used to be a 15-50 slider, which is exactly the constraint being
+   removed), so 5 is allowed for a thumbnail and 100 for a full-page chart, and anything outside
+   that or unreadable falls back to the built-in default instead of producing a zero-size shape. */
+function shapeSizePctField(id, fallbackFrac) {
+  const pct = parseFloat($(id).value);
+  if (!Number.isFinite(pct) || pct <= 0) return fallbackFrac;
+  return Math.min(100, Math.max(5, pct)) / 100;
 }
 function commitShapeDefaultsFromSettingsDlg() {
   // Spread first: this dialog only edits four of the defaults, and rebuilding the object from
@@ -233,8 +275,9 @@ function commitShapeDefaultsFromSettingsDlg() {
     ...shapeDefaults,
     graphFontSize: parseInt($("sdGraphFontSize").value) || SHAPE_DEFAULTS_FALLBACK.graphFontSize,
     graphGridThickness: parseFloat($("sdGraphGridThickness").value) || SHAPE_DEFAULTS_FALLBACK.graphGridThickness,
-    graphSizeFrac: (parseFloat($("sdGraphSizeFrac").value) || SHAPE_DEFAULTS_FALLBACK.graphSizeFrac * 100) / 100,
-    shapeSizeFrac: (parseFloat($("sdShapeSizeFrac").value) || SHAPE_DEFAULTS_FALLBACK.shapeSizeFrac * 100) / 100,
+    graphSizeFrac: shapeSizePctField("sdGraphSizeFrac", SHAPE_DEFAULTS_FALLBACK.graphSizeFrac),
+    shapeSizeFrac: shapeSizePctField("sdShapeSizeFrac", SHAPE_DEFAULTS_FALLBACK.shapeSizeFrac),
+    chartSizeFrac: shapeSizePctField("sdChartSizeFrac", SHAPE_DEFAULTS_FALLBACK.chartSizeFrac),
   };
   saveShapeDefaults();
   applyShapeDefaultsToImporter();

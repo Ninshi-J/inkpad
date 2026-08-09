@@ -1189,6 +1189,7 @@ function buildMathShapeSVG() {
     const fromOpen = fromMode === "open", toOpen = toMode === "open";
     const fromEnd = fromMode === "end", toEnd = toMode === "end";
     const showLabelsNl = $("nlShowLabels").checked;
+    const showArrowsNl = $("nlArrows").checked;
 
     const pad = 50, lineY = 250, usableW = 500 - pad * 2;
     const mapX = v => pad + ((v - minV) / (maxV - minV)) * usableW;
@@ -1210,8 +1211,12 @@ function buildMathShapeSVG() {
     }
 
     innerSvg += `  <line x1="${x0}" y1="${lineY}" x2="${x1e}" y2="${lineY}" stroke="black" stroke-width="2.5"/>\n`;
-    innerSvg += `  <path d="M ${x0} ${lineY} L ${x0 + 12} ${lineY - 6} L ${x0 + 12} ${lineY + 6} Z" fill="black"/>\n`;
-    innerSvg += `  <path d="M ${x1e} ${lineY} L ${x1e - 12} ${lineY - 6} L ${x1e - 12} ${lineY + 6} Z" fill="black"/>\n`;
+    // Arrowheads say "this line carries on"; a bounded scale (a measuring strip, a segment between
+    // two known values) shouldn't claim that, so they can be turned off.
+    if (showArrowsNl) {
+      innerSvg += `  <path d="M ${x0} ${lineY} L ${x0 + 12} ${lineY - 6} L ${x0 + 12} ${lineY + 6} Z" fill="black"/>\n`;
+      innerSvg += `  <path d="M ${x1e} ${lineY} L ${x1e - 12} ${lineY - 6} L ${x1e - 12} ${lineY + 6} Z" fill="black"/>\n`;
+    }
 
     // Increment is user-settable; guard against pathologically fine steps on large ranges by
     // auto-coarsening the effective step rather than silently truncating ticks partway through the line.
@@ -1318,6 +1323,7 @@ function buildMathShapeSVG() {
 function generateAndInsertMathShape() {
   const built = buildMathShapeSVG();
   const { labelSpecs, srcBox } = built;
+  const type = $("shapeTypeSelect").value; // decides which placed-size default applies
   // Leaving the dialog, so record which faces its maths needs — the fonts themselves are spliced
   // in on the way to an <img> or a file, not stored (see stampShapeMathFaces).
   const svgString = stampShapeMathFaces(built.svgString);
@@ -1327,7 +1333,7 @@ function generateAndInsertMathShape() {
   if (target) {
     replaceGeneratedShape(target, svgString, genParams);
   } else {
-    beginShapePlacement(svgString, labelSpecs, srcBox, genParams);
+    beginShapePlacement(svgString, labelSpecs, srcBox, genParams, type);
   }
 }
 

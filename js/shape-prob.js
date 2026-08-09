@@ -28,6 +28,14 @@ function probList(raw, fallback) {
   return out.length ? out : (fallback || []);
 }
 const probNum = (raw, dflt) => { const v = parseFloat(raw); return Number.isFinite(v) ? v : dflt; };
+/* A per-item colour list, falling back to the shared palette. Accepts anything CSS does — "red",
+   "#e2483f", "rgb(...)" — because typing a word is faster than opening a picker, and blanks fall
+   through to the default so "keep the first two, recolour the third" is ",,green". */
+function probColours(raw, count, fallback) {
+  const typed = String(raw == null ? "" : raw).split(",").map(s => s.trim());
+  return Array.from({ length: count }, (_, i) =>
+    typed[i] || (fallback ? fallback(i) : PROB_FILLS[i % PROB_FILLS.length]));
+}
 // A rounded value that still reads as an integer when it is one — SVG coordinates with long
 // decimal tails bloat the string for no visual gain.
 const pn = v => Math.round(v * 100) / 100;
@@ -44,6 +52,8 @@ function buildSpinnerSvg() {
   const fontSize = Math.max(8, probNum($("spFontSize").value, 26));
   const coloured = $("spColour").checked;
   const pointer = $("spPointer").checked;
+  // Per-section colours, so "shade the sections showing a 3" is one field rather than a limitation.
+  const fills = probColours($("spColourList").value, n, i => coloured ? PROB_FILLS[i % PROB_FILLS.length] : "#FFFFFF");
 
   const S = 500, cx = S / 2, cy = S / 2, r = 195;
   const pt = a => `${pn(cx + r * Math.cos(a))} ${pn(cy + r * Math.sin(a))}`;
@@ -53,7 +63,7 @@ function buildSpinnerSvg() {
   for (let i = 0; i < n; i++) {
     const sweep = (weights[i] / total) * Math.PI * 2;
     const a1 = a0 + sweep;
-    const fill = coloured ? PROB_FILLS[i % PROB_FILLS.length] : "#FFFFFF";
+    const fill = fills[i];
     if (n === 1) {
       inner += `  <circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${PROB_INK}" stroke-width="3"/>\n`;
     } else {
@@ -95,7 +105,7 @@ function buildVennSvg() {
   const labelB = $("vnLabelB").value.trim() || "B";
   const labelC = $("vnLabelC").value.trim() || "C";
   const uni = $("vnUniversal").value.trim();
-  const shade = $("vnShade").value; // none | a | b | both | either
+  const tint = $("vnShadeColour").value || "#BBD8EE";
 
   // Three circles need the extra depth for C's name, which sits below its circle rather than
   // beside it — at 470 it collided with the universal set's own border.
@@ -112,27 +122,35 @@ function buildVennSvg() {
        { x: W / 2, y: cy0 + dx * 1.7, t: labelC }]
     : [{ x: W / 2 - dx, y: cy0, t: labelA }, { x: W / 2 + dx, y: cy0, t: labelB }];
 
-  // Shading is drawn under the outlines, clipped to the circles, so an intersection reads as one
-  // solid region rather than two overlapping translucent discs.
-  if (shade !== "none" && !three) {
-    const [A, B] = circles;
-    inner += `  <defs>\n` +
-      `    <clipPath id="vnA"><circle cx="${A.x}" cy="${A.y}" r="${r}"/></clipPath>\n` +
-      `    <clipPath id="vnB"><circle cx="${B.x}" cy="${B.y}" r="${r}"/></clipPath>\n` +
-      `  </defs>\n`;
-    const tint = "#BBD8EE";
-    if (shade === "both") {
-      inner += `  <g clip-path="url(#vnA)"><circle cx="${B.x}" cy="${B.y}" r="${r}" fill="${tint}"/></g>\n`;
-    } else if (shade === "either") {
-      inner += `  <circle cx="${A.x}" cy="${A.y}" r="${r}" fill="${tint}"/>\n` +
-        `  <circle cx="${B.x}" cy="${B.y}" r="${r}" fill="${tint}"/>\n`;
-    } else {
-      const only = shade === "a" ? A : B, other = shade === "a" ? B : A;
-      inner += `  <defs><mask id="vnOnly">` +
-        `<circle cx="${only.x}" cy="${only.y}" r="${r}" fill="#fff"/>` +
-        `<circle cx="${other.x}" cy="${other.y}" r="${r}" fill="#000"/></mask></defs>\n` +
-        `  <circle cx="${only.x}" cy="${only.y}" r="${r}" fill="${tint}" mask="url(#vnOnly)"/>\n`;
-    }
+  /* Shading, one checkbox per region, so any combination is reachable — "A only", "everything
+     except B", "just the middle" are all the same mechanism rather than five hard-coded presets.
+
+     Every region is "the circles it's inside, minus the circles it's outside". Intersection comes
+     from NESTED clip paths (each one narrows what's left), subtraction from a mask that paints the
+     excluded circles black. The outside region is the degenerate case with nothing to intersect,
+     which is why it falls out of the same code instead of needing its own. Drawn before the
+     outlines so a shaded region reads as one solid area, not two overlapping translucent discs. */
+  const REGIONS = three
+    ? [["a", [0], [1, 2]], ["b", [1], [0, 2]], ["c", [2], [0, 1]],
+       ["ab", [0, 1], [2]], ["ac", [0, 2], [1]], ["bc", [1, 2], [0]],
+       ["abc", [0, 1, 2], []], ["out", [], [0, 1, 2]]]
+    : [["a", [0], [1]], ["b", [1], [0]], ["ab", [0, 1], []], ["out", [], [0, 1]]];
+  const on = REGIONS.filter(([key]) => { const el = $("vnShade_" + key); return el && el.checked; });
+  if (on.length) {
+    const disc = i => `<circle cx="${circles[i].x}" cy="${circles[i].y}" r="${r}"`;
+    let defs = "", body = "";
+    circles.forEach((_, i) => { defs += `    <clipPath id="vnc${i}">${disc(i)}/></clipPath>\n`; });
+    on.forEach(([key, inc, exc], k) => {
+      const maskId = `vnm${k}`;
+      if (exc.length) {
+        defs += `    <mask id="${maskId}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="#fff"/>` +
+          exc.map(i => `${disc(i)} fill="#000"/>`).join("") + `</mask>\n`;
+      }
+      const open = inc.map(i => `<g clip-path="url(#vnc${i})">`).join("");
+      body += `  ${open}<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="${tint}"` +
+        `${exc.length ? ` mask="url(#${maskId})"` : ""}/>${"</g>".repeat(inc.length)}\n`;
+    });
+    inner += `  <defs>\n${defs}  </defs>\n${body}`;
   }
   for (const c of circles) {
     inner += `  <circle cx="${c.x}" cy="${c.y}" r="${r}" fill="none" stroke="#2D4E86" stroke-width="2.8"/>\n`;
@@ -190,6 +208,8 @@ function buildTableSvg() {
   const rows = probList($("tbRows").value, ["", ""]);
   const totals = $("tbTotals").checked;
   const shaded = $("tbShade").checked;
+  const headFill = $("tbHeadColour").value || PROB_HEADER_FILL;
+  const stripeFill = $("tbStripe").checked ? ($("tbStripeColour").value || "#F4F7FB") : null;
   const corner = $("tbCorner").value.trim();
   const fontSize = Math.max(8, probNum($("tbFontSize").value, 22));
   // One line per row, cells separated by commas — the shape of the thing you're describing.
@@ -218,13 +238,16 @@ function buildTableSvg() {
   const cellRect = (x, y, w, h, fill) =>
     `  <rect x="${pn(x)}" y="${pn(y)}" width="${pn(w)}" height="${pn(h)}" fill="${fill}" ` +
     `stroke="#2D4E86" stroke-width="1.8"/>\n`;
-  const head = shaded ? PROB_HEADER_FILL : "#FFFFFF";
+  const head = shaded ? headFill : "#FFFFFF";
   // Header row and column first, so the body cells' strokes overlay them consistently.
   inner += cellRect(x0, y0, headW, rowH, head);
   for (let c = 0; c < nc; c++) inner += cellRect(colX[c], y0, colW[c], rowH, head);
   for (let r = 0; r < nr; r++) {
     inner += cellRect(x0, y0 + rowH * (r + 1), headW, rowH, head);
-    for (let c = 0; c < nc; c++) inner += cellRect(colX[c], y0 + rowH * (r + 1), colW[c], rowH, "#FFFFFF");
+    // Striping alternate rows makes a wide table readable across. Off by default: a table meant
+    // to be written in by hand wants nothing competing with the pencil.
+    const bodyFill = stripeFill && r % 2 === 1 ? stripeFill : "#FFFFFF";
+    for (let c = 0; c < nc; c++) inner += cellRect(colX[c], y0 + rowH * (r + 1), colW[c], rowH, bodyFill);
   }
   const put = (text, cxp, cyp, bold, fill) => {
     if (!text) return;
@@ -257,6 +280,7 @@ function buildTreeSvg() {
   const labelGroups = String($("trLabels").value || "").split(";").map(g => probList(g, []));
   const probGroups = String($("trProbs").value || "").split(";").map(g => probList(g, []));
   const showOutcomes = $("trOutcomes").checked;
+  const branchColour = $("trColour").value || "#2D4E86";
   const groupFor = (groups, stage) => {
     const g = groups.length === 1 ? groups[0] : (groups[stage] || []);
     return g || [];
@@ -301,7 +325,7 @@ function buildTreeSvg() {
   let inner = "";
   for (const e of edges) {
     inner += `  <line x1="${pn(e.x1)}" y1="${pn(e.y1)}" x2="${pn(e.x2)}" y2="${pn(e.y2)}" ` +
-      `stroke="#2D4E86" stroke-width="2.4" stroke-linecap="round"/>\n`;
+      `stroke="${branchColour}" stroke-width="2.4" stroke-linecap="round"/>\n`;
     if (e.prob) {
       // Off the middle of the branch, on the side the branch is heading: sibling branches meet at
       // their parent, so two labels both nudged the same way end up almost on top of each other.
@@ -314,7 +338,7 @@ function buildTreeSvg() {
       });
     }
   }
-  inner += `  <circle cx="${pn(padL)}" cy="${pn(rootY)}" r="4" fill="#2D4E86"/>\n`;
+  inner += `  <circle cx="${pn(padL)}" cy="${pn(rootY)}" r="4" fill="${branchColour}"/>\n`;
   for (const nd of nodes) {
     inner += shapeLabelSvg(nd.label, { x: nd.x, y: nd.y + fontSize * 0.35, fontSize, fill: PROB_INK,
       attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
