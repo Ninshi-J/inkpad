@@ -145,7 +145,12 @@ function mathSizePx(textSize) { return textSize * MATH_SIZE_SCALE; }
 // Keyed by world-space (zoom-independent) font size, matching how the canvas already draws
 // doc.images at a world-space w/h scaled by V.zoom -- avoids re-rendering on every zoom tick.
 const mathSpanCache = new Map(); // key -> {img, w, h, dataURL, baselineOffset, failed} | Promise
-function mathCacheKey(src, sizePx, color) { return `${src} ${sizePx} ${color}`; }
+// Joined on U+0000 because it is the one character a formula can never contain, so no
+// combination of source/size/colour can collide with another. Written as the escape and never
+// as a literal NUL byte: that makes the whole file read as binary to git and grep, and an editor
+// that strips it on save would silently merge keys ("v_1" at 6 and "v_" at 16 both becoming
+// "v_16"), serving one formula the image rendered for another.
+function mathCacheKey(src, sizePx, color) { return `${src}\u0000${sizePx}\u0000${color}`; }
 
 async function renderMathSpan(src, sizePx, color) {
   const katex = await loadKatex();
@@ -321,7 +326,8 @@ function katexCssPartsFromText(css) {
 
 const shapeMathCache = new Map(); // key -> {html, style, w, h, baselineOffset, faceKeys} | Promise
 let shapeMathOnReady = null;      // set by the shape dialog, so a finished render redraws its preview
-const shapeMathKey = (line, sizePx, cssFont) => `${line} ${sizePx} ${cssFont}`;
+// Same U+0000 join, same reasons, as mathCacheKey above.
+const shapeMathKey = (line, sizePx, cssFont) => `${line}\u0000${sizePx}\u0000${cssFont}`;
 
 /* Renders a WHOLE label, not a single formula: an axis reads "Speed $v$ (m s^{-1})" as often as it
    reads pure maths, and laying text and formulae out side by side is something inline HTML already
