@@ -34,13 +34,16 @@ function toggleShapeFormFields() {
   if (type === "histogram") $("hgClassFields").style.display = $("hgLabels").value.trim() ? "none" : "";
   if (type === "table") {
     const kind = $("tbPreset").value;
-    document.querySelectorAll("#tableFields .table-sample-only").forEach(el => {
-      el.style.display = kind === "sample" ? "" : "none";
-    });
-    // A sample space fills every cell itself, and only a two-way table has totals to add.
-    document.querySelectorAll("#tableFields .table-body-only").forEach(el => {
-      el.style.display = kind === "sample" ? "none" : "";
-    });
+    const only = (cls, on) => document.querySelectorAll("#tableFields ." + cls)
+      .forEach(el => { el.style.display = on ? "" : "none"; });
+    only("table-sample-only", kind === "sample");
+    // A plain table asks for a size, because it has no headings to be named — every cell of it is
+    // typed on the preview. The other two are built from lists of outcomes.
+    only("table-plain-only", kind === "plain");
+    only("table-heads-only", kind !== "plain");
+    // Bulk starting values are worth a field only for the two-way kind: a sample space fills every
+    // cell itself, and a plain table is quicker to fill in on the preview than to describe here.
+    only("table-body-only", kind === "twoWay");
     $("tbTotalsField").style.display = kind === "twoWay" ? "" : "none";
   }
   // A third circle brings three more regions with it — hidden rather than disabled so the

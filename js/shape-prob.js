@@ -201,9 +201,10 @@ function buildVennSvg() {
 
 /* ---------------- table ----------------
    The dialog preview only. A table is placed as a live object rather than an image (see
-   js/table-obj.js), so this builds the very object that will be inserted and renders THAT, which
-   is the only way the preview and the result cannot drift apart. */
-function buildTableSvg() { return tableToSvg(buildTableFromDialog()); }
+   js/table-obj.js), so this renders the very object that will be inserted — which is the only way
+   the preview and the result cannot drift apart, and the reason the preview can be typed into and
+   have rows added to it directly. */
+function buildTableSvg() { return tableEditorSvg(tableDraftForDialog()); }
 
 /* ---------------- tree ----------------
    Stage sizes are given as a list ("2,2" for two coin tosses, "3,3" for the blood-group example),

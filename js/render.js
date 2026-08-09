@@ -514,6 +514,8 @@ function buildSelToolbarContent(showItems, showShape, editableImage) {
       sepEl();
       mk("✎ Edit", () => editGeneratedShape(editableImage), "Re-open this graph in the Math Shape Importer, same spot & size");
     }
+    const table = selTable();
+    if (table) tableSelToolbarButtons(table, mk, sepEl);
   }
   if (showShape) {
     if (showItems) sepEl();
@@ -611,7 +613,11 @@ function positionSelToolbar() {
   // current width/colour — those change continuously while the slider is being dragged, and a
   // rebuild mid-drag would destroy the very slider under the user's finger.
   const inkSel = selectedStrokes();
-  const sig = `${showItems}|${showShape}|${!!editableImage}|${inkSel.length}|${inkSel[0] ? inkSel[0].tool : ""}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
+  // A table's row/column buttons name the line they act on, so the size of the table and which
+  // cell is focused are both part of what the toolbar currently says.
+  const tb = selTable();
+  const tbSig = tb ? `${tableRows(tb)}x${tableCols(tb)}|${JSON.stringify(tableFocusIn(tb) || null, ["r", "c"])}` : "";
+  const sig = `${showItems}|${showShape}|${!!editableImage}|${tbSig}|${inkSel.length}|${inkSel[0] ? inkSel[0].tool : ""}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
   if (sig !== selToolbarSig) { selToolbarSig = sig; buildSelToolbarContent(showItems, showShape, editableImage); }
   const b = selBounds() || shapeBounds(sel.shape);
   if (!b) { host.classList.remove("open"); return; }

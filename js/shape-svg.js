@@ -1477,16 +1477,19 @@ function renderShapePreview() {
   // No font payload here: this SVG is inline in the page, so the page's own stylesheet reaches
   // into its foreignObjects.
   $("shapePreview").innerHTML = preview;
+  const type = $("shapeTypeSelect").value;
   const hint = $("shapeStageHint");
   if (hint) {
     const bits = [];
+    if (type === "table") {
+      bits.push("click a cell to type in it (Tab moves on)", "＋ adds a row or column, ✕ removes one");
+    }
     if (handles.some(h => h.kind === "vertex")) bits.push("drag a corner");
     if (handles.some(h => h.kind === "rotate")) bits.push("drag the outer grip to rotate");
     if (hotspots.length || labelSpecs.some(l => l.field)) bits.push("click a value on the shape to edit it");
     hint.textContent = bits.join(" · ");
   }
 
-  const type = $("shapeTypeSelect").value;
   const FN_STATUS_IDS = { plane: "planeFnStatus", planeMath: "pmFnStatus", planeQ1: "q1FnStatus" };
   const statusId = FN_STATUS_IDS[type];
   Object.values(FN_STATUS_IDS).forEach(id => { if (id !== statusId) $(id).style.display = "none"; });
@@ -1533,6 +1536,9 @@ function shapeSetField(id, value) {
    rebuilds for no gain. */
 function onShapeStagePointerDown(e) {
   const stage = $("shapePreview");
+  // A table's preview carries its own controls — cells to type in, chips to add and remove rows —
+  // and none of the grip/hotspot machinery below applies to it.
+  if (tablePreviewPointerDown(e)) return;
   const grip = e.target.closest(".shape-grip");
   if (grip) {
     const h = shapePreviewHandles[+grip.dataset.handle];

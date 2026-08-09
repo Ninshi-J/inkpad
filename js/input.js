@@ -338,6 +338,10 @@ function endPointer(e) {
           sel.items = picked ? [picked] : [];
         }
         sel.shape = null;
+        // A click inside a table marks the cell the toolbar's row/column buttons act on, without
+        // opening an editor — double-click still does that. Otherwise "insert below this row"
+        // would only ever be reachable by typing in a cell first and then clicking away.
+        if (picked && picked.kind === "table") tableFocusAt(picked.ref, w.x, w.y);
       } else {
         finishLasso(drag.partial);
       }

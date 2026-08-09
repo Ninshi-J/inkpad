@@ -609,6 +609,27 @@ kbd.listening { background: var(--accent-soft); border-color: var(--accent); }
 /* An empty side/angle: nothing is drawn there yet, so the outline IS the affordance. */
 .shape-hot.placeholder { stroke-opacity: .5; }
 .shape-readout { font-family: sans-serif; font-weight: 600; fill: var(--ink-soft); pointer-events: none; }
+/* ---- a table's preview, which is the table itself and the controls for changing it ---- */
+/* Sized in world units by the markup (the viewBox is the table's own coordinate space), coloured
+   here. Strokes are non-scaling so a chip's outline is a hairline whatever the table's scale. */
+.tbl-cell { fill: transparent; cursor: text; }
+.tbl-cell:hover { fill: var(--accent-soft); fill-opacity: .5; }
+.tbl-strip-hit { fill: transparent; }
+.tbl-chip { cursor: pointer; }
+.tbl-chip circle { fill: #fff; stroke: var(--accent); stroke-width: 1.2; }
+.tbl-chip text { fill: var(--accent); font-family: sans-serif; font-weight: 700; pointer-events: none; }
+.tbl-chip:hover circle { fill: var(--accent-soft); }
+/* Deleting is the one destructive control here, so it says so on the way in rather than after. */
+.tbl-del circle { stroke-opacity: .45; }
+.tbl-del text { fill-opacity: .5; }
+.tbl-del:hover circle { fill: #FDE2E2; stroke: #C0392B; stroke-opacity: 1; }
+.tbl-del:hover text { fill: #C0392B; fill-opacity: 1; }
+/* Insert-between: hidden until the pointer is somewhere in that strip, so a wide table isn't a row
+   of controls you have to read past. The always-visible ＋ at the end of each strip is what makes
+   the gesture discoverable; these are the shortcut once you know it. */
+.tbl-ins { opacity: 0; transition: opacity .12s; }
+.tbl-strip:hover .tbl-ins { opacity: .75; }
+.tbl-strip .tbl-ins:hover { opacity: 1; }
 .shape-grip { fill: #fff; stroke: var(--accent); cursor: grab; }
 .shape-grip:hover { fill: var(--accent-soft); }
 .shape-grip-rotate { stroke-dasharray: 3 2; }

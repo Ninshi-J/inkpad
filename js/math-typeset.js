@@ -228,6 +228,9 @@ async function renderMathSpan(src, sizePx, color) {
   const entry = { img: c, w, h, baselineOffset, dataURL: c.toDataURL("image/png") };
   mathSpanCache.set(mathCacheKey(src, sizePx, color), entry);
   needsDraw = true;
+  // The canvas isn't the only thing that can be waiting on one of these: a table's cells are drawn
+  // from the same spans, and the dialog's live preview of one has no draw loop to pick it up.
+  if (shapeMathOnReady) shapeMathOnReady();
   return entry;
 }
 

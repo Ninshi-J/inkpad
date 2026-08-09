@@ -110,6 +110,9 @@ async function exportPdf(pages) {
         }
       }
     }
+    // Table cells hold maths too, and a cell's contents are centred on their own total width — so
+    // the spans have to exist before anything in a table can be positioned either.
+    for (const tb of doc.tables) if (!tb.del) jobs.push(...tableMathJobs(tb));
     await Promise.all(jobs);
   }
   await warmMathSpans();
@@ -385,16 +388,30 @@ async function exportPdf(pages) {
             color: head ? rgb(hr, hg, hb) : (striped ? rgb(sr2, sg2, sb2) : rgb(1, 1, 1)),
             borderColor: rgb(gr, gg, gb), borderWidth: 1,
           });
-          const raw = sanitizeForWinAnsi(String(tb.cells[r][c] || ""));
-          if (!raw) continue;
           // Tables always draw in the default sans face, matching drawOneTable on the canvas.
           const f = pdfFontFor({ font: DEFAULT_FONT_KEY }, head, false);
-          let tw = 0;
-          try { tw = f.widthOfTextAtSize(raw, tb.fontSize); } catch (_) { tw = 0; }
-          page.drawText(raw, {
-            x: X(q.x + q.w / 2 - tw / 2), y: Y(q.y + q.h / 2 + tb.fontSize * 0.35),
-            size: tb.fontSize * PT, font: f, color: head ? rgb(gr, gg, gb) : rgb(xr, xg, xb),
+          // Measured with the PDF font's own metrics so the centring matches what actually lands on
+          // the page; maths comes back as the same raster span the canvas and the SVG both place.
+          const lay = tableCellLayout(tb, r, c, s => {
+            try { return f.widthOfTextAtSize(sanitizeForWinAnsi(s), tb.fontSize); } catch (_) { return 0; }
           });
+          if (!lay.pieces.length) continue;
+          const baseline = q.y + q.h / 2 + tb.fontSize * 0.35;
+          const left = q.x + q.w / 2 - lay.width / 2;
+          for (const p of lay.pieces) {
+            if (p.span) {
+              const pngImg = await getMathPdfImage(p.span);
+              page.drawImage(pngImg, {
+                x: X(left + p.x), y: Y(baseline + p.span.baselineOffset + p.span.h),
+                width: p.w * PT, height: p.span.h * PT,
+              });
+              continue;
+            }
+            page.drawText(sanitizeForWinAnsi(p.text), {
+              x: X(left + p.x), y: Y(baseline),
+              size: tb.fontSize * PT, font: f, color: head ? rgb(gr, gg, gb) : rgb(xr, xg, xb),
+            });
+          }
         }
       }
     }
@@ -563,26 +580,12 @@ async function buildPageSvg(srcP) {
     body += `<rect x="${t.x}" y="${t.y - top}" width="${t.w}" height="${t.h}" fill="${t.color || "#FFD682"}"/>\n`;
   }
 
-  for (const tb of doc.tables) {
-    if (tb.del || tb.y < top || tb.y >= bot || !isLayerVisible(tb.layer)) continue;
-    const fam = FONT_STACKS[DEFAULT_FONT_KEY].css;
-    for (let r = 0; r < tableRows(tb); r++) {
-      for (let c = 0; c < tableCols(tb); c++) {
-        if (tableSkip(tb, r, c)) continue;
-        const q = tableCellRect(tb, r, c);
-        const head = tableIsHead(tb, r, c);
-        const striped = !head && tb.stripeFill && (r - tb.headRows) % 2 === 1;
-        const fill = head ? tb.headFill : (striped ? tb.stripeFill : "#FFFFFF");
-        body += `<rect x="${q.x}" y="${q.y - top}" width="${q.w}" height="${q.h}" fill="${fill}" ` +
-          `stroke="${tb.gridColour}" stroke-width="1.6"/>\n`;
-        const text = String(tb.cells[r][c] || "");
-        if (!text) continue;
-        body += `<text xml:space="preserve" x="${q.x + q.w / 2}" y="${q.y - top + q.h / 2 + tb.fontSize * 0.35}" ` +
-          `font-family="${fam}" font-size="${tb.fontSize}"${head ? ' font-weight="bold"' : ""} ` +
-          `text-anchor="middle" fill="${head ? tb.gridColour : tb.textColour}">${escapeXml(text)}</text>\n`;
-      }
-    }
-  }
+  // Every cell's maths resolved before any of it is laid out: tableSvgBody centres a cell on its
+  // total width, and a formula has no width until its span has rendered.
+  const pageTables = doc.tables.filter(tb => !tb.del && tb.y >= top && tb.y < bot && isLayerVisible(tb.layer));
+  await Promise.all(pageTables.map(tableWarmMath));
+  // The same markup the dialog previews and the canvas draw from — cell by cell, still vector.
+  for (const tb of pageTables) body += tableSvgBody(tb, 0, top);
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +

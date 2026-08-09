@@ -857,8 +857,9 @@
 
   <div id="tableFields" style="display: none;">
     <div style="font-size:11.5px; color:var(--ink-soft); line-height:1.5; margin-bottom:8px;">
-      A table is placed as a live object, not a picture — double-click any cell to type in it, and
-      Tab or Enter walks to the next one. It moves, scales and copies as one piece.
+      Build it on the preview: click a cell to type in it, ＋ adds a row or column and ✕ removes one.
+      Cells take <code>$...$</code> maths. It goes on the page as a live object, not a picture —
+      double-click any cell to type in it there too, and it moves, scales and copies as one piece.
     </div>
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
       <div class="shape-field"><label>Kind</label>
@@ -867,6 +868,16 @@
           <option value="twoWay">Two-way table</option>
           <option value="sample">Sample space (outcome pairs)</option>
         </select></div>
+    </div>
+    <div class="shape-form-grid table-plain-only">
+      <div class="shape-field"><label for="tbPlainCols">Columns</label>
+        <input type="number" id="tbPlainCols" min="1" max="20" step="1" value="3" onchange="syncTableCountsFromForm()"></div>
+      <div class="shape-field"><label for="tbPlainRows">Rows</label>
+        <input type="number" id="tbPlainRows" min="1" max="40" step="1" value="3" onchange="syncTableCountsFromForm()"></div>
+    </div>
+    <div class="shape-form-grid table-plain-only">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="tbHeadRow" checked> Heading row</label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="tbHeadCol"> Heading column</label>
     </div>
     <div class="shape-form-grid table-sample-only" style="display:none;">
       <div class="shape-field"><label>Name the across axis</label>
@@ -877,11 +888,11 @@
     <div class="shape-form-grid table-sample-only" style="display:none; grid-template-columns: 1fr;">
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="tbNoRepeat"> Without replacement (cross out the repeats)</label>
     </div>
-    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+    <div class="shape-form-grid table-heads-only" style="grid-template-columns: 1fr;">
       <div class="shape-field"><label>Column Headings (comma separated)</label>
         <input type="text" id="tbCols" value="Mac, No Mac" placeholder="Mac, No Mac"></div>
     </div>
-    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+    <div class="shape-form-grid table-heads-only" style="grid-template-columns: 1fr;">
       <div class="shape-field"><label>Row Headings (comma separated)</label>
         <input type="text" id="tbRows" value="PC, No PC" placeholder="PC, No PC"></div>
     </div>
