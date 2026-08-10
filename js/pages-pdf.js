@@ -492,6 +492,11 @@ async function serialize(pages) {
       baseMs: t.running ? timerObjElapsedMs(t) : t.baseMs, layer: t.layer,
     })),
     tables: src.tables.map(tableToJson),
+    // The page pitch these coordinates were laid out against. Recorded because it is not derivable
+    // from the settings alone across versions: an all-landscape document used to reserve PORTRAIT
+    // height per page, so a file written by that build puts page 2 onwards where this build no
+    // longer looks. deserialize migrates when they disagree.
+    pageStride: stride(),
     audio: segs,
     ...(Object.keys(pdfSourcesOut).length ? { pdfSources: pdfSourcesOut } : {}),
     // One shared copy of the KaTeX faces this notebook's shapes need, rather than ~82KB inside
@@ -582,6 +587,13 @@ function deserialize(json) {
     audio.segments.push({ blob, url: URL.createObjectURL(blob), startMs: a.startMs, durMs: a.durMs });
     audio.totalMs = Math.max(audio.totalMs, a.startMs + a.durMs);
   }
+  /* Files written before pageStride existed carry no pitch. Only an all-landscape document can be
+     wrong — portrait's pitch never changed — so that is the only case where a missing marker is
+     read as "the old value"; anything else is left exactly where it is rather than guessed at. */
+  const savedStride = d.pageStride != null ? d.pageStride
+    : (documentIsAllLandscape() ? PAPERS[S.paper][1] + PAGE_GAP : stride());
+  if (reflowPagesForStride(savedStride, stride())) bumpPages(contentBottom());
+
   undoStack = []; redoStack = []; clearSelection();
   V.scroll = 0; dirty = false;
   resetCleanMarkers();

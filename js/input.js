@@ -123,7 +123,10 @@ cv.addEventListener("pointerdown", e => {
       // under the cursor back OUT of the selection, so it deliberately skips the drag-to-move
       // branch that would otherwise swallow it.
       if (!additive && b && w.x > b.x0 - 10 && w.x < b.x1 + 10 && w.y > b.y0 - 10 && w.y < b.y1 + 10) {
-        drag = { mode: "selMove", lx: w.x, ly: w.y, dx: 0, dy: 0 };
+        // The bounds at pointerdown, so every move re-derives the snapped position from the RAW
+        // pointer offset. Applying snap corrections incrementally instead would leave the
+        // selection permanently offset from the pointer by however much it had snapped so far.
+        drag = { mode: "selMove", x0: w.x, y0: w.y, dx: 0, dy: 0, box0: b };
       } else {
         if (!additive) clearSelection(); // Ctrl builds on what's already picked
         drag = { mode: "lassoNew", additive, rect: e.shiftKey, partial: e.altKey, downPx: px, downPy: py, x0: w.x, y0: w.y, moved: false };
@@ -245,9 +248,15 @@ cv.addEventListener("pointermove", e => {
     }
     case "selMove": {
       const w = evtWorld(e);
-      const dx = w.x - drag.lx, dy = w.y - drag.ly;
-      drag.lx = w.x; drag.ly = w.y; drag.dx += dx; drag.dy += dy;
-      sel.items.forEach(it => shiftObject(it.ref, it.kind, dx, dy));
+      const rawDx = w.x - drag.x0, rawDy = w.y - drag.y0;
+      const b = drag.box0;
+      // Alt drags free, the usual escape hatch for when the guide is in the way of what you want.
+      const snap = e.altKey ? { dx: 0, dy: 0 } : pageSnapOffset({
+        x0: b.x0 + rawDx, y0: b.y0 + rawDy, x1: b.x1 + rawDx, y1: b.y1 + rawDy,
+      });
+      const wantDx = rawDx + snap.dx, wantDy = rawDy + snap.dy;
+      sel.items.forEach(it => shiftObject(it.ref, it.kind, wantDx - drag.dx, wantDy - drag.dy));
+      drag.dx = wantDx; drag.dy = wantDy;
       needsDraw = true;
       break;
     }

@@ -483,6 +483,103 @@ function documentIsAllLandscape() {
   return true;
 }
 const stride = () => PAPERS[S.paper][documentIsAllLandscape() ? 0 : 1] + PAGE_GAP;
+
+/* Which page a box belongs to — by how much of it is on each page, not by where its top edge is.
+
+   Attributing by the top edge alone means nudging something one pixel above a page boundary hands
+   it to the PREVIOUS page while 99.9% of it is still on this one. Export then places it relative
+   to that page's top, a whole stride further down than the paper is tall, so it lands entirely off
+   the bottom of a page it was never on and is missing from the page it was: an imported PDF that
+   renders on page 1 and nowhere after it. A pixel of slop should not be able to do that. */
+function pageIndexForBox(y, h) {
+  const st = stride();
+  const last = Math.max(0, S.pages - 1);
+  const first = Math.max(0, Math.min(last, Math.floor(y / st)));
+  if (!(h > 0)) return first;
+  let best = first, bestOverlap = -Infinity;
+  for (let p = first; p <= last; p++) {
+    const top = p * st;
+    if (top > y + h) break;
+    const overlap = Math.min(y + h, top + pageDims(p).h) - Math.max(y, top);
+    if (overlap > bestOverlap) { bestOverlap = overlap; best = p; }
+  }
+  return best;
+}
+const pageIndexForObject = o => pageIndexForBox(o.y, o.h || 0);
+
+/* ---------------- keeping content on its page when the page grid changes ----------------
+   Object positions are absolute world y; which page something is ON is derived from that by
+   dividing by stride(). So anything that changes stride — the paper size, the orientation, a
+   per-page orientation override — moves the page boundaries out from under content that doesn't
+   move with them. Page 1 starts at 0 either way and looks fine, which is why the symptom is always
+   "everything after the first page is wrong": at each page boundary the drift grows by another
+   whole stride, until later pages have slid off the end of the document entirely.
+
+   Each object is put back where it was on ITS page: same page index, same offset down that page.
+   The offset is deliberately NOT rescaled — a shorter page means content can now hang past the
+   bottom, but that is the honest consequence of choosing a smaller page, whereas squashing the
+   spacing would silently move ink relative to the ink beside it. */
+function reflowPagesForStride(was, now) {
+  if (!Number.isFinite(was) || !Number.isFinite(now) || Math.abs(was - now) < 0.5) return false;
+  const moveY = y => {
+    const p = Math.max(0, Math.floor(y / was));
+    return y - p * was + p * now;
+  };
+  const shift = (o, kind) => {
+    const y = kind === "stroke" ? o.pts[0].y : o.y;
+    shiftObject(o, kind, 0, moveY(y) - y);
+  };
+  for (const s of doc.strokes) shift(s, "stroke");
+  for (const arr of [doc.tapes, doc.texts, doc.images, doc.timers, doc.tables]) {
+    for (const o of arr) shift(o, "");
+  }
+  return true;
+}
+/* ---------------- snapping a dragged selection to its page ----------------
+   An imported page is meant to sit exactly on the page it fills, and by hand it never quite does —
+   a pixel out is invisible on screen and changes which page the thing belongs to. So the page's own
+   edges and centre lines pull anything dragged near them.
+
+   Given where the selection WOULD land, returns the small correction that puts it on the nearest
+   guide. Both axes are independent, so an edge can catch without the other axis being disturbed.
+   The threshold is in screen pixels, converted here, so it feels identical at every zoom. */
+const PAGE_SNAP_PX = 7;
+function pageSnapOffset(box) {
+  const tol = PAGE_SNAP_PX / Math.max(0.05, V.zoom);
+  const p = pageIndexForBox(box.y0, box.y1 - box.y0);
+  const dims = pageDims(p), top = p * stride();
+  // Each pair is "this guide line" against "the edge of the selection that would meet it".
+  const pick = pairs => {
+    let best = 0, bestD = tol;
+    for (const [guide, edge] of pairs) {
+      const d = guide - edge;
+      if (Math.abs(d) < bestD) { bestD = Math.abs(d); best = d; }
+    }
+    return best;
+  };
+  return {
+    dx: pick([[0, box.x0], [dims.w, box.x1], [dims.w / 2, (box.x0 + box.x1) / 2]]),
+    dy: pick([[top, box.y0], [top + dims.h, box.y1], [top + dims.h / 2, (box.y0 + box.y1) / 2]]),
+  };
+}
+// Wraps any change that can alter the page pitch, so the content follows it. Reads stride() before
+// and after rather than being told what changed, which means a new kind of page setting can never
+// forget to opt in.
+function withPageGrid(fn) {
+  const was = stride();
+  fn();
+  if (reflowPagesForStride(was, stride())) { bumpPages(contentBottom()); needsDraw = true; }
+}
+// How far down the document anything actually reaches — used after a reflow to make sure the page
+// count still covers the content, which a change of pitch can push past the last page.
+function contentBottom() {
+  let y = 0;
+  for (const s of doc.strokes) if (!s.del && s.bb) y = Math.max(y, s.bb.y1);
+  for (const arr of [doc.tapes, doc.texts, doc.images, doc.timers, doc.tables]) {
+    for (const o of arr) if (!o.del) y = Math.max(y, o.y + (o.h || 0));
+  }
+  return y;
+}
 // While the page fits within the viewport, it stays centered (ignoring scrollX) exactly like
 // before — horizontal panning only kicks in once zoomed in far enough that it doesn't fit, the
 // same way a native scroll container only shows a scrollbar when content overflows.

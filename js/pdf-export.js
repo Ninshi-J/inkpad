@@ -258,8 +258,7 @@ async function exportPdf(pages) {
 
     for (const im of doc.images) {
       if (im.del || !isLayerVisible(im.layer)) continue;
-      const imgP = Math.max(0, Math.min(S.pages - 1, Math.floor(im.y / stride())));
-      if (imgP !== srcP) continue;
+      if (pageIndexForObject(im) !== srcP) continue;
       let embedded = im.pdfSrcId != null ? await getEmbeddedPage(im) : null;
       let isForm = !!embedded;
       if (!embedded) { embedded = await getRasterImage(im).catch(() => null); isForm = false; }
@@ -557,8 +556,7 @@ async function buildPageSvg(srcP) {
 
   for (const im of doc.images) {
     if (im.del || !isLayerVisible(im.layer)) continue;
-    const imgP = Math.max(0, Math.min(S.pages - 1, Math.floor(im.y / stride())));
-    if (imgP !== srcP) continue;
+    if (pageIndexForObject(im) !== srcP) continue;
     body += svgImageEl(im, top);
   }
 

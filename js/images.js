@@ -59,7 +59,7 @@ function beginShapePlacement(svgString, labelSpecs, srcBox, genParams, shapeType
 // Keeps a w×h object fully on the page its top-left lands on, instead of letting it spill past
 // whichever edge is nearest. Shared by shape placement and clipboard-image paste.
 function clampObjToPage(x, y, w, h) {
-  const pageIdx = Math.max(0, Math.min(S.pages - 1, Math.floor(y / stride())));
+  const pageIdx = pageIndexForBox(y, h);
   const dims = pageDims(pageIdx);
   const pageTop = pageIdx * stride();
   const margin = 8;

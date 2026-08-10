@@ -81,8 +81,11 @@ function rebuildSidebar() {
   // Page/document setup below is never undo-tracked (no pushUndo call) -- invalidateCleanMarker()
   // stops undo/redo from ever mistaking a stack position match for "back to clean" while one of
   // these is still unsaved (see its comment in state.js).
-  $("setPaper").onchange = e => { S.paper = e.target.value; clampScroll(); markDirty(); invalidateCleanMarker(); };
-  $("setOrient").onchange = e => { S.landscape = e.target.value === "l"; clampScroll(); markDirty(); invalidateCleanMarker(); };
+  // withPageGrid: paper and orientation both change how much height each page reserves, and every
+  // object's position is an absolute world y — so without moving the content with the grid, page 2
+  // onwards slides off the page it was on (see reflowPagesForStride in js/state.js).
+  $("setPaper").onchange = e => { withPageGrid(() => { S.paper = e.target.value; }); clampScroll(); markDirty(); invalidateCleanMarker(); };
+  $("setOrient").onchange = e => { withPageGrid(() => { S.landscape = e.target.value === "l"; }); clampScroll(); markDirty(); invalidateCleanMarker(); };
   $("setTmpl").onchange = e => { S.template = e.target.value; markDirty(); invalidateCleanMarker(); };
   $("setRule").onchange = e => { S.ruleSp = Math.max(12, +e.target.value || 34); markDirty(); invalidateCleanMarker(); };
   $("setGrid").onchange = e => { S.gridSp = Math.max(10, +e.target.value || 28); markDirty(); invalidateCleanMarker(); };
@@ -99,7 +102,12 @@ function rebuildSidebar() {
   $("setPageRule").onchange = e => setPageOverride("ruleSp", e.target.value ? Math.max(12, +e.target.value) : null);
   $("setPageGrid").onchange = e => setPageOverride("gridSp", e.target.value ? Math.max(10, +e.target.value) : null);
   $("setPageOutline").onchange = e => setPageOverride("outline", e.target.value === "" ? null : e.target.value === "1");
-  $("setPageOrient").onchange = e => { setPageOverride("landscape", e.target.value === "" ? null : e.target.value === "l"); clampScroll(); };
+  // One page turned back to portrait makes the whole document reserve portrait height again
+  // (documentIsAllLandscape), so this changes the pitch for every page too.
+  $("setPageOrient").onchange = e => {
+    withPageGrid(() => setPageOverride("landscape", e.target.value === "" ? null : e.target.value === "l"));
+    clampScroll();
+  };
   refreshPageSetupControls();
 
   $("addPageBtn").onclick = () => { if (S.pages < MAX_PAGES) { S.pages++; V.scroll = maxScroll(); markDirty(); invalidateCleanMarker(); syncUI(); } };
