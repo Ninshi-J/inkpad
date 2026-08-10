@@ -968,6 +968,9 @@
       <div class="shape-field"><label for="slFontSize">Text Size (px)</label>
         <input type="number" id="slFontSize" min="10" max="60" step="1" value="22"></div>
     </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="slKey" checked> Print the key underneath</label>
+    </div>
   </div>
 
   <div id="histogramFields" style="display: none;">
@@ -1037,7 +1040,11 @@
         <input type="color" id="bxColour" value="#2d4e86" class="shape-colour"></div>
     </div>
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
-      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="bxShowValues"> Print the five values above the box</label>
+      <div class="shape-field"><label>Scale Label</label>
+        <input type="text" id="bxXLabel" value="" placeholder="Mass (kg)"></div>
+    </div>
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="bxShowValues"> Print the five values beside each box</label>
     </div>
   </div>
 

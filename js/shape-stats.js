@@ -56,16 +56,26 @@ function statPlaceholder(msg, w) {
    over the whole range INCLUDING empty ones — a stem with no leaves is a real gap in the
    distribution, and skipping the row is the classic way to make the plot lie about its shape. */
 function buildStemLeafSvg() {
-  const unit = Math.max(1, probNum($("slUnit").value, 10)); // what one step of the stem is worth
+  // What one step of the stem is worth. Allowed below 1 so heights in metres and times in seconds
+  // work: with a unit of 1 the leaf is the first DECIMAL place, which is most of the data a class
+  // actually measures. Before this it was clamped to whole numbers and 2.3 lost its .3 entirely.
+  const unit = Math.max(0.001, probNum($("slUnit").value, 10));
+  const leafUnit = unit / 10; // the place value one leaf digit stands for
   const left = probData($("slDataB").value);
   const right = probData($("slData").value);
   const backToBack = left.length > 0;
   const fontSize = Math.max(8, probNum($("slFontSize").value, 22));
   const titleR = $("slTitle").value.trim();
   const titleL = $("slTitleB").value.trim();
+  const showKey = $("slKey").checked;
 
-  const stemOf = v => Math.floor(v / unit);
-  const leafOf = v => Math.abs(Math.round(v - stemOf(v) * unit));
+  const stemOf = v => Math.floor(v / unit + 1e-9);
+  // A single digit: how many leafUnits into its stem the value sits. Scaling by the place value
+  // rather than subtracting a whole unit is what makes one function cover 234 (stem 100s), 23
+  // (stem 10s) and 2.3 (stem 1s) — the leaf is always the next digit down, whatever that is.
+  const leafOf = v => Math.min(9, Math.max(0, Math.round((v - stemOf(v) * unit) / leafUnit)));
+  // Trailing float noise: 2.3 - 2 is 0.29999999999999982, and the key must not read "2.2999...".
+  const tidy = v => Math.round(v * 1e6) / 1e6;
   const all = right.concat(left);
   if (!all.length) return statPlaceholder("(type some data values)", 340);
 
@@ -81,9 +91,13 @@ function buildStemLeafSvg() {
   const rightW = Math.max(ch * 3, widest(right) * ch + ch);
   const leftW = backToBack ? Math.max(ch * 3, widest(left) * ch + ch) : 0;
 
+  const keyText = `Key: ${axisNum(stems[0])} | 2 means ${axisNum(tidy(stems[0] * unit + 2 * leafUnit))}`;
+  const keyW = showKey ? shapeLabelMetrics(keyText, fontSize * 0.8, STAT_PLAIN_CSS).w : 0;
   const titleH = (titleR || titleL) ? rowH * 1.2 : 0;
-  const W = Math.round(leftW + stemW + rightW) + 24;
-  const H = Math.round(titleH + stems.length * rowH + rowH * 1.7) + 20;
+  // The key is a line of prose under a narrow plot, so it is often the widest thing here — and with
+  // no key the space it used to reserve underneath is dead margin around the placed picture.
+  const W = Math.round(Math.max(leftW + stemW + rightW, keyW + (backToBack ? leftW : stemW))) + 24;
+  const H = Math.round(titleH + stems.length * rowH + rowH * (showKey ? 1.7 : 0.35)) + 20;
   const x0 = 12, stemL = x0 + leftW, stemR = stemL + stemW, y0 = 10 + titleH;
 
   let inner = "";
@@ -93,10 +107,14 @@ function buildStemLeafSvg() {
     anchor: "start", fill: "#1B4F91", attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
 
   const bottom = y0 + stems.length * rowH;
-  inner += `  <line x1="${pn(stemL)}" y1="${pn(y0)}" x2="${pn(stemL)}" y2="${pn(bottom)}" stroke="${PROB_INK}" stroke-width="2"/>\n`;
+  // The rule that separates stem from leaves — the thing that makes it a stem-and-leaf plot rather
+  // than two columns of digits. A back-to-back plot has leaves on both sides so it needs both;
+  // a one-sided plot needs the one on the LEFT of its leaves, which is stemR. Drawing stemL there
+  // instead put the rule outside the stem column, with nothing dividing stem from leaf at all.
   if (backToBack) {
-    inner += `  <line x1="${pn(stemR)}" y1="${pn(y0)}" x2="${pn(stemR)}" y2="${pn(bottom)}" stroke="${PROB_INK}" stroke-width="2"/>\n`;
+    inner += `  <line x1="${pn(stemL)}" y1="${pn(y0)}" x2="${pn(stemL)}" y2="${pn(bottom)}" stroke="${PROB_INK}" stroke-width="2"/>\n`;
   }
+  inner += `  <line x1="${pn(stemR)}" y1="${pn(y0)}" x2="${pn(stemR)}" y2="${pn(bottom)}" stroke="${PROB_INK}" stroke-width="2"/>\n`;
   stems.forEach((s, i) => {
     const cy = y0 + i * rowH + rowH * 0.72;
     inner += shapeLabelSvg(String(s), { x: (stemL + stemR) / 2, y: cy, fontSize, fill: PROB_INK,
@@ -111,10 +129,15 @@ function buildStemLeafSvg() {
         fill: PROB_INK, attrs: STAT_PLAIN_ATTRS, cssFont: STAT_PLAIN_CSS });
     });
   });
-  // Without a key a stem-and-leaf is ambiguous about its own scale, so it is not optional.
-  inner += shapeLabelSvg(`Key: ${stems[0]} | 2 means ${stems[0] * unit + 2}`, {
-    x: stemL, y: bottom + rowH * 1.15, fontSize: fontSize * 0.8, anchor: "start", fill: "#4A5568",
-    attrs: STAT_PLAIN_ATTRS, cssFont: STAT_PLAIN_CSS });
+  /* A key is what tells you the scale, so it is on by default — but not permanently. Half of what
+     these get used for is a worked example on the board where the key is the thing being explained,
+     or a printed question that asks the class to write the key themselves, and neither works if the
+     plot always answers it for you. */
+  if (showKey) {
+    inner += shapeLabelSvg(keyText, {
+      x: backToBack ? stemL : stemR, y: bottom + rowH * 1.15, fontSize: fontSize * 0.8,
+      anchor: "start", fill: "#4A5568", attrs: STAT_PLAIN_ATTRS, cssFont: STAT_PLAIN_CSS });
+  }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">\n` +
     `<rect width="100%" height="100%" fill="none"/>\n${inner}</svg>`;
@@ -234,11 +257,12 @@ function buildBoxPlotSvg() {
   const sMin = Math.floor(dataMin / step) * step;
   const sMax = Math.max(sMin + step, Math.ceil(dataMax / step) * step);
 
+  const xTitle = $("bxXLabel").value.trim();
   const anyLabel = sets.some(x => x.label);
   const W = 640, padL = anyLabel ? 122 : 54, padR = 48;
   const boxH = Math.round(fontSize * 2.6), rowGap = Math.round(fontSize * 1.9);
   const topPad = showValues ? Math.round(fontSize * 2.2) + 12 : 26;
-  const axisH = Math.round(fontSize * 2.8);
+  const axisH = Math.round(fontSize * 2.8) + (xTitle ? Math.round(fontSize * 1.8) : 0);
   const H = topPad + sets.length * (boxH + rowGap) + axisH;
   const plotW = W - padL - padR;
   const xAt = v => padL + ((v - sMin) / (sMax - sMin)) * plotW;
@@ -253,16 +277,20 @@ function buildBoxPlotSvg() {
       `  <line x1="${pn(xAt(q3))}" y1="${pn(cy)}" x2="${pn(xAt(max))}" y2="${pn(cy)}" stroke="${boxLine}" stroke-width="2.4"/>\n` +
       `  <line x1="${pn(xAt(min))}" y1="${pn(t + 4)}" x2="${pn(xAt(min))}" y2="${pn(bm - 4)}" stroke="${boxLine}" stroke-width="2.4"/>\n` +
       `  <line x1="${pn(xAt(max))}" y1="${pn(t + 4)}" x2="${pn(xAt(max))}" y2="${pn(bm - 4)}" stroke="${boxLine}" stroke-width="2.4"/>\n` +
-      `  <rect x="${pn(xAt(q1))}" y="${pn(t)}" width="${pn(Math.max(1, xAt(q3) - xAt(q1)))}" height="${boxH}" fill="#FFFFFF" stroke="${boxLine}" stroke-width="2.4"/>\n` +
+      `  <rect x="${pn(xAt(q1))}" y="${pn(t)}" width="${pn(Math.max(1, xAt(q3) - xAt(q1)))}" height="${boxH}" fill="${boxFill}" stroke="${boxLine}" stroke-width="2.4"/>\n` +
       `  <line x1="${pn(xAt(med))}" y1="${pn(t)}" x2="${pn(xAt(med))}" y2="${pn(bm)}" stroke="${boxLine}" stroke-width="2.8"/>\n`;
     if (set.label) {
       inner += shapeLabelSvg(set.label, { x: padL - 16, y: cy + fontSize * 0.35, fontSize,
         anchor: "end", fill: PROB_INK, attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
     }
-    // Only above the top plot: repeated over every row they would land on the box beneath.
-    if (showValues && i === 0) {
+    /* Above the first plot and BELOW the second. Both above would put the lower set's numbers on
+       top of the upper set's box, which is why they used to be printed for the first set only —
+       but comparing two distributions is most of what a second box plot is for, and half the
+       numbers is half an answer. Two sets is the maximum, so this always has somewhere to go. */
+    if (showValues) {
+      const vy = i === 0 ? t - 10 : bm + fontSize * 1.15;
       [min, q1, med, q3, max].forEach(v => {
-        inner += shapeLabelSvg(axisNum(v), { x: xAt(v), y: t - 10, fontSize: fontSize * 0.85,
+        inner += shapeLabelSvg(axisNum(v), { x: xAt(v), y: vy, fontSize: fontSize * 0.85,
           fill: "#4A5568", attrs: STAT_PLAIN_ATTRS, cssFont: STAT_PLAIN_CSS });
       });
     }
@@ -274,6 +302,10 @@ function buildBoxPlotSvg() {
     inner += shapeLabelSvg(axisNum(v), { x: xAt(v), y: ay + fontSize * 1.6, fontSize,
       fill: PROB_INK, attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
   }
+  // What the scale is measuring. The histogram has had this from the start; without it a box plot
+  // is a row of numbers with no units, which is the one thing every mark scheme asks for.
+  if (xTitle) inner += shapeLabelSvg(xTitle, { x: padL + plotW / 2, y: H - 12,
+    fontSize: fontSize * 1.15, fill: PROB_INK, attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">\n` +
     `<rect width="100%" height="100%" fill="none"/>\n${inner}</svg>`;
 }

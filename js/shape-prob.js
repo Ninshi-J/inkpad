@@ -52,8 +52,15 @@ function buildSpinnerSvg() {
   const fontSize = Math.max(8, probNum($("spFontSize").value, 26));
   const coloured = $("spColour").checked;
   const pointer = $("spPointer").checked;
-  // Per-section colours, so "shade the sections showing a 3" is one field rather than a limitation.
-  const fills = probColours($("spColourList").value, n, i => coloured ? PROB_FILLS[i % PROB_FILLS.length] : "#FFFFFF");
+  /* Per-section colours, so "shade the sections showing a 3" is one field rather than a limitation.
+     The default gives sections SHARING A LABEL the same colour, because on a "1, 2, 3, 3" spinner
+     the two 3s are one outcome — colouring them differently is the picture arguing against the
+     question being asked about it. Distinct labels still cycle the palette as before, and the
+     colour list overrides any of it. */
+  const swatch = new Map();
+  labels.forEach(t => { if (!swatch.has(t)) swatch.set(t, PROB_FILLS[swatch.size % PROB_FILLS.length]); });
+  const fills = probColours($("spColourList").value, n,
+    i => (coloured ? swatch.get(labels[i]) : "#FFFFFF"));
 
   const S = 500, cx = S / 2, cy = S / 2, r = 195;
   const pt = a => `${pn(cx + r * Math.cos(a))} ${pn(cy + r * Math.sin(a))}`;
