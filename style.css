@@ -356,6 +356,15 @@ input[type=range] { accent-color: var(--accent); width: 84px; }
 }
 #mhelpSearch:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 .mhelp-hint { color: var(--ink-soft); font-size: 12px; margin-bottom: 8px; min-height: 15px; }
+.mhelp-rule {
+  font-size: 12px; line-height: 1.55; color: var(--ink); margin: 8px 0 6px;
+  padding: 7px 10px; border-radius: 7px; background: var(--accent-soft);
+}
+.mhelp-rule code { font-size: 11.5px; }
+.mhelp-rule kbd {
+  font-family: inherit; font-size: 10.5px; padding: 1px 5px;
+  border: 1px solid var(--line); border-radius: 4px; background: #fff;
+}
 .mhelp-body { max-height: 58vh; overflow-y: auto; padding-right: 4px; }
 .mhelp-loading { color: var(--ink-soft); font-size: 12.5px; padding: 10px 2px; }
 .mhelp-cat {

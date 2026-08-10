@@ -190,6 +190,7 @@ function wireFileMenu() {
   $("fmExport").onclick = () => { closeFileMenu(); openExportDialog(); };
   $("fmSave").onclick = () => { closeFileMenu(); saveFile(); };
   $("fmOpen").onclick = () => { closeFileMenu(); $("fileOpen").click(); };
+  $("fmMathHelp").onclick = () => { closeFileMenu(); openMathHelpDlg(); };
   $("fmSettings").onclick = () => { closeFileMenu(); openSettingsDlg(); };
 
   loadPencilOnlyPref();

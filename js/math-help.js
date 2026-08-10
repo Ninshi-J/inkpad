@@ -239,6 +239,12 @@ const MATH_ABBREV_BY_TPL = (() => {
   return m;
 })();
 const mathAbbrevFor = tpl => MATH_ABBREV_BY_TPL[tpl] || null;
+/* Three shortcuts have nothing in MATH_HELP below to borrow a preview from, and their bare
+   template is a poor advertisement for itself — "\,\mathrm{}" renders as a space. */
+const MATH_ABBREV_SAMPLE = {
+  "\\,\\mathrm{$1}": "5\\,\\mathrm{m}", "^{\\circ}": "90^{\\circ}", "\\sqrt[3]{$1}": "\\sqrt[3]{x}",
+};
+const MATH_ABBREV_CAT = "Type it, then press Tab";
 
 let mathHelpBuilt = false;
 function ensureKatexPageCss(css) {
@@ -260,7 +266,7 @@ async function openMathHelpDlg() {
       const [katex, css] = await Promise.all([loadKatex(), loadInlinedKatexCss()]);
       ensureKatexPageCss(css);
       body.innerHTML = "";
-      for (const [cat, entries] of MATH_HELP) {
+      const addCategory = (cat, entries) => {
         const h = document.createElement("div");
         h.className = "mhelp-cat"; h.textContent = cat;
         h.dataset.cat = cat;
@@ -294,7 +300,19 @@ async function openMathHelpDlg() {
           grid.appendChild(cell);
         }
         body.appendChild(grid);
-      }
+      };
+      /* The shortcuts get their own section, first, even though every one of them is already
+         badged on its own symbol further down. A badge can only tell you about the shortcut for
+         the symbol you happened to look up — it can't tell you the FEATURE exists, which is the
+         thing actually forgotten ("there was a quick way to type this"). Generated from
+         MATH_ABBREV in its own order, so it can never fall behind the list it documents, and
+         each shortcut borrows the sheet's own entry where there is one, so clicking still
+         inserts and searching still finds it by meaning. */
+      const byTpl = new Map();
+      for (const [, entries] of MATH_HELP) for (const e of entries) if (!byTpl.has(e.i)) byTpl.set(e.i, e);
+      addCategory(MATH_ABBREV_CAT, [...new Set(Object.values(MATH_ABBREV))].map(tpl =>
+        byTpl.get(tpl) || { i: tpl, s: MATH_ABBREV_SAMPLE[tpl] || tpl.replace("$1", "x") }));
+      for (const [cat, entries] of MATH_HELP) addCategory(cat, entries);
       mathHelpBuilt = true;
     } catch (err) {
       body.innerHTML = `<div class="mhelp-loading">Couldn't load the symbol previews (${err && err.message ? err.message : err}).</div>`;

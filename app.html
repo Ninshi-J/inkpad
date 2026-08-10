@@ -1430,6 +1430,10 @@
 <dialog id="mathHelpDlg" style="max-width:720px;width:min(720px,95vw)">
   <h2>Math typesetting reference</h2>
   <input id="mhelpSearch" type="search" placeholder="Search — try &quot;perpendicular&quot;, &quot;subscript&quot;, &quot;fraction&quot;, &quot;union&quot;…" autocomplete="off" spellcheck="false">
+  <!-- Its own line rather than part of #mhelpHint, which gets overwritten to report a copy. This
+       is the one thing people come back here to be reminded of, so it always says it. -->
+  <div class="mhelp-rule">Inside <code>$…$</code>, type a short name and press <kbd>Tab</kbd> —
+    <b>fr</b> gives a fraction, <b>th</b> gives θ, <b>ti</b> gives ×. They're listed first below.</div>
   <div id="mhelpHint" class="mhelp-hint"></div>
   <div id="mhelpBody" class="mhelp-body"></div>
   <div id="mhelpEmpty" class="mhelp-loading" style="display:none">Nothing matches that. Try a plainer word — most symbols are findable by what they mean.</div>
@@ -1496,6 +1500,10 @@
   <label class="fm-check"><input type="checkbox" id="fmDriveAutoSync"> Auto-sync to Drive</label>
   <label class="fm-check"><input type="checkbox" id="fmPencilOnly"> Only draw with a stylus</label>
   <label class="fm-check"><input type="checkbox" id="fmPressureEnabled"> Pressure-sensitive lines</label>
+  <!-- The tooltip carries the answer itself, not a description of where the answer is: the thing
+       you forget about type-and-Tab is that it exists at all, and by the time you've opened a
+       dialog to check you've lost your place in what you were writing. -->
+  <button type="button" id="fmMathHelp" title="Type a short name inside $…$ and press Tab:&#10;&#10;   fr → fraction      sq → square root      cb → cube root&#10;   su → sum ∑      in → integral ∫      li → limit&#10;   ^ → power      _ → subscript      ve → vector      ba → bar&#10;&#10;   th → θ      pi → π      al → α      la → λ      mu → μ      om → ω&#10;   De → Δ      Si → Σ      Om → Ω&#10;&#10;   ti → ×      di → ÷      cd → ·      pm → ±      inf → ∞&#10;   le → ≤      ge → ≥      ne → ≠      ap → ≈      to → →&#10;&#10;Click for the full searchable list.">∑ Maths shortcuts…</button>
   <button type="button" id="fmSettings">⚙ Settings…</button>
 </div>
 <script src="js/state.js"></script>
