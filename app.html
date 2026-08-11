@@ -938,8 +938,11 @@
       <div class="shape-field"><label>Branch Probabilities (optional, same layout)</label>
         <input type="text" id="trProbs" value="" placeholder="e.g. $\frac{1}{2}$, $\frac{1}{2}$"></div>
     </div>
-    <div class="shape-form-grid">
+    <div class="shape-form-grid" style="grid-template-columns: 1fr;">
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="trOutcomes"> List the outcomes on the right</label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="trProducts"> …and multiply the branches to give each one's probability</label>
+    </div>
+    <div class="shape-form-grid">
       <div class="shape-field"><label>Branch Colour</label>
         <input type="color" id="trColour" value="#2d4e86" class="shape-colour"></div>
     </div>
@@ -980,7 +983,11 @@
     </div>
     <div class="shape-form-grid" id="hgClassFields">
       <div class="shape-field"><label>First Class Starts At</label><input type="number" id="hgStart" value="100"></div>
-      <div class="shape-field"><label>Class Width</label><input type="number" id="hgWidth" value="100"></div>
+      <div class="shape-field"><label>Class Width(s)</label>
+        <input type="text" id="hgWidth" value="100" placeholder="100  or  10, 10, 20, 40"></div>
+    </div>
+    <div class="shape-form-grid" id="hgDensityField" style="grid-template-columns: 1fr;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="hgDensity"> Plot frequency density (height = frequency &divide; class width)</label>
     </div>
     <div class="shape-form-grid" style="grid-template-columns: 1fr;">
       <div class="shape-field"><label>Bar Names &mdash; fill in to label bars instead of class boundaries</label>

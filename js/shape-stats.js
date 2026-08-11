@@ -149,7 +149,11 @@ function buildStemLeafSvg() {
 function buildHistogramSvg() {
   const freqs = probData($("hgFreqs").value);
   const start = probNum($("hgStart").value, 0);
-  const width = Math.max(0.0001, probNum($("hgWidth").value, 1));
+  /* One width, or one per class. Unequal classes are the whole of the frequency-density topic —
+     "0-10, 10-20, 20-40, 40-80" is the standard shape of the question — and with a single width
+     they could not be drawn at all, let alone drawn wrongly on purpose to be criticised.
+     A short list repeats, so "10, 20" alternates and "10" behaves exactly as it always did. */
+  const widthsIn = probData($("hgWidth").value).map(v => Math.max(0.0001, v));
   const cats = probList($("hgLabels").value, []);
   const gapped = $("hgGap").checked;
   const fontSize = Math.max(8, probNum($("hgFontSize").value, 20));
@@ -162,29 +166,44 @@ function buildHistogramSvg() {
   // The textbook style runs the axis from 0 even when the first class starts at 100, leaving a
   // visible gap that says "nothing was recorded below here".
   const fromZero = $("hgFromZero").checked && !cats.length && start > 0;
+  const density = $("hgDensity").checked && !cats.length;
   if (!freqs.length) return statPlaceholder("(type the frequencies)", 340);
   const n = freqs.length;
+  const widths = Array.from({ length: n }, (_, i) =>
+    widthsIn.length ? widthsIn[i % widthsIn.length] : 1);
+  // Class boundaries, so unequal classes each sit over their own stretch of the axis.
+  const edges = [start];
+  for (let i = 0; i < n; i++) edges.push(edges[i] + widths[i]);
+  /* Height is frequency density when the classes are unequal and the axis says so — area, not
+     height, is what represents frequency then. Left as a choice rather than switched on
+     automatically by unequal widths, because "draw it wrong and say why it misleads" is a lesson
+     of its own and the tool shouldn't quietly correct the mistake being demonstrated. */
+  const heights = freqs.map((f, i) => (density ? f / widths[i] : f));
 
   const W = 620, H = 470;
   const padL = 90, padR = 50, padB = 96, padT = 40;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const ox = padL, oy = H - padB;
 
-  const maxF = Math.max(1, ...freqs);
+  const maxF = Math.max(1, ...heights);
   const yStep = niceStep(maxF, 4);
-  const yTop = Math.ceil(maxF / yStep) * yStep;
+  const yTop = Math.ceil(maxF / yStep - 1e-9) * yStep;
   const yAt = v => oy - (v / yTop) * plotH;
-  // Pinned to zero, the classes share the axis with the empty run that comes before them.
-  const lead = fromZero ? start / width : 0;
-  const barW = plotW / (n + lead);
-  const offset = lead * barW;
-  const gap = gapped ? barW * 0.2 : 0;
+  /* Named categories keep one bar per name; a numbered scale is measured in the data's own units,
+     which is what lets a class twice as wide draw twice as wide. Pinned to zero, the classes share
+     the axis with the empty run that comes before them. */
+  const axisMin = cats.length ? 0 : (fromZero ? Math.min(0, start) : start);
+  const axisMax = cats.length ? n : edges[n];
+  const xAt = v => ox + ((v - axisMin) / Math.max(1e-9, axisMax - axisMin)) * plotW;
+  const barAt = i => (cats.length ? { a: xAt(i), b: xAt(i + 1) } : { a: xAt(edges[i]), b: xAt(edges[i + 1]) });
 
   let inner = "";
-  freqs.forEach((f, i) => {
-    if (!(f > 0)) return;
-    inner += `  <rect x="${pn(ox + offset + i * barW + gap / 2)}" y="${pn(yAt(f))}" ` +
-      `width="${pn(barW - gap)}" height="${pn(oy - yAt(f))}" fill="${barFills[i]}" ` +
+  heights.forEach((h, i) => {
+    if (!(h > 0)) return;
+    const { a, b } = barAt(i);
+    const gap = gapped ? (b - a) * 0.2 : 0;
+    inner += `  <rect x="${pn(a + gap / 2)}" y="${pn(yAt(h))}" ` +
+      `width="${pn(Math.max(0.5, b - a - gap))}" height="${pn(oy - yAt(h))}" fill="${barFills[i]}" ` +
       `stroke="${PROB_INK}" stroke-width="1.8"/>\n`;
   });
   // Axes over the bars, with the arrowheads the textbook style uses.
@@ -203,22 +222,26 @@ function buildHistogramSvg() {
   // what makes "how many between 100 and 200?" answerable straight off the picture.
   if (cats.length) {
     for (let i = 0; i < n; i++) {
-      inner += shapeLabelSvg(cats[i] || "", { x: ox + (i + 0.5) * barW, y: oy + fontSize * 1.6,
+      const { a, b } = barAt(i);
+      inner += shapeLabelSvg(cats[i] || "", { x: (a + b) / 2, y: oy + fontSize * 1.6,
         fontSize, fill: PROB_INK, attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
     }
   } else {
-    if (fromZero) inner += shapeLabelSvg("0", { x: ox, y: oy + fontSize * 1.6, fontSize,
+    if (fromZero && start > 0) inner += shapeLabelSvg("0", { x: ox, y: oy + fontSize * 1.6, fontSize,
       fill: PROB_INK, attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
     for (let i = 0; i <= n; i++) {
-      const x = ox + offset + i * barW;
+      const x = xAt(edges[i]);
       inner += `  <line x1="${pn(x)}" y1="${oy}" x2="${pn(x)}" y2="${pn(oy + 7)}" stroke="${PROB_INK}" stroke-width="2"/>\n`;
-      inner += shapeLabelSvg(axisNum(start + i * width), { x, y: oy + fontSize * 1.6, fontSize,
+      inner += shapeLabelSvg(axisNum(edges[i]), { x, y: oy + fontSize * 1.6, fontSize,
         fill: PROB_INK, attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
     }
   }
   if (xTitle) inner += shapeLabelSvg(xTitle, { x: ox + plotW / 2, y: H - 16, fontSize: fontSize * 1.15,
     fill: PROB_INK, attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
-  if (yTitle) inner += shapeLabelSvg(yTitle, { x: 28, y: padT + plotH / 2, fontSize: fontSize * 1.15,
+  // Density plots say so on the axis unless told otherwise — a bar chart of densities labelled
+  // "Frequency" is the exact misreading the topic exists to prevent.
+  const yText = yTitle || (density ? "Frequency density" : "");
+  if (yText) inner += shapeLabelSvg(yText, { x: 28, y: padT + plotH / 2, fontSize: fontSize * 1.15,
     transform: `rotate(-90 28 ${pn(padT + plotH / 2)})`, fill: PROB_INK,
     attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
 

@@ -30,8 +30,13 @@ function toggleShapeFormFields() {
   $("stemleafFields").style.display = type === "stemleaf" ? "block" : "none";
   $("histogramFields").style.display = type === "histogram" ? "block" : "none";
   $("boxplotFields").style.display = type === "boxplot" ? "block" : "none";
-  // Class start/width only mean anything while the bars are numbered, not named.
-  if (type === "histogram") $("hgClassFields").style.display = $("hgLabels").value.trim() ? "none" : "";
+  // Class start/width — and frequency density, which is defined in terms of a class width — only
+  // mean anything while the bars are numbered, not named.
+  if (type === "histogram") {
+    const numbered = !$("hgLabels").value.trim();
+    $("hgClassFields").style.display = numbered ? "" : "none";
+    $("hgDensityField").style.display = numbered ? "" : "none";
+  }
   if (type === "table") {
     const kind = $("tbPreset").value;
     const only = (cls, on) => document.querySelectorAll("#tableFields ." + cls)

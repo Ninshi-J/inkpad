@@ -213,6 +213,49 @@ function buildVennSvg() {
    have rows added to it directly. */
 function buildTableSvg() { return tableEditorSvg(tableDraftForDialog()); }
 
+/* ---------------- branch probabilities as exact numbers ----------------
+   A tree diagram exists to be multiplied along. Doing that in decimals would answer 3/5 × 3/5 with
+   0.36, which is not the answer to the question that was asked — so a probability written as a
+   fraction is kept as one, and only arithmetic on a decimal produces a decimal.
+
+   `exact` records whether every factor so far was written as a fraction or whole number. One
+   decimal anywhere makes the product a decimal, which is the honest thing: 0.3 is not 3/10 to a
+   class that has just been told to leave answers as fractions. */
+function probFraction(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (!s) return null;
+  const frac = /^(-?\d+)\s*\/\s*(-?\d+)$/.exec(s);
+  if (frac && +frac[2] !== 0) return { n: +frac[1], d: +frac[2], exact: true };
+  const pct = /^(-?[\d.]+)\s*%$/.exec(s);
+  if (pct && Number.isFinite(+pct[1])) return { n: +pct[1], d: 100, exact: false };
+  const v = parseFloat(s);
+  if (!Number.isFinite(v)) return null;
+  // A whole number is exact (a "1" on a certain branch shouldn't decimalise the whole path).
+  if (Number.isInteger(v)) return { n: v, d: 1, exact: true };
+  // Decimals become a fraction only so the multiplication stays in one form; `exact` remembers
+  // that it must not be PRINTED as one.
+  const places = (s.split(".")[1] || "").length;
+  return { n: Math.round(v * Math.pow(10, places)), d: Math.pow(10, places), exact: false };
+}
+const probGcd = (a, b) => (b ? probGcd(b, a % b) : Math.abs(a) || 1);
+function probMul(a, b) {
+  if (!a || !b) return null;
+  const g = probGcd(a.n * b.n, a.d * b.d);
+  return { n: (a.n * b.n) / g, d: (a.d * b.d) / g, exact: a.exact && b.exact };
+}
+function probFractionText(f) {
+  if (!f) return "";
+  if (!f.exact) {
+    // Trimmed rather than fixed: 0.25 should not print as 0.2500, and a repeating value has to
+    // stop somewhere.
+    const v = f.n / f.d;
+    return String(Math.round(v * 1e6) / 1e6);
+  }
+  const neg = (f.n < 0) !== (f.d < 0);
+  const n = Math.abs(f.n), d = Math.abs(f.d);
+  return d === 1 ? `${neg ? "-" : ""}${n}` : `${neg ? "-" : ""}${n}/${d}`;
+}
+
 /* ---------------- tree ----------------
    Stage sizes are given as a list ("2,2" for two coin tosses, "3,3" for the blood-group example),
    which is what decides both the branching and the height: the leaf count is their product, and
@@ -226,6 +269,7 @@ function buildTreeSvg() {
   const labelGroups = String($("trLabels").value || "").split(";").map(g => probList(g, []));
   const probGroups = String($("trProbs").value || "").split(";").map(g => probList(g, []));
   const showOutcomes = $("trOutcomes").checked;
+  const showProducts = showOutcomes && $("trProducts").checked;
   const branchColour = $("trColour").value || "#2D4E86";
   const groupFor = (groups, stage) => {
     const g = groups.length === 1 ? groups[0] : (groups[stage] || []);
@@ -265,7 +309,26 @@ function buildTreeSvg() {
   };
   const rootY = build(0, []);
 
-  const W = Math.round(padL + counts.length * colW + (showOutcomes ? colW * 0.9 : labelW * 1.4));
+  /* Each leaf's outcome and, where every branch on the way to it carried a probability, their
+     product. Worked out here rather than at drawing time because the two columns have to be
+     MEASURED to be placed — an outcome is as wide as its labels make it ("BAO" for three stages of
+     blood groups) and the product sits clear of the widest one. A path with any branch left blank
+     gets no product rather than a number quietly computed from the branches that were filled in. */
+  const outcomes = [], products = [];
+  (function walkLeaves(stage, name, f) {
+    if (stage === counts.length) { outcomes.push(name); products.push(probFractionText(f)); return; }
+    const labels = groupFor(labelGroups, stage), ps = groupFor(probGroups, stage);
+    for (let i = 0; i < counts[stage]; i++) {
+      const step = probFraction(ps[i]);
+      walkLeaves(stage + 1, name + (labels[i] || ""), f && step ? probMul(f, step) : null);
+    }
+  })(0, "", { n: 1, d: 1, exact: true });
+
+  const widest = (arr, size, css) => Math.max(0, ...arr.map(s => s ? shapeLabelMetrics(s, size, css).w : 0));
+  const outcomeW = showOutcomes ? widest(outcomes, fontSize, SHAPE_LABEL_CSS) + labelW * 0.7 : 0;
+  const productW = showProducts ? widest(products, fontSize * 0.9, STAT_PLAIN_CSS) + labelW * 0.4 : 0;
+  const W = Math.round(padL + counts.length * colW +
+    (showOutcomes ? labelW * 1.6 + outcomeW + productW : labelW * 1.4));
   const H = Math.round(padT * 2 + leaves * rowH);
 
   let inner = "";
@@ -290,19 +353,16 @@ function buildTreeSvg() {
       attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS });
   }
   if (showOutcomes) {
-    // The combined outcome for each leaf, read off the labels down its own path.
     const leafNodes = nodes.filter(n => n.stage === counts.length).sort((a, b) => a.y - b.y);
-    const combos = [];
-    const walk = (stage, acc) => {
-      if (stage === counts.length) { combos.push(acc); return; }
-      const labels = groupFor(labelGroups, stage);
-      for (let i = 0; i < counts[stage]; i++) walk(stage + 1, acc + (labels[i] || ""));
-    };
-    walk(0, "");
+    const outX = padL + counts.length * colW + labelW * 1.6;
     leafNodes.forEach((n, i) => {
-      inner += shapeLabelSvg(combos[i] || "", {
-        x: padL + counts.length * colW + labelW * 1.6, y: n.y + fontSize * 0.35,
+      inner += shapeLabelSvg(outcomes[i] || "", {
+        x: outX, y: n.y + fontSize * 0.35,
         fontSize, anchor: "start", fill: "#4A5568", attrs: SHAPE_LABEL_ATTRS, cssFont: SHAPE_LABEL_CSS,
+      });
+      if (showProducts && products[i]) inner += shapeLabelSvg(products[i], {
+        x: outX + outcomeW, y: n.y + fontSize * 0.35, fontSize: fontSize * 0.9,
+        anchor: "start", fill: "#4A5568", attrs: STAT_PLAIN_ATTRS, cssFont: STAT_PLAIN_CSS,
       });
     });
   }
