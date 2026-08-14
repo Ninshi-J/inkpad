@@ -406,7 +406,7 @@ function doTouchPan(e) {
   const { px, py } = evtPos(e);
   V.scroll = touchPan.scroll0 - (py - touchPan.y0) / V.zoom;
   V.scrollX = touchPan.scrollX0 - (px - touchPan.x0) / V.zoom;
-  clampScroll(); clampScrollX();
+  clampScroll(true); clampScrollX();
   needsDraw = true;
 }
 
@@ -424,7 +424,7 @@ wrap.addEventListener("wheel", e => {
   } else {
     V.scroll += (e.deltaY / V.zoom);
     if (e.deltaX) { V.scrollX += (e.deltaX / V.zoom); clampScrollX(); }
-    clampScroll(); needsDraw = true; syncUI();
+    clampScroll(true); needsDraw = true; syncUI();
     schedulePdfUpgrade();
   }
 }, { passive: false });

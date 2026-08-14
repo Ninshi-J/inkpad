@@ -181,8 +181,7 @@ function toggleTeachingMode() {
   V.minimap = false;
   syncUI(); resize(); // resize() reads the just-applied layout change synchronously
   setZoom(CW / pageW());
-  setTeachPage(page);
-  V.scroll = page * stride();
+  teachScrollTo(page, false);
   V.scrollX = 0;
   clampScroll(); clampScrollX();
   if (document.documentElement.requestFullscreen) {
@@ -201,7 +200,12 @@ function toggleTeachingMode() {
    equivalent, so on an iPad Escape keeps its old meaning. Both calls are best-effort by design —
    a refused lock must never stop Teaching Mode itself from working. */
 function lockEscapeKey() {
-  try { navigator.keyboard && navigator.keyboard.lock && navigator.keyboard.lock(["Escape"]); } catch (_) {}
+  // lock() returns a promise, and re-entering Teaching Mode rejects the previous one ("superseded
+  // by a subsequent lock() call"). Unhandled, that surfaces as a page error over a best-effort call.
+  try {
+    const r = navigator.keyboard && navigator.keyboard.lock && navigator.keyboard.lock(["Escape"]);
+    if (r && r.catch) r.catch(() => {});
+  } catch (_) {}
 }
 function unlockEscapeKey() {
   try { navigator.keyboard && navigator.keyboard.unlock && navigator.keyboard.unlock(); } catch (_) {}

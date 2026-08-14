@@ -606,28 +606,49 @@ const wy = py => py / V.zoom + V.scroll;
    pages that can't be parked on. teachPage is held rather than derived so that a page you have
    scrolled to the bottom of doesn't silently become the next one. */
 let teachPage = 0;
+let teachScrollWas = 0; // where the view sat after the previous clamp — see the note below
 function setTeachPage(p) { teachPage = Math.max(0, Math.min(S.pages - 1, p)); }
-function clampScrollTeaching() {
-  setTeachPage(teachPage);
-  const st = stride(), view = CH / V.zoom;
-  const top = teachPage * st;
-  const bottom = top + Math.max(0, pageDims(teachPage).h - view);
-  if (V.scroll < top - 0.5 && teachPage > 0) {
-    setTeachPage(teachPage - 1);
-    const t2 = teachPage * st;
-    V.scroll = t2 + Math.max(0, pageDims(teachPage).h - view); // arrive at the bottom of it
-    return;
-  }
-  if (V.scroll > bottom + 0.5 && teachPage < S.pages - 1) {
-    setTeachPage(teachPage + 1);
-    V.scroll = teachPage * st;
-    return;
-  }
-  V.scroll = Math.max(top, Math.min(V.scroll, bottom));
+const teachPageTop = () => teachPage * stride();
+const teachPageBottom = () => teachPageTop() + Math.max(0, pageDims(teachPage).h - CH / V.zoom);
+function teachScrollTo(p, toBottom) {
+  setTeachPage(p);
+  V.scroll = toBottom ? teachPageBottom() : teachPageTop();
+  teachScrollWas = V.scroll;
 }
-function clampScroll() {
+function clampScrollTeaching(gesture) {
+  setTeachPage(teachPage);
+  const EPS = 0.5;
+  /* Anything that isn't a scroll GESTURE is a jump — go to page 7, Home, End, opening a file — and
+     a jump lands where it was asked to. Only the wheel and a finger dragging the page are held to
+     the rule below; deciding by how far the scroll moved instead would make a firm flick
+     indistinguishable from "go to the next page". */
+  if (!gesture) {
+    setTeachPage(Math.floor((V.scroll + (CH / V.zoom) / 2) / stride()));
+    V.scroll = Math.max(teachPageTop(), Math.min(V.scroll, teachPageBottom()));
+    teachScrollWas = V.scroll;
+    return;
+  }
+  const top = teachPageTop(), bottom = teachPageBottom();
+  /* The page has to be scrolled THROUGH before it can be left. A scroll that overshoots the end of
+     the page stops at that end; only a further scroll from there moves on. Without this, one firm
+     flick on a page taller than the screen skipped to the next page and took everything below the
+     fold with it — which is the half of the page you were about to teach from. */
+  if (V.scroll > bottom + EPS) {
+    if (teachScrollWas >= bottom - EPS && teachPage < S.pages - 1) teachScrollTo(teachPage + 1, false);
+    else V.scroll = bottom;
+  } else if (V.scroll < top - EPS) {
+    if (teachScrollWas <= top + EPS && teachPage > 0) teachScrollTo(teachPage - 1, true);
+    else V.scroll = top;
+  } else {
+    V.scroll = Math.max(top, Math.min(V.scroll, bottom));
+  }
+  teachScrollWas = V.scroll;
+}
+// `gesture` marks the wheel and the touch pan — the two paths where the scroll is being nudged
+// rather than sent somewhere. It only means anything in Teaching Mode.
+function clampScroll(gesture) {
   V.scroll = Math.max(0, Math.min(V.scroll, maxScroll()));
-  if (V.teachMode) clampScrollTeaching();
+  if (V.teachMode) clampScrollTeaching(gesture === true);
 }
 function clampScrollX() { V.scrollX = Math.max(0, Math.min(V.scrollX, maxScrollX())); }
 // Pages appear only when content lands on the last page (keeping one blank
