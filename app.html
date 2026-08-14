@@ -225,6 +225,7 @@
       <div class="shape-field">
         <label for="planeTickFmt">Tick Numbers</label>
         <select id="planeTickFmt" onchange="setGraphTickFmtDefault(this.value)">
+          <option value="none">None — no numbers</option>
           <option value="auto">Auto — 2, 4, 10</option>
           <option value="sf2">2 sig figs — 2.0, 10</option>
           <option value="sf3">3 sig figs — 2.00, 10.0</option>
@@ -236,6 +237,9 @@
       </div>
       <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding-bottom:6px;">
         <input type="checkbox" id="planeShowZero" checked> Show 0 at origin
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding-bottom:6px;">
+        <input type="checkbox" id="planeShowAxes" checked> Draw the axes
       </label>
     </div>
     <div id="planeFitHint" class="fit-hint" style="display:none;">
@@ -299,6 +303,7 @@
       <div class="shape-field">
         <label for="pmTickFmt">Tick Numbers</label>
         <select id="pmTickFmt" onchange="setGraphTickFmtDefault(this.value)">
+          <option value="none">None — no numbers</option>
           <option value="auto">Auto — 2, 4, 10</option>
           <option value="sf2">2 sig figs — 2.0, 10</option>
           <option value="sf3">3 sig figs — 2.00, 10.0</option>
@@ -310,6 +315,9 @@
       </div>
       <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding-bottom:6px;">
         <input type="checkbox" id="pmShowZero" checked> Show 0 at origin
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding-bottom:6px;">
+        <input type="checkbox" id="pmShowAxes" checked> Draw the axes
       </label>
     </div>
     <div id="pmFitHint" class="fit-hint" style="display:none;">
@@ -390,6 +398,7 @@
       <div class="shape-field">
         <label for="q1TickFmt">Tick Numbers</label>
         <select id="q1TickFmt" onchange="setGraphTickFmtDefault(this.value)">
+          <option value="none">None — no numbers</option>
           <option value="auto">Auto — 2, 4, 10</option>
           <option value="sf2">2 sig figs — 2.0, 10</option>
           <option value="sf3">3 sig figs — 2.00, 10.0</option>
@@ -401,6 +410,9 @@
       </div>
       <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding-bottom:6px;">
         <input type="checkbox" id="q1ShowZero" checked> Show 0 at origin
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding-bottom:6px;">
+        <input type="checkbox" id="q1ShowAxes" checked> Draw the axes
       </label>
     </div>
     <div id="q1FitHint" class="fit-hint" style="display:none;">

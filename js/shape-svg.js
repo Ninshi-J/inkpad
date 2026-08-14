@@ -172,6 +172,44 @@ function demoteShapeDataUrl(data) {
   return out === svg ? data : SHAPE_SVG_URL_PREFIX + encodeURIComponent(out);
 }
 
+/* ---------------- grid density on a big range ----------------
+   Two separate problems, previously treated as one.
+
+   A step far too fine for its range (1 across 0 to 100000) has to be coarsened or the SVG carries
+   a hundred thousand lines. Coarsening by dividing the range by a line budget is what it used to
+   do, and that produced steps like 500.025 — an axis counting 500.025, 1000.05, 1500.075 is worse
+   than the crowding it was fixing. It snaps up to a round step instead: 1, 2, 2.5, 5 and their
+   powers of ten, the sizes a hand-drawn axis actually uses.
+
+   Numbering is then decided separately from the grid, because the two want different densities.
+   Squared paper is right at a hundred lines to the axis and hopeless at a hundred numbers, and a
+   graph of 0 to 500000 needs every gridline it asked for while wanting a number on maybe eight of
+   them. So every nth tick carries a number, n being the smallest count that keeps them apart. */
+const GRAPH_MAX_GRID_LINES = 200;
+// A collapsed or inverted range divides by zero and puts NaN into every coordinate, which draws as
+// a blank picture giving no clue why. Nudged to something drawable instead.
+const graphSpan = (min, max) => (max > min ? max : min + Math.max(1, Math.abs(min) * 0.1));
+function graphStepFor(range, wanted) {
+  const step = Math.max(0.0001, wanted);
+  if (!(range > 0) || range / step <= GRAPH_MAX_GRID_LINES) return step;
+  return Math.max(step, niceStep(range, GRAPH_MAX_GRID_LINES));
+}
+/* How far apart the NUMBERS go: the largest of what fits, what's round, and the grid itself.
+
+   Picking a stride in gridlines gets the spacing right and the values wrong — 45 lines of 500 is
+   22500, and an axis counting 22500, 45000, 67500 is not one anybody would draw. So the label step
+   is chosen as a round number for the space available, then rounded up to a whole number of grid
+   steps so every label still lands on a line. */
+function graphLabelStep(gridStep, range, lengthPx, labelPx) {
+  if (!(range > 0)) return gridStep;
+  const fits = Math.max(1, Math.floor(lengthPx / Math.max(1, labelPx + 8)));
+  const wanted = Math.max(gridStep, niceStep(range, fits));
+  return Math.ceil(wanted / gridStep - 1e-9) * gridStep;
+}
+// A tick carries a number when it is a whole multiple of that step, so the numbers fall on round
+// values and stay put as the range is nudged about.
+const graphLabelAt = (v, labelStep) => Math.abs(v / labelStep - Math.round(v / labelStep)) < 1e-6;
+
 function buildMathShapeSVG() {
   const type = $("shapeTypeSelect").value;
   shapeMathFaces = new Set();
@@ -218,16 +256,17 @@ function buildMathShapeSVG() {
      NOT share this — it has no axis labels, no arrowheads and a different function input, so folding
      it in would mean gating most of this on flags and would read worse than leaving it separate. */
   function graphPlaneSvg(o) {
-    const { xMin, xMax, yMin, yMax, drawGrid, fmtNum, showZero, axisFontSize, gridThickness,
+    const { xMin, drawGrid, fmtNum, showZero, axisFontSize, gridThickness,
             bgEnabled, bgColor, labelAxes, xAxisLabel, yAxisLabel, showLegend, fnListSel,
             negativeArrows } = o;
+    const drawAxes = o.drawAxes !== false;
+    // Numbers go with the axes: floating along a gridded box with nothing to sit against, they
+    // read as stray values rather than as a scale.
+    const showTickNums = drawAxes && o.showTickNums !== false;
+    const xMax = graphSpan(xMin, o.xMax), yMin = o.yMin, yMax = graphSpan(yMin, o.yMax);
     const legendFontSize = Math.max(9, axisFontSize - 1);
-    // Guard against pathologically fine steps (huge ranges, tiny increments) blowing up rendering
-    // by auto-coarsening, while still covering the full range.
-    const maxGridLines = 200;
-    let xStep = o.xStep, yStep = o.yStep;
-    if ((xMax - xMin) / xStep > maxGridLines) xStep = (xMax - xMin) / maxGridLines;
-    if ((yMax - yMin) / yStep > maxGridLines) yStep = (yMax - yMin) / maxGridLines;
+    const xStep = graphStepFor(xMax - xMin, o.xStep);
+    const yStep = graphStepFor(yMax - yMin, o.yStep);
 
     const xTicks = ticksFor(xMin, xMax, xStep);
     const yTicks = ticksFor(yMin, yMax, yStep);
@@ -248,7 +287,7 @@ function buildMathShapeSVG() {
     // getting clipped off the canvas edge at the old fixed 40px pad. Quadrant-1 graphs hit this
     // constantly since the origin (and therefore every y-axis label) is always pinned to the left
     // edge, unlike the 4-quadrant layout where the origin can sit further in.
-    const maxYLabelChars = yTicks.length ? Math.max(...yTicks.map(v => fmtNum(v).length)) : 1;
+    const maxYLabelChars = showTickNums && yTicks.length ? Math.max(...yTicks.map(v => fmtNum(v).length)) : 1;
     const tickPadLeft = Math.min(size / 2 - 20, Math.max(pad, Math.ceil(maxYLabelChars * axisFontSize * 0.62) + 18));
     const yLabelStripW = wideAxisLabels ? axisLabelSize + 16 : 0;
     // A compact y-axis label is centered on the y-axis, so half of it overhangs to the left and
@@ -265,35 +304,49 @@ function buildMathShapeSVG() {
     const mapX = val => padLeft + ((val - xMin) / (xMax - xMin)) * graphW;
     const mapY = val => padTop + ((yMax - val) / (yMax - yMin)) * graphH;
 
+    /* ticksFor leaves 0 out, because the axis lines normally cover those two positions. With the
+       axes hidden nothing does, and a sheet of squared paper missing the line through its middle is
+       the first thing you notice about it. */
+    const gridX = drawAxes ? xTicks : xTicks.concat(xMin <= 0 && xMax >= 0 ? [0] : []);
+    const gridY = drawAxes ? yTicks : yTicks.concat(yMin <= 0 && yMax >= 0 ? [0] : []);
     let innerSvg = "";
     if (drawGrid) {
       innerSvg += `<!-- Sub-grid structures -->\n`;
-      for (const x of xTicks) {
+      for (const x of gridX) {
         const cx = mapX(x);
         innerSvg += `  <line x1="${cx}" y1="${padTop}" x2="${cx}" y2="${size-padBottom}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
-      for (const y of yTicks) {
+      for (const y of gridY) {
         const cy = mapY(y);
         innerSvg += `  <line x1="${padLeft}" y1="${cy}" x2="${size-padRight}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
     }
     const originX = mapX(0); const originY = mapY(0);
-    innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${size-padRight}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
-    innerSvg += `  <line x1="${originX}" y1="${padTop}" x2="${originX}" y2="${size-padBottom}" stroke="black" stroke-width="2"/>\n`;
-    // Arrowheads matching the number-line tool's style. The negative-direction pair is skipped for
-    // a quadrant-1 graph, where the origin sits at the box's bottom-left corner and there is no
-    // negative direction to point into.
-    innerSvg += `  <path d="M ${size-padRight} ${originY} L ${size-padRight-12} ${originY-6} L ${size-padRight-12} ${originY+6} Z" fill="black"/>\n`;
-    if (negativeArrows) innerSvg += `  <path d="M ${padLeft} ${originY} L ${padLeft+12} ${originY-6} L ${padLeft+12} ${originY+6} Z" fill="black"/>\n`;
-    innerSvg += `  <path d="M ${originX} ${padTop} L ${originX-6} ${padTop+12} L ${originX+6} ${padTop+12} Z" fill="black"/>\n`;
-    if (negativeArrows) innerSvg += `  <path d="M ${originX} ${size-padBottom} L ${originX-6} ${size-padBottom-12} L ${originX+6} ${size-padBottom-12} Z" fill="black"/>\n`;
-    for (const x of xTicks) {
-      innerSvg += `  <text x="${mapX(x)}" y="${originY + xTickOffset}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
+    if (drawAxes) {
+      innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${size-padRight}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
+      innerSvg += `  <line x1="${originX}" y1="${padTop}" x2="${originX}" y2="${size-padBottom}" stroke="black" stroke-width="2"/>\n`;
+      // Arrowheads matching the number-line tool's style. The negative-direction pair is skipped for
+      // a quadrant-1 graph, where the origin sits at the box's bottom-left corner and there is no
+      // negative direction to point into.
+      innerSvg += `  <path d="M ${size-padRight} ${originY} L ${size-padRight-12} ${originY-6} L ${size-padRight-12} ${originY+6} Z" fill="black"/>\n`;
+      if (negativeArrows) innerSvg += `  <path d="M ${padLeft} ${originY} L ${padLeft+12} ${originY-6} L ${padLeft+12} ${originY+6} Z" fill="black"/>\n`;
+      innerSvg += `  <path d="M ${originX} ${padTop} L ${originX-6} ${padTop+12} L ${originX+6} ${padTop+12} Z" fill="black"/>\n`;
+      if (negativeArrows) innerSvg += `  <path d="M ${originX} ${size-padBottom} L ${originX-6} ${size-padBottom-12} L ${originX+6} ${size-padBottom-12} Z" fill="black"/>\n`;
     }
-    for (const y of yTicks) {
-      innerSvg += `  <text x="${originX - 10}" y="${mapY(y) + 4}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="end">${fmtNum(y)}</text>\n`;
+    if (showTickNums) {
+      const xLabelStep = graphLabelStep(xStep, xMax - xMin, graphW,
+        Math.max(...xTicks.map(v => fmtNum(v).length), 1) * axisFontSize * 0.62);
+      const yLabelStep = graphLabelStep(yStep, yMax - yMin, graphH, axisFontSize);
+      for (const x of xTicks) {
+        if (!graphLabelAt(x, xLabelStep)) continue;
+        innerSvg += `  <text x="${mapX(x)}" y="${originY + xTickOffset}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
+      }
+      for (const y of yTicks) {
+        if (!graphLabelAt(y, yLabelStep)) continue;
+        innerSvg += `  <text x="${originX - 10}" y="${mapY(y) + 4}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="end">${fmtNum(y)}</text>\n`;
+      }
+      if (showZero) innerSvg += originZeroSvg(originX, originY, xTickOffset, axisFontSize, fmtNum);
     }
-    if (showZero) innerSvg += originZeroSvg(originX, originY, xTickOffset, axisFontSize, fmtNum);
     /* Click targets sitting on the four axis extremes. The range is the thing you retune most while
        actually looking at a graph ("that's cut off at the top"), and it was only reachable as four
        numeric fields off to the side — which means translating what you can see back into which of
@@ -306,7 +359,8 @@ function buildMathShapeSVG() {
     if (rf.xMax) hotspots.push({ cx: size - padRight, cy: originY + xTickOffset - yNudge, w: hotW, h: hotH, field: rf.xMax, title: "x max" });
     if (rf.yMax) hotspots.push({ cx: originX - 10 - hotW / 2, cy: padTop + 4 - yNudge, w: hotW, h: hotH, field: rf.yMax, title: "y max" });
     if (rf.yMin) hotspots.push({ cx: originX - 10 - hotW / 2, cy: size - padBottom + 4 - yNudge, w: hotW, h: hotH, field: rf.yMin, title: "y min" });
-    if (labelAxes && wideAxisLabels) {
+    // Axis names go with the axes they name.
+    if (labelAxes && drawAxes && wideAxisLabels) {
       const yLabelX = yLabelStripW / 2 + 4;
       const yLabelY = (padTop + (size - padBottom)) / 2;
       innerSvg += shapeLabelSvg(yAxisLabel, { x: yLabelX, y: yLabelY, fontSize: axisLabelSize,
@@ -315,7 +369,7 @@ function buildMathShapeSVG() {
       const xLabelY = (size - padBottom) + xTickOffset + axisLabelSize - 2;
       innerSvg += shapeLabelSvg(xAxisLabel, { x: xLabelX, y: xLabelY, fontSize: axisLabelSize,
         attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
-    } else if (labelAxes) {
+    } else if (labelAxes && drawAxes) {
       // "y" sits on the y-axis, above its arrowhead; "x" sits outside the plot, past the x-axis arrowhead.
       innerSvg += shapeLabelSvg(xAxisLabel, { x: size - padRight + 10, y: originY + 5, fontSize: axisLabelSize,
         anchor: "start", attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
@@ -352,11 +406,22 @@ function buildMathShapeSVG() {
 
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">\n<rect width="100%" height="100%" fill="${bgEnabled ? bgColor : "none"}"/>\n${innerSvg}</svg>`;
   }
+  /* A typed number, where a typed ZERO counts. "parseFloat(x) || dflt" reads 0 as blank and
+     substitutes the default, which on an axis bound is the worst possible field to do it in: 0 is
+     the single most likely bound on a graph of any real quantity, so "0 to 500000" silently became
+     "-5 to 500000" — the origin pushed into a corner, the whole first tick off the picture, and the
+     graph apparently broken by the large number when the number that broke it was the zero. */
+  const graphNum = (id, dflt) => {
+    const v = parseFloat($(id).value);
+    return Number.isFinite(v) ? v : dflt;
+  };
   // Reads the shared set of graph controls for one tool, given its field-id prefix — the ids differ
   // only by that prefix ("pm"/"q1"), so the two callers' field wiring was identical apart from it.
   const graphFieldsFor = p => ({
     drawGrid: $(p + "GridLines").checked,
+    drawAxes: $(p + "ShowAxes").checked,
     fmtNum: tickFmtFrom(p + "TickFmt"),
+    showTickNums: $(p + "TickFmt").value !== "none",
     showZero: $(p + "ShowZero").checked,
     axisFontSize: parseInt($(p + "FontSize").value) || 20,
     bgEnabled: $(p + "BgEnabled").checked,
@@ -371,25 +436,22 @@ function buildMathShapeSVG() {
   });
 
   if (type === "plane") {
-    const xMin = parseFloat($("planeXMin").value) || -5;
-    const xMax = parseFloat($("planeXMax").value) || 5;
-    const yMin = parseFloat($("planeYMin").value) || -5;
-    const yMax = parseFloat($("planeYMax").value) || 5;
+    const xMin = graphNum("planeXMin", -5), xMax = graphSpan(xMin, graphNum("planeXMax", 5));
+    const yMin = graphNum("planeYMin", -5), yMax = graphSpan(yMin, graphNum("planeYMax", 5));
     const drawGrid = $("planeGridLines").checked;
+    const drawAxes = $("planeShowAxes").checked;
     const fmtNum = tickFmtFrom("planeTickFmt");
+    const showTickNums = $("planeTickFmt").value !== "none";
     const showZero = $("planeShowZero").checked;
     const axisFontSize = parseInt($("planeFontSize").value) || 20;
     const legendFontSize = Math.max(9, axisFontSize - 1);
     const gridThickness = parseFloat($("planeGridThickness").value) || 2;
     const bgEnabled = $("planeBgEnabled").checked;
     const bgColor = $("planeBgColor").value || "#ffffff";
-    // Increments are user-settable now; guard against pathologically fine steps (huge ranges,
-    // tiny increments) blowing up rendering by auto-coarsening while still covering the full range.
-    const maxGridLines = 200;
-    let xStep = Math.max(0.0001, parseFloat($("planeXStep").value) || 1);
-    let yStep = Math.max(0.0001, parseFloat($("planeYStep").value) || 1);
-    if ((xMax - xMin) / xStep > maxGridLines) xStep = (xMax - xMin) / maxGridLines;
-    if ((yMax - yMin) / yStep > maxGridLines) yStep = (yMax - yMin) / maxGridLines;
+    // Steps snap to round sizes when the range is too big for the one asked for, and numbers thin
+    // out independently of the grid — see graphStepFor / graphLabelStep.
+    const xStep = graphStepFor(xMax - xMin, parseFloat($("planeXStep").value) || 1);
+    const yStep = graphStepFor(yMax - yMin, parseFloat($("planeYStep").value) || 1);
 
     const xTicks = ticksFor(xMin, xMax, xStep);
     const yTicks = ticksFor(yMin, yMax, yStep);
@@ -397,7 +459,7 @@ function buildMathShapeSVG() {
     const pad = 40;
     // Left margin must fit the widest y-axis number — triple-digit labels (e.g. "100") were
     // getting clipped off the canvas edge at the old fixed 40px pad.
-    const maxYLabelChars = yTicks.length ? Math.max(...yTicks.map(v => fmtNum(v).length)) : 1;
+    const maxYLabelChars = showTickNums && yTicks.length ? Math.max(...yTicks.map(v => fmtNum(v).length)) : 1;
     const padLeft = Math.min(size / 2 - 20, Math.max(pad, Math.ceil(maxYLabelChars * axisFontSize * 0.62) + 18));
     const graphW = size - padLeft - pad;
     const graphH = size - pad * 2;
@@ -418,28 +480,40 @@ function buildMathShapeSVG() {
       hotspots.push({ cx: oX - 10 - hotW / 2, cy: size - pad + 4 - yNudge, w: hotW, h: hotH, field: "planeYMin", title: "y min" });
     }
 
+    // See the note in graphPlaneSvg: with the axes hidden, the grid has to supply its own 0 lines.
+    const gridX = drawAxes ? xTicks : xTicks.concat(xMin <= 0 && xMax >= 0 ? [0] : []);
+    const gridY = drawAxes ? yTicks : yTicks.concat(yMin <= 0 && yMax >= 0 ? [0] : []);
     let innerSvg = "";
     if (drawGrid) {
       innerSvg += `<!-- Sub-grid structures -->\n`;
-      for (const x of xTicks) {
+      for (const x of gridX) {
         const cx = mapX(x);
         innerSvg += `  <line x1="${cx}" y1="${pad}" x2="${cx}" y2="${size-pad}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
-      for (const y of yTicks) {
+      for (const y of gridY) {
         const cy = mapY(y);
         innerSvg += `  <line x1="${padLeft}" y1="${cy}" x2="${size-pad}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
     }
     const originX = mapX(0); const originY = mapY(0);
-    innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${size-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
-    innerSvg += `  <line x1="${originX}" y1="${pad}" x2="${originX}" y2="${size-pad}" stroke="black" stroke-width="2"/>\n`;
-    for (const x of xTicks) {
-      innerSvg += `  <text x="${mapX(x)}" y="${originY + xTickOffset}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
+    if (drawAxes) {
+      innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${size-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
+      innerSvg += `  <line x1="${originX}" y1="${pad}" x2="${originX}" y2="${size-pad}" stroke="black" stroke-width="2"/>\n`;
     }
-    for (const y of yTicks) {
-      innerSvg += `  <text x="${originX - 10}" y="${mapY(y) + 4}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="end">${fmtNum(y)}</text>\n`;
+    if (drawAxes && showTickNums) {
+      const xLabelStep = graphLabelStep(xStep, xMax - xMin, graphW,
+        Math.max(...xTicks.map(v => fmtNum(v).length), 1) * axisFontSize * 0.62);
+      const yLabelStep = graphLabelStep(yStep, yMax - yMin, graphH, axisFontSize);
+      for (const x of xTicks) {
+        if (!graphLabelAt(x, xLabelStep)) continue;
+        innerSvg += `  <text x="${mapX(x)}" y="${originY + xTickOffset}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="middle">${fmtNum(x)}</text>\n`;
+      }
+      for (const y of yTicks) {
+        if (!graphLabelAt(y, yLabelStep)) continue;
+        innerSvg += `  <text x="${originX - 10}" y="${mapY(y) + 4}" font-family="sans-serif" font-size="${axisFontSize}" text-anchor="end">${fmtNum(y)}</text>\n`;
+      }
+      if (showZero) innerSvg += originZeroSvg(originX, originY, xTickOffset, axisFontSize, fmtNum);
     }
-    if (showZero) innerSvg += originZeroSvg(originX, originY, xTickOffset, axisFontSize, fmtNum);
 
     // Clips plotted curves to the grid box — without it, steep functions (e.g. y=6x) compute
     // pixel coordinates far outside the box and the line spills into the margin/legend instead
@@ -464,10 +538,8 @@ function buildMathShapeSVG() {
     svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">\n<rect width="100%" height="100%" fill="${bgEnabled ? bgColor : "none"}"/>\n${innerSvg}</svg>`;
 
   } else if (type === "planeMath") {
-    const xMin = parseFloat($("pmXMin").value) || -5;
-    const xMax = parseFloat($("pmXMax").value) || 5;
-    const yMin = parseFloat($("pmYMin").value) || -5;
-    const yMax = parseFloat($("pmYMax").value) || 5;
+    const xMin = graphNum("pmXMin", -5), xMax = graphNum("pmXMax", 5);
+    const yMin = graphNum("pmYMin", -5), yMax = graphNum("pmYMax", 5);
     svgString = graphPlaneSvg({
       ...graphFieldsFor("pm"),
       rangeFields: { xMin: "pmXMin", xMax: "pmXMax", yMin: "pmYMin", yMax: "pmYMax" },
@@ -483,8 +555,8 @@ function buildMathShapeSVG() {
       ...graphFieldsFor("q1"),
       rangeFields: { xMax: "q1XMax", yMax: "q1YMax" }, // no mins: the origin is pinned to (0,0)
       xMin: 0, yMin: 0,
-      xMax: Math.max(0.0001, parseFloat($("q1XMax").value) || 10),
-      yMax: Math.max(0.0001, parseFloat($("q1YMax").value) || 10),
+      xMax: Math.max(0.0001, graphNum("q1XMax", 10)),
+      yMax: Math.max(0.0001, graphNum("q1YMax", 10)),
       gridThickness: parseFloat($("q1GridThickness").value) || 2,
       negativeArrows: false,
     });

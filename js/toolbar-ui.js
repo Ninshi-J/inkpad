@@ -172,11 +172,19 @@ let teachModeSnapshot = null; // {sidebar, minimap, zoom, scroll, scrollX}, rest
 function toggleTeachingMode() {
   if (V.teachMode) { exitTeachingMode(); return; }
   teachModeSnapshot = { sidebar: V.sidebar, minimap: V.minimap, zoom: V.zoom, scroll: V.scroll, scrollX: V.scrollX };
+  // Which page you were looking at, read BEFORE the zoom and layout change move what "looking at"
+  // means — you enter presenting the page you were working on, from its top, rather than at
+  // whatever fraction of two pages the old scroll position happens to land on.
+  const page = curPage();
   V.teachMode = true;
   V.sidebar = false;
   V.minimap = false;
   syncUI(); resize(); // resize() reads the just-applied layout change synchronously
   setZoom(CW / pageW());
+  setTeachPage(page);
+  V.scroll = page * stride();
+  V.scrollX = 0;
+  clampScroll(); clampScrollX();
   if (document.documentElement.requestFullscreen) {
     document.documentElement.requestFullscreen().then(lockEscapeKey).catch(() => {});
   }

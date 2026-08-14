@@ -596,7 +596,39 @@ const sy = wy => (wy - V.scroll) * V.zoom;
 const wx = px => (px - viewX()) / V.zoom;
 const wy = py => py / V.zoom + V.scroll;
 
-function clampScroll() { V.scroll = Math.max(0, Math.min(V.scroll, maxScroll())); }
+/* Teaching Mode shows a page at a time. Every scroll path in the app ends up here, so confining
+   the view to one page is done here rather than in each of them: the visible strip is kept inside
+   the page being taught from, and a scroll that runs past either end moves to the neighbouring page
+   aligned to the edge it arrived from — never a view with the bottom of one page above the top of
+   the next, which is the thing that reads as losing your place mid-lesson.
+
+   A page taller than the screen can still be scrolled through; it is only the boundary between two
+   pages that can't be parked on. teachPage is held rather than derived so that a page you have
+   scrolled to the bottom of doesn't silently become the next one. */
+let teachPage = 0;
+function setTeachPage(p) { teachPage = Math.max(0, Math.min(S.pages - 1, p)); }
+function clampScrollTeaching() {
+  setTeachPage(teachPage);
+  const st = stride(), view = CH / V.zoom;
+  const top = teachPage * st;
+  const bottom = top + Math.max(0, pageDims(teachPage).h - view);
+  if (V.scroll < top - 0.5 && teachPage > 0) {
+    setTeachPage(teachPage - 1);
+    const t2 = teachPage * st;
+    V.scroll = t2 + Math.max(0, pageDims(teachPage).h - view); // arrive at the bottom of it
+    return;
+  }
+  if (V.scroll > bottom + 0.5 && teachPage < S.pages - 1) {
+    setTeachPage(teachPage + 1);
+    V.scroll = teachPage * st;
+    return;
+  }
+  V.scroll = Math.max(top, Math.min(V.scroll, bottom));
+}
+function clampScroll() {
+  V.scroll = Math.max(0, Math.min(V.scroll, maxScroll()));
+  if (V.teachMode) clampScrollTeaching();
+}
 function clampScrollX() { V.scrollX = Math.max(0, Math.min(V.scrollX, maxScrollX())); }
 // Pages appear only when content lands on the last page (keeping one blank
 // trailing page), when added manually, or when a PDF import needs them.

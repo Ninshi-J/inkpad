@@ -59,8 +59,31 @@ function render() {
   drawLaser();
   drawEraserCursor();
   drawPendingPlacement();
+  drawTeachingMask();
   drawMinimap();
   updateScrollbars();
+}
+
+/* Teaching Mode shows one page and nothing else. Confining the scroll (clampScrollTeaching) does
+   that whenever the page is taller than the screen, but a page SHORTER than the screen — any
+   landscape page on a 16:9 projector — leaves room below it no amount of scrolling can remove, and
+   what shows through is the gap and the top of the next page.
+
+   So the rest of the canvas is simply covered. Painted after everything, because ink and images
+   are drawn against the whole document rather than page by page, and a stroke that overhangs the
+   page edge has to be hidden along with the page it overhangs onto. */
+function drawTeachingMask() {
+  if (!V.teachMode) return;
+  const r = pageScreenRect(Math.max(0, Math.min(S.pages - 1, teachPage)));
+  ctx.save();
+  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--chrome-2").trim() || "#E9E6DF";
+  if (r.y > 0) ctx.fillRect(0, 0, CW, r.y);
+  const below = r.y + r.h;
+  if (below < CH) ctx.fillRect(0, below, CW, CH - below);
+  if (r.x > 0) ctx.fillRect(0, 0, r.x, CH);
+  const right = r.x + r.w;
+  if (right < CW) ctx.fillRect(right, 0, CW - right, CH);
+  ctx.restore();
 }
 
 function pageScreenRect(p) {
