@@ -210,6 +210,20 @@ function graphLabelStep(gridStep, range, lengthPx, labelPx) {
 // values and stay put as the range is nudged about.
 const graphLabelAt = (v, labelStep) => Math.abs(v / labelStep - Math.round(v / labelStep)) < 1e-6;
 
+/* Which of the shape tools draw on a coordinate plane, and so can be stretched into a non-square
+   one. The charts (histogram, box plot, tree, ...) size themselves from their own content and have
+   no square canvas to relax, so a side handle just stretches their picture like any other image. */
+const GRAPH_ASPECT_TYPES = new Set(["plane", "planeMath", "planeQ1"]);
+// Past about 6:1 the margins (which are fixed pixel sizes) stop being a sensible fraction of the
+// short side, and the canvas gets big enough to be worth not building by accident.
+const GRAPH_ASPECT_MAX = 6;
+const clampGraphAspect = a => (Number.isFinite(a) && a > 0
+  ? Math.max(1 / GRAPH_ASPECT_MAX, Math.min(GRAPH_ASPECT_MAX, a)) : 1);
+/* Width:height the next graph build should use. Part of the dialog's state rather than a field on
+   it — it isn't typed, it's dragged — so it rides along in the saved gen params (see
+   captureShapeGenParams) and is restored whenever those are applied. */
+let shapeGraphAspect = 1;
+
 function buildMathShapeSVG() {
   const type = $("shapeTypeSelect").value;
   shapeMathFaces = new Set();
@@ -225,7 +239,18 @@ function buildMathShapeSVG() {
        handles  — {cx, cy, kind, title, apply(pt) -> {fieldId: value}}: drag it. */
   const hotspots = [], handles = [];
   let fnErrors = []; // parse/eval errors from the "Plot Functions" fields, by function
-  const size = 500;
+  /* The canvas a coordinate plane is drawn on. Square by default, but a graph that's been
+     stretched by a side handle is REDRAWN on a canvas of that shape rather than having its square
+     picture scaled to fit — a wide graph gets a wide plot area with the same numbers on it,
+     instead of the same picture with everything smeared sideways.
+
+     The short side stays at 500 and the long one grows, which is what keeps the text the size it
+     was: the SVG's absolute font sizes are divided by the canvas dimension when it's drawn into
+     its box on the page, so pinning the side the user DIDN'T drag pins the scale factor with it.
+     Stretch a 200x200 graph out to 400x200 and its numbers are still drawn at the same height. */
+  const graphAspect = clampGraphAspect(shapeGraphAspect);
+  const sizeW = Math.round(500 * Math.max(1, graphAspect));
+  const sizeH = Math.round(500 * Math.max(1, 1 / graphAspect));
 
   // Shared by both coordinate-plane tools (plane, planeMath).
   function ticksFor(min, max, step) {
@@ -282,13 +307,13 @@ function buildMathShapeSVG() {
     // y-axis label rotated in a reserved strip along the left edge.
     const xLabelW = labelAxes ? estAxisLabelW(xAxisLabel, axisLabelSize) : 0;
     const yLabelW = labelAxes ? estAxisLabelW(yAxisLabel, axisLabelSize) : 0;
-    const wideAxisLabels = labelAxes && (xLabelW > size * 0.24 || yLabelW > size * 0.5);
+    const wideAxisLabels = labelAxes && (xLabelW > sizeW * 0.24 || yLabelW > sizeH * 0.5);
     // Left margin must fit the widest y-axis number — triple-digit labels (e.g. "100") were
     // getting clipped off the canvas edge at the old fixed 40px pad. Quadrant-1 graphs hit this
     // constantly since the origin (and therefore every y-axis label) is always pinned to the left
     // edge, unlike the 4-quadrant layout where the origin can sit further in.
     const maxYLabelChars = showTickNums && yTicks.length ? Math.max(...yTicks.map(v => fmtNum(v).length)) : 1;
-    const tickPadLeft = Math.min(size / 2 - 20, Math.max(pad, Math.ceil(maxYLabelChars * axisFontSize * 0.62) + 18));
+    const tickPadLeft = Math.min(sizeW / 2 - 20, Math.max(pad, Math.ceil(maxYLabelChars * axisFontSize * 0.62) + 18));
     const yLabelStripW = wideAxisLabels ? axisLabelSize + 16 : 0;
     // A compact y-axis label is centered on the y-axis, so half of it overhangs to the left and
     // the left margin has to cover that too.
@@ -299,8 +324,8 @@ function buildMathShapeSVG() {
     const padBottom = wideAxisLabels ? Math.max(pad, xTickOffset + axisLabelSize + 14) : pad;
     const padRight = wideAxisLabels ? pad : Math.max(pad, xLabelW + 16);
     const padTop = wideAxisLabels ? pad : Math.max(pad, axisLabelSize + 10);
-    const graphW = size - padLeft - padRight;
-    const graphH = size - padTop - padBottom;
+    const graphW = sizeW - padLeft - padRight;
+    const graphH = sizeH - padTop - padBottom;
     const mapX = val => padLeft + ((val - xMin) / (xMax - xMin)) * graphW;
     const mapY = val => padTop + ((yMax - val) / (yMax - yMin)) * graphH;
 
@@ -314,24 +339,24 @@ function buildMathShapeSVG() {
       innerSvg += `<!-- Sub-grid structures -->\n`;
       for (const x of gridX) {
         const cx = mapX(x);
-        innerSvg += `  <line x1="${cx}" y1="${padTop}" x2="${cx}" y2="${size-padBottom}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
+        innerSvg += `  <line x1="${cx}" y1="${padTop}" x2="${cx}" y2="${sizeH-padBottom}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
       for (const y of gridY) {
         const cy = mapY(y);
-        innerSvg += `  <line x1="${padLeft}" y1="${cy}" x2="${size-padRight}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
+        innerSvg += `  <line x1="${padLeft}" y1="${cy}" x2="${sizeW-padRight}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
     }
     const originX = mapX(0); const originY = mapY(0);
     if (drawAxes) {
-      innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${size-padRight}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
-      innerSvg += `  <line x1="${originX}" y1="${padTop}" x2="${originX}" y2="${size-padBottom}" stroke="black" stroke-width="2"/>\n`;
+      innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${sizeW-padRight}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
+      innerSvg += `  <line x1="${originX}" y1="${padTop}" x2="${originX}" y2="${sizeH-padBottom}" stroke="black" stroke-width="2"/>\n`;
       // Arrowheads matching the number-line tool's style. The negative-direction pair is skipped for
       // a quadrant-1 graph, where the origin sits at the box's bottom-left corner and there is no
       // negative direction to point into.
-      innerSvg += `  <path d="M ${size-padRight} ${originY} L ${size-padRight-12} ${originY-6} L ${size-padRight-12} ${originY+6} Z" fill="black"/>\n`;
+      innerSvg += `  <path d="M ${sizeW-padRight} ${originY} L ${sizeW-padRight-12} ${originY-6} L ${sizeW-padRight-12} ${originY+6} Z" fill="black"/>\n`;
       if (negativeArrows) innerSvg += `  <path d="M ${padLeft} ${originY} L ${padLeft+12} ${originY-6} L ${padLeft+12} ${originY+6} Z" fill="black"/>\n`;
       innerSvg += `  <path d="M ${originX} ${padTop} L ${originX-6} ${padTop+12} L ${originX+6} ${padTop+12} Z" fill="black"/>\n`;
-      if (negativeArrows) innerSvg += `  <path d="M ${originX} ${size-padBottom} L ${originX-6} ${size-padBottom-12} L ${originX+6} ${size-padBottom-12} Z" fill="black"/>\n`;
+      if (negativeArrows) innerSvg += `  <path d="M ${originX} ${sizeH-padBottom} L ${originX-6} ${sizeH-padBottom-12} L ${originX+6} ${sizeH-padBottom-12} Z" fill="black"/>\n`;
     }
     if (showTickNums) {
       const xLabelStep = graphLabelStep(xStep, xMax - xMin, graphW,
@@ -356,22 +381,22 @@ function buildMathShapeSVG() {
     const hotW = Math.max(46, axisFontSize * 2.8), hotH = axisFontSize + 14;
     const yNudge = axisFontSize * 0.35;
     if (rf.xMin) hotspots.push({ cx: padLeft, cy: originY + xTickOffset - yNudge, w: hotW, h: hotH, field: rf.xMin, title: "x min" });
-    if (rf.xMax) hotspots.push({ cx: size - padRight, cy: originY + xTickOffset - yNudge, w: hotW, h: hotH, field: rf.xMax, title: "x max" });
+    if (rf.xMax) hotspots.push({ cx: sizeW - padRight, cy: originY + xTickOffset - yNudge, w: hotW, h: hotH, field: rf.xMax, title: "x max" });
     if (rf.yMax) hotspots.push({ cx: originX - 10 - hotW / 2, cy: padTop + 4 - yNudge, w: hotW, h: hotH, field: rf.yMax, title: "y max" });
-    if (rf.yMin) hotspots.push({ cx: originX - 10 - hotW / 2, cy: size - padBottom + 4 - yNudge, w: hotW, h: hotH, field: rf.yMin, title: "y min" });
+    if (rf.yMin) hotspots.push({ cx: originX - 10 - hotW / 2, cy: sizeH - padBottom + 4 - yNudge, w: hotW, h: hotH, field: rf.yMin, title: "y min" });
     // Axis names go with the axes they name.
     if (labelAxes && drawAxes && wideAxisLabels) {
       const yLabelX = yLabelStripW / 2 + 4;
-      const yLabelY = (padTop + (size - padBottom)) / 2;
+      const yLabelY = (padTop + (sizeH - padBottom)) / 2;
       innerSvg += shapeLabelSvg(yAxisLabel, { x: yLabelX, y: yLabelY, fontSize: axisLabelSize,
         transform: `rotate(-90 ${yLabelX} ${yLabelY})`, attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
-      const xLabelX = (padLeft + (size - padRight)) / 2;
-      const xLabelY = (size - padBottom) + xTickOffset + axisLabelSize - 2;
+      const xLabelX = (padLeft + (sizeW - padRight)) / 2;
+      const xLabelY = (sizeH - padBottom) + xTickOffset + axisLabelSize - 2;
       innerSvg += shapeLabelSvg(xAxisLabel, { x: xLabelX, y: xLabelY, fontSize: axisLabelSize,
         attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
     } else if (labelAxes && drawAxes) {
       // "y" sits on the y-axis, above its arrowhead; "x" sits outside the plot, past the x-axis arrowhead.
-      innerSvg += shapeLabelSvg(xAxisLabel, { x: size - padRight + 10, y: originY + 5, fontSize: axisLabelSize,
+      innerSvg += shapeLabelSvg(xAxisLabel, { x: sizeW - padRight + 10, y: originY + 5, fontSize: axisLabelSize,
         anchor: "start", attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
       innerSvg += shapeLabelSvg(yAxisLabel, { x: originX, y: padTop - 12, fontSize: axisLabelSize,
         attrs: AXIS_LABEL_ATTRS, cssFont: AXIS_LABEL_CSS });
@@ -404,7 +429,7 @@ function buildMathShapeSVG() {
       }
     });
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">\n<rect width="100%" height="100%" fill="${bgEnabled ? bgColor : "none"}"/>\n${innerSvg}</svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${sizeW} ${sizeH}" width="${sizeW}" height="${sizeH}">\n<rect width="100%" height="100%" fill="${bgEnabled ? bgColor : "none"}"/>\n${innerSvg}</svg>`;
   }
   /* A typed number, where a typed ZERO counts. "parseFloat(x) || dflt" reads 0 as blank and
      substitutes the default, which on an axis bound is the worst possible field to do it in: 0 is
@@ -460,9 +485,9 @@ function buildMathShapeSVG() {
     // Left margin must fit the widest y-axis number — triple-digit labels (e.g. "100") were
     // getting clipped off the canvas edge at the old fixed 40px pad.
     const maxYLabelChars = showTickNums && yTicks.length ? Math.max(...yTicks.map(v => fmtNum(v).length)) : 1;
-    const padLeft = Math.min(size / 2 - 20, Math.max(pad, Math.ceil(maxYLabelChars * axisFontSize * 0.62) + 18));
-    const graphW = size - padLeft - pad;
-    const graphH = size - pad * 2;
+    const padLeft = Math.min(sizeW / 2 - 20, Math.max(pad, Math.ceil(maxYLabelChars * axisFontSize * 0.62) + 18));
+    const graphW = sizeW - padLeft - pad;
+    const graphH = sizeH - pad * 2;
     const mapX = val => padLeft + ((val - xMin) / (xMax - xMin)) * graphW;
     const mapY = val => pad + ((yMax - val) / (yMax - yMin)) * graphH;
     // Vertical offset for x-axis tick numbers scales with font size so larger labels
@@ -475,9 +500,9 @@ function buildMathShapeSVG() {
       const oX = mapX(0), oY = mapY(0);
       const hotW = Math.max(46, axisFontSize * 2.8), hotH = axisFontSize + 14, yNudge = axisFontSize * 0.35;
       hotspots.push({ cx: padLeft, cy: oY + xTickOffset - yNudge, w: hotW, h: hotH, field: "planeXMin", title: "x min" });
-      hotspots.push({ cx: size - pad, cy: oY + xTickOffset - yNudge, w: hotW, h: hotH, field: "planeXMax", title: "x max" });
+      hotspots.push({ cx: sizeW - pad, cy: oY + xTickOffset - yNudge, w: hotW, h: hotH, field: "planeXMax", title: "x max" });
       hotspots.push({ cx: oX - 10 - hotW / 2, cy: pad + 4 - yNudge, w: hotW, h: hotH, field: "planeYMax", title: "y max" });
-      hotspots.push({ cx: oX - 10 - hotW / 2, cy: size - pad + 4 - yNudge, w: hotW, h: hotH, field: "planeYMin", title: "y min" });
+      hotspots.push({ cx: oX - 10 - hotW / 2, cy: sizeH - pad + 4 - yNudge, w: hotW, h: hotH, field: "planeYMin", title: "y min" });
     }
 
     // See the note in graphPlaneSvg: with the axes hidden, the grid has to supply its own 0 lines.
@@ -488,17 +513,17 @@ function buildMathShapeSVG() {
       innerSvg += `<!-- Sub-grid structures -->\n`;
       for (const x of gridX) {
         const cx = mapX(x);
-        innerSvg += `  <line x1="${cx}" y1="${pad}" x2="${cx}" y2="${size-pad}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
+        innerSvg += `  <line x1="${cx}" y1="${pad}" x2="${cx}" y2="${sizeH-pad}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
       for (const y of gridY) {
         const cy = mapY(y);
-        innerSvg += `  <line x1="${padLeft}" y1="${cy}" x2="${size-pad}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
+        innerSvg += `  <line x1="${padLeft}" y1="${cy}" x2="${sizeW-pad}" y2="${cy}" stroke="#E2E8F0" stroke-width="${gridThickness}"/>\n`;
       }
     }
     const originX = mapX(0); const originY = mapY(0);
     if (drawAxes) {
-      innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${size-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
-      innerSvg += `  <line x1="${originX}" y1="${pad}" x2="${originX}" y2="${size-pad}" stroke="black" stroke-width="2"/>\n`;
+      innerSvg += `<!-- Master Axis -->\n  <line x1="${padLeft}" y1="${originY}" x2="${sizeW-pad}" y2="${originY}" stroke="black" stroke-width="2"/>\n`;
+      innerSvg += `  <line x1="${originX}" y1="${pad}" x2="${originX}" y2="${sizeH-pad}" stroke="black" stroke-width="2"/>\n`;
     }
     if (drawAxes && showTickNums) {
       const xLabelStep = graphLabelStep(xStep, xMax - xMin, graphW,
@@ -535,7 +560,7 @@ function buildMathShapeSVG() {
       }
     });
 
-    svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">\n<rect width="100%" height="100%" fill="${bgEnabled ? bgColor : "none"}"/>\n${innerSvg}</svg>`;
+    svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${sizeW} ${sizeH}" width="${sizeW}" height="${sizeH}">\n<rect width="100%" height="100%" fill="${bgEnabled ? bgColor : "none"}"/>\n${innerSvg}</svg>`;
 
   } else if (type === "planeMath") {
     const xMin = graphNum("pmXMin", -5), xMax = graphNum("pmXMax", 5);

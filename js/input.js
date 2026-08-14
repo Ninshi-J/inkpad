@@ -391,10 +391,20 @@ function endPointer(e) {
       }
       break;
     case "rotate": case "scale": case "scaleAxis": {
-      const items = sel.items.map((it, i) => ({ kind: it.kind, ref: it.ref, before: drag.snaps[i], after: snapshotItem(it.kind, it.ref) }));
-      pushUndo({ op: "transform", items });
-      bumpPages(selBounds()?.y1 ?? 0);
-      markDirty();
+      // Read off `drag` now: it's cleared below, and the commit can run a frame or two later.
+      const snaps = drag.snaps, picked = sel.items.slice();
+      const commit = () => {
+        const items = picked.map((it, i) => ({ kind: it.kind, ref: it.ref, before: snaps[i], after: snapshotItem(it.kind, it.ref) }));
+        pushUndo({ op: "transform", items });
+        bumpPages(selBounds()?.y1 ?? 0);
+        markDirty();
+      };
+      // A graph stretched one way is redrawn at its new proportions instead of being left as a
+      // smeared picture. Decoding the new SVG is asynchronous, and it has to land BEFORE the
+      // "after" snapshot is taken — otherwise one undo would put the shape back and leave the
+      // redrawn artwork sitting in it.
+      if (drag.mode === "scaleAxis" && refitStretchedGraph(picked, commit)) break;
+      commit();
       break;
     }
   }

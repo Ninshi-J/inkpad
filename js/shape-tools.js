@@ -142,11 +142,14 @@ function captureShapeGenParams() {
     label: row.querySelector(".eq-label").value,
     enabled: row.querySelector(".eq-enabled").checked,
   })) : [];
-  return { type, fields, listId, fnRows };
+  // aspect isn't a form field — it comes from stretching the placed graph by a side handle — but
+  // it belongs with the rest of what regenerates the picture, so it travels with them.
+  return { type, fields, listId, fnRows, aspect: shapeGraphAspect };
 }
 // Inverse of captureShapeGenParams() — pre-fills the dialog from a previously-saved snapshot.
-function applyShapeGenParams(gen) {
+function applyShapeGenParams(gen, opts = {}) {
   if (!gen) return;
+  shapeGraphAspect = clampGraphAspect(gen.aspect);
   selectShapeType(gen.type);
   for (const [id, val] of Object.entries(gen.fields)) {
     const el = $(id);
@@ -164,7 +167,29 @@ function applyShapeGenParams(gen) {
   // selectShapeType() above ran before vnSets was restored, so the third circle's fields were
   // shown or hidden against the wrong value — settle them now the form is actually filled in.
   if (gen.type === "venn") toggleShapeFormFields();
-  renderShapePreview();
+  // The offscreen regenerate path (see withShapeFormAs) borrows the form with the dialog closed
+  // and puts it straight back, so there's no preview anybody could see — skip the work.
+  if (opts.preview !== false) renderShapePreview();
+}
+/* Runs fn with the shape dialog's form temporarily holding `gen`, then puts the form back.
+
+   buildMathShapeSVG() reads the live form — that's precisely what makes the preview and the real
+   insert share one code path and stay honest about each other — so regenerating an already-placed
+   graph without opening the dialog means borrowing that form for a moment. Nothing is visible
+   while it's borrowed: the dialog is closed, previews are suppressed, and the restore runs in a
+   finally so a throw mid-build can't strand the form holding somebody else's graph. */
+function withShapeFormAs(gen, fn) {
+  const saved = captureShapeGenParams();   // null for the shape types that aren't regenerable
+  const savedType = $("shapeTypeSelect").value;
+  const savedAspect = shapeGraphAspect;
+  try {
+    applyShapeGenParams(gen, { preview: false });
+    return fn();
+  } finally {
+    if (saved) applyShapeGenParams(saved, { preview: false });
+    else selectShapeType(savedType);
+    shapeGraphAspect = savedAspect;
+  }
 }
 // Opens the importer pre-filled with the graph's own generating values (stored on the image at
 // placement time — see finalizePendingPlacement in images.js). Regenerating replaces this same
@@ -179,21 +204,54 @@ function editGeneratedShape(im) {
 // However the dialog closes (Cancel, Escape, backdrop click, or a real generate), the "editing a
 // placed shape" state shouldn't survive past it — generateAndInsertMathShape() below captures
 // editingShapeTarget into a local before calling .close(), so this firing mid-generate is safe.
-$("shapeImporterDlg").addEventListener("close", () => { editingShapeTarget = null; });
+// The stretched-graph aspect goes with it: it belongs to the graph being edited, and leaving it
+// set would hand the NEXT graph inserted a shape nobody asked for. Both paths that need its value
+// (generate, and capturing the gen params) read it before .close() fires.
+$("shapeImporterDlg").addEventListener("close", () => { editingShapeTarget = null; shapeGraphAspect = 1; });
 // Swaps an already-placed graph's rendered image (and its regenerable params) in place — same
 // x/y/w/h, same rot/flip, nothing else on the page touched. Mirrors clearShapeFromImage's pattern
 // of mutating the existing doc.images ref's img/data in place rather than replacing the object,
 // so the current selection and any other reference to it stay valid across the edit.
-function replaceGeneratedShape(im, svgString, genParams) {
+function replaceGeneratedShape(im, svgString, genParams, onDone) {
   const dataUrl = SHAPE_SVG_URL_PREFIX + encodeURIComponent(svgString);
   const img = new Image();
   const before = { data: im.data, img: im.img, shapeGen: im.shapeGen };
   img.onload = () => {
     im.data = dataUrl; im.img = img; im.shapeGen = genParams;
-    pushUndo({ op: "replaceShape", ref: im, before, after: { data: dataUrl, img, shapeGen: genParams } });
+    // A caller with its own undo entry to push takes it from here — a graph redrawn because it was
+    // stretched belongs in the SAME entry as the stretch, not a second one behind it.
+    if (onDone) onDone();
+    else pushUndo({ op: "replaceShape", ref: im, before, after: { data: dataUrl, img, shapeGen: genParams } });
     markDirty(); needsDraw = true; mmCache.clear();
   };
+  // Whatever went wrong, the caller's bookkeeping still has to happen — otherwise a graph that
+  // failed to redraw would also lose the undo entry for the drag that triggered it.
+  img.onerror = () => { if (onDone) onDone(); };
   setShapeImgSrc(img, dataUrl); // fonts are spliced into the <img> only, never the stored data
+}
+/* A graph that's just been stretched by a side handle is redrawn to fit its new box, rather than
+   left as a square picture scaled out of shape. Returns false if the selection isn't a single
+   stretchable graph, in which case the caller carries on as normal; returns true having taken
+   responsibility for calling `then` once the new picture has decoded.
+
+   Only a lone selection qualifies. Stretching a graph together with other things is a request to
+   change the picture's proportions, not to re-plot it — and there'd be no honest single aspect to
+   redraw at anyway. */
+function refitStretchedGraph(items, then) {
+  if (items.length !== 1) return false;
+  const { kind, ref } = items[0];
+  if (kind !== "image" || !ref.shapeGen || !GRAPH_ASPECT_TYPES.has(ref.shapeGen.type)) return false;
+  if (!(ref.w > 0 && ref.h > 0)) return false;
+  const gen = { ...ref.shapeGen, aspect: clampGraphAspect(ref.w / ref.h) };
+  let svg;
+  try {
+    svg = withShapeFormAs(gen, () => stampShapeMathFaces(buildMathShapeSVG().svgString));
+  } catch (err) {
+    console.warn("could not redraw stretched graph:", err);
+    return false;
+  }
+  replaceGeneratedShape(ref, svg, gen, then);
+  return true;
 }
 
 /* ---------------- shape/graph defaults (device/user-level, like the keymap — not tied to any

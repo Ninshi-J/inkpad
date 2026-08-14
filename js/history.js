@@ -111,7 +111,12 @@ function shiftObject(o, kind, dx, dy) {
 /* ---------------- scale & rotate: shared math for the selection handles ---------------- */
 function snapshotItem(kind, ref) {
   if (kind === "stroke") return { pts: ref.pts.map(p => ({ ...p })), w: ref.w };
-  if (kind === "image") return { x: ref.x, y: ref.y, w: ref.w, h: ref.h, rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY };
+  // data/img/shapeGen ride along because a stretched graph is REDRAWN at its new proportions, so
+  // the picture is part of what the transform changed. The "transform" undo Object.assigns the
+  // snapshot back wholesale, which restores them for free; for every other object and every other
+  // transform they're simply unchanged on both sides.
+  if (kind === "image") return { x: ref.x, y: ref.y, w: ref.w, h: ref.h, rot: ref.rot || 0, flipX: !!ref.flipX, flipY: !!ref.flipY,
+                                 data: ref.data, img: ref.img, shapeGen: ref.shapeGen };
   if (kind === "text") return { x: ref.x, y: ref.y, size: ref.size, color: ref.color, font: ref.font, w: ref.w, lines: ref.lines.slice() };
   if (kind === "table") return tableSnapshot(ref);
   return { x: ref.x, y: ref.y, w: ref.w, h: ref.h }; // tape
