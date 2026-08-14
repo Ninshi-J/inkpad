@@ -412,11 +412,17 @@ function canRotateSelection() {
 }
 const HANDLE_INNER_PX = 9;
 const HANDLE_OUTER_PX = 22;
+// An edge handle sits at the midpoint of its side, so it needs that side to be long enough to
+// hold one clear of the two corner handles — otherwise a small selection ends up with five
+// overlapping targets and no way to tell which one you're about to grab.
+const EDGE_HANDLE_MIN_PX = 46;
+const EDGE_HANDLE_LEN = 18;   // the long way along the edge
+const EDGE_HANDLE_THICK = 5;  // and across it
 function selHandles() {
   const b = selBounds();
   if (!b) return null;
   const pivot = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 };
-  const pad = 6 / V.zoom; 
+  const pad = 6 / V.zoom;
   const raw = [
     { key: "tl", w: { x: b.x0 - pad, y: b.y0 - pad }, opp: { x: b.x1, y: b.y1 }, cursor: "nwse-resize" },
     { key: "tr", w: { x: b.x1 + pad, y: b.y0 - pad }, opp: { x: b.x0, y: b.y1 }, cursor: "nesw-resize" },
@@ -424,14 +430,38 @@ function selHandles() {
     { key: "bl", w: { x: b.x0 - pad, y: b.y1 + pad }, opp: { x: b.x1, y: b.y0 }, cursor: "nesw-resize" },
   ];
   const corners = raw.map(c => ({ ...c, s: { x: sx(c.w.x), y: sy(c.w.y) } }));
-  return { b, pivot, corners };
+  // Each edge pins the opposite edge and stretches only its own axis. "opp" is the world
+  // coordinate that stays put, i.e. the pivot for the drag.
+  const midX = (b.x0 + b.x1) / 2, midY = (b.y0 + b.y1) / 2;
+  const wide = (b.x1 - b.x0) * V.zoom >= EDGE_HANDLE_MIN_PX;
+  const tall = (b.y1 - b.y0) * V.zoom >= EDGE_HANDLE_MIN_PX;
+  const edges = [
+    { key: "l", axis: "x", w: { x: b.x0 - pad, y: midY }, opp: b.x1, on: tall, cursor: "ew-resize" },
+    { key: "r", axis: "x", w: { x: b.x1 + pad, y: midY }, opp: b.x0, on: tall, cursor: "ew-resize" },
+    { key: "t", axis: "y", w: { x: midX, y: b.y0 - pad }, opp: b.y1, on: wide, cursor: "ns-resize" },
+    { key: "b", axis: "y", w: { x: midX, y: b.y1 + pad }, opp: b.y0, on: wide, cursor: "ns-resize" },
+  ].filter(e => e.on).map(e => ({ ...e, s: { x: sx(e.w.x), y: sy(e.w.y) } }));
+  return { b, pivot, corners, edges };
 }
 function hitSelHandle(hs, px, py) {
   const rotOk = canRotateSelection();
+  // Corners first, then edges, and the rotate ring last of all: the ring is much the biggest
+  // target and would otherwise swallow the edge handle of any selection small enough for the two
+  // to overlap.
   for (const c of hs.corners) {
-    const d = Math.hypot(px - c.s.x, py - c.s.y);
-    if (d <= HANDLE_INNER_PX) return { mode: "scale", corner: c };
-    if (rotOk && d <= HANDLE_OUTER_PX) return { mode: "rotate", corner: c };
+    if (Math.hypot(px - c.s.x, py - c.s.y) <= HANDLE_INNER_PX) return { mode: "scale", corner: c };
+  }
+  for (const e of hs.edges) {
+    // A little wider than it's drawn, in the direction you have to be accurate in — an 5px-thick
+    // bar is a fair thing to aim at with a mouse and an unfair one with a finger.
+    const halfW = (e.axis === "x" ? HANDLE_INNER_PX : EDGE_HANDLE_LEN / 2 + 2);
+    const halfH = (e.axis === "x" ? EDGE_HANDLE_LEN / 2 + 2 : HANDLE_INNER_PX);
+    if (Math.abs(px - e.s.x) <= halfW && Math.abs(py - e.s.y) <= halfH) return { mode: "scaleAxis", edge: e };
+  }
+  if (rotOk) {
+    for (const c of hs.corners) {
+      if (Math.hypot(px - c.s.x, py - c.s.y) <= HANDLE_OUTER_PX) return { mode: "rotate", corner: c };
+    }
   }
   return null;
 }
@@ -453,6 +483,15 @@ function drawSelection() {
     ctx.fillStyle = "#fff"; ctx.strokeStyle = "#0F766E"; ctx.lineWidth = 1.5;
     ctx.fillRect(c.s.x - 5, c.s.y - 5, 10, 10);
     ctx.strokeRect(c.s.x - 5, c.s.y - 5, 10, 10);
+  }
+  // Bars, not squares, and lying along their own edge: the shape says which way it stretches
+  // before you've touched it, and keeps it from reading as a fifth corner.
+  for (const e of h.edges) {
+    const w = e.axis === "x" ? EDGE_HANDLE_THICK : EDGE_HANDLE_LEN;
+    const hh = e.axis === "x" ? EDGE_HANDLE_LEN : EDGE_HANDLE_THICK;
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = "#0F766E"; ctx.lineWidth = 1.5;
+    ctx.fillRect(e.s.x - w / 2, e.s.y - hh / 2, w, hh);
+    ctx.strokeRect(e.s.x - w / 2, e.s.y - hh / 2, w, hh);
   }
 }
 

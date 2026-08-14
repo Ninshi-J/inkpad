@@ -124,36 +124,52 @@ function magnetSnapTo90(dAngle) {
   return diffDeg <= MAGNET_90_THRESHOLD_DEG ? nearest : dAngle;
 }
 function applyGroupTransform(items, snaps, pivot, scaleFactor, dAngle) {
+  // scaleFactor is a single number for the corner handles' uniform scale, or {x, y} for an edge
+  // handle stretching one axis only. Rotation only ever arrives with a uniform scale (it comes
+  // from the ring around a corner), so the two never have to be reconciled.
+  const kx = typeof scaleFactor === "number" ? scaleFactor : scaleFactor.x;
+  const ky = typeof scaleFactor === "number" ? scaleFactor : scaleFactor.y;
+  const uniform = kx === ky;
+  // Stretching one way thickens the strokes running across it and leaves the ones running along
+  // it untouched, so the pen width follows the geometric mean of the two — which is just kx again
+  // when the scale is uniform, keeping corner drags exactly as they were.
+  const kw = Math.sqrt(kx * ky);
   const cos = Math.cos(dAngle), sin = Math.sin(dAngle);
   const tf = (px, py) => {
-    const dx = (px - pivot.x) * scaleFactor, dy = (py - pivot.y) * scaleFactor;
+    const dx = (px - pivot.x) * kx, dy = (py - pivot.y) * ky;
     return { x: pivot.x + dx * cos - dy * sin, y: pivot.y + dx * sin + dy * cos };
   };
   items.forEach(({ kind, ref }, i) => {
     const snap = snaps[i];
     if (kind === "stroke") {
       ref.pts = snap.pts.map(p => { const r = tf(p.x, p.y); return { x: r.x, y: r.y, p: p.p }; });
-      ref.w = Math.max(0.5, snap.w * scaleFactor);
+      ref.w = Math.max(0.5, snap.w * kw);
       ref.bb = strokeBB(ref);
     } else if (kind === "image") {
       const c = tf(snap.x + snap.w / 2, snap.y + snap.h / 2);
-      const nw = Math.max(6, snap.w * scaleFactor), nh = Math.max(6, snap.h * scaleFactor);
+      // A rotated image stretches along its OWN axes rather than the screen's — representing a
+      // screen-axis stretch of a rotated rectangle would need a shear, which the image has nowhere
+      // to store. Upright images, which is nearly all of them, are unaffected by the distinction.
+      const nw = Math.max(6, snap.w * kx), nh = Math.max(6, snap.h * ky);
       ref.w = nw; ref.h = nh; ref.x = c.x - nw / 2; ref.y = c.y - nh / 2;
       ref.rot = (snap.rot || 0) + dAngle;
       ref.flipX = snap.flipX; ref.flipY = snap.flipY;
     } else if (kind === "text") {
       const c = tf(snap.x, snap.y);
       ref.x = c.x; ref.y = c.y;
-      ref.size = Math.max(6, snap.size * scaleFactor);
-      if (snap.w) ref.w = Math.max(20, snap.w * scaleFactor); // keep the wrap width in proportion with the font
+      // A font has one size, so there's no such thing as stretching text one way. An edge drag
+      // leaves the size alone and moves the wrap width instead — which is the useful thing to do
+      // with the side handles anyway, and is how you reflow a paragraph without shrinking it.
+      ref.size = uniform ? Math.max(6, snap.size * kx) : snap.size;
+      if (snap.w) ref.w = Math.max(20, snap.w * kx); // keep the wrap width in proportion with the font
     } else if (kind === "table") {
       // Its own branch rather than the tape fallback: a table's font and its column widths have to
       // scale together, or the box shrinks while 20px text stays put and overflows every cell.
       const c = tf(snap.x + snap.w / 2, snap.y + snap.h / 2);
-      tableApplyScale(ref, snap, c.x, c.y, scaleFactor);
+      tableApplyScale(ref, snap, c.x, c.y, kx, ky);
     } else { // tape
       const c = tf(snap.x + snap.w / 2, snap.y + snap.h / 2);
-      const nw = Math.max(8, snap.w * scaleFactor), nh = Math.max(8, snap.h * scaleFactor);
+      const nw = Math.max(8, snap.w * kx), nh = Math.max(8, snap.h * ky);
       ref.w = nw; ref.h = nh; ref.x = c.x - nw / 2; ref.y = c.y - nh / 2;
     }
   });

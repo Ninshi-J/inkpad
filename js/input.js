@@ -117,6 +117,19 @@ cv.addEventListener("pointerdown", e => {
         };
         break;
       }
+      if (hit && hit.mode === "scaleAxis") {
+        const ed = hit.edge;
+        const along = ed.axis === "x";
+        // The far edge is what stays put; the other axis keeps the centre line it already had, so
+        // the selection grows out of the side you grabbed and nowhere else.
+        drag = {
+          mode: "scaleAxis", axis: ed.axis,
+          pivot: along ? { x: ed.opp, y: hs.pivot.y } : { x: hs.pivot.x, y: ed.opp },
+          snaps: sel.items.map(it => snapshotItem(it.kind, it.ref)),
+          startDist: Math.max(1, Math.abs((along ? w.x : w.y) - ed.opp)),
+        };
+        break;
+      }
       const additive = e.ctrlKey || e.metaKey;
       const b = selBounds();
       // With Ctrl held, a click inside the selection box must still be able to toggle the item
@@ -175,7 +188,10 @@ cv.addEventListener("pointermove", e => {
     if (V.tool === "lasso" && sel.items.length) {
       const hs = selHandles();
       const hit = hs ? hitSelHandle(hs, px, py) : null;
-      cv.style.cursor = hit ? (hit.mode === "scale" ? hit.corner.cursor : "grab") : "default";
+      cv.style.cursor = !hit ? "default"
+        : hit.mode === "scale" ? hit.corner.cursor
+        : hit.mode === "scaleAxis" ? hit.edge.cursor
+        : "grab";
     }
     return;
   }
@@ -281,6 +297,18 @@ cv.addEventListener("pointermove", e => {
       needsDraw = true;
       break;
     }
+    case "scaleAxis": {
+      const w = evtWorld(e);
+      const along = drag.axis === "x";
+      const dist = Math.abs((along ? w.x : w.y) - (along ? drag.pivot.x : drag.pivot.y));
+      // Shift is the escape hatch back to a uniform scale, for when you started on a side handle
+      // and then decided you wanted the whole thing bigger.
+      const k = Math.max(0.08, Math.min(12, dist / drag.startDist));
+      const f = e.shiftKey ? k : (along ? { x: k, y: 1 } : { x: 1, y: k });
+      applyGroupTransform(sel.items, drag.snaps, drag.pivot, f, 0);
+      needsDraw = true;
+      break;
+    }
     case "laser": {
       const w = evtWorld(e);
       laser.push({ x: w.x, y: w.y, t: performance.now() });
@@ -362,7 +390,7 @@ function endPointer(e) {
         bumpPages(selBounds()?.y1 ?? 0); markDirty();
       }
       break;
-    case "rotate": case "scale": {
+    case "rotate": case "scale": case "scaleAxis": {
       const items = sel.items.map((it, i) => ({ kind: it.kind, ref: it.ref, before: drag.snaps[i], after: snapshotItem(it.kind, it.ref) }));
       pushUndo({ op: "transform", items });
       bumpPages(selBounds()?.y1 ?? 0);

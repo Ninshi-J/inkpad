@@ -501,10 +501,12 @@ function tableRestore(t, snap) {
 }
 // Scaling drags the font with the geometry, so a table stays internally consistent rather than
 // keeping 20px text in cells half the size (which is what the generic tape branch would do).
-function tableApplyScale(t, snap, cx, cy, factor) {
-  t.fontSize = Math.max(6, snap.fontSize * factor);
-  t.colW = snap.colW.map(v => Math.max(TABLE_MIN_COL * 0.4, v * factor));
-  t.rowH = snap.rowH.map(v => Math.max(TABLE_MIN_ROW * 0.4, v * factor));
+// An edge drag passes a different kx and ky: the columns or the rows move on their own and the
+// font stays where it is, so widening a table gives its cells more room rather than bigger text.
+function tableApplyScale(t, snap, cx, cy, kx, ky = kx) {
+  t.fontSize = kx === ky ? Math.max(6, snap.fontSize * kx) : snap.fontSize;
+  t.colW = snap.colW.map(v => Math.max(TABLE_MIN_COL * 0.4, v * kx));
+  t.rowH = snap.rowH.map(v => Math.max(TABLE_MIN_ROW * 0.4, v * ky));
   tableSyncSize(t);
   t.x = cx - t.w / 2; t.y = cy - t.h / 2;
 }
