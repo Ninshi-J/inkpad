@@ -303,6 +303,9 @@ addEventListener("keydown", e => {
   if (C && k === "o") { $("fileOpen").click(); return handled(); }
   if (C && k === "e") { openExportDialog(); return handled(); }
   if (C && k === "d") { duplicateSelection(); return handled(); }
+  // Shift picks the direction explicitly, but plain Ctrl+G ungroups too when what's selected is
+  // already a group — so the one key is enough without having to remember the pair.
+  if (C && k === "g") { e.shiftKey ? ungroupSelection() : toggleGroupSelection(); return handled(); }
   if (C && k === "c") { copySelectionToClipboard(); return handled(); }
   // Ctrl+V is deliberately absent here. Calling preventDefault() on the keydown suppresses the
   // browser's own `paste` event, and that event is the only way to see what is actually on the

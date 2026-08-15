@@ -549,61 +549,170 @@ async function svgTextEl(t, top) {
   }
   return out;
 }
-async function buildPageSvg(srcP) {
-  const dims = pageDims(srcP);
-  const top = srcP * stride(), bot = top + dims.h;
-  let body = `<rect x="0" y="0" width="${dims.w}" height="${dims.h}" fill="#fff"/>\n`;
-
-  for (const im of doc.images) {
-    if (im.del || !isLayerVisible(im.layer)) continue;
-    if (pageIndexForObject(im) !== srcP) continue;
-    body += svgImageEl(im, top);
-  }
-
+/* The drawing itself, given the objects to draw and the y to treat as the top edge. Split out of
+   buildPageSvg so exporting a SELECTION goes through the same emitters in the same order — the
+   z-order below (images, highlighter, pen, text, tape, tables) is the export's rendering contract,
+   and a second copy of it would be a second thing to keep in step with the canvas. */
+async function buildSvgBody(objs, top) {
+  let body = "";
+  for (const im of objs.images) body += svgImageEl(im, top);
   for (const pass of ["hl", "pen"]) {
-    for (const s of doc.strokes) {
-      if (s.del || s.tool !== pass || s.pts.length < 2 || !isLayerVisible(s.layer)) continue;
-      if (s.pts[0].y < top || s.pts[0].y >= bot) continue;
+    for (const s of objs.strokes) {
+      if (s.tool !== pass || s.pts.length < 2) continue;
       body += svgStrokeEl(s, top);
     }
   }
-
-  for (const t of doc.texts) {
-    if (t.del || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
-    body += await svgTextEl(t, top);
-  }
-
-  for (const t of doc.tapes) {
-    if (t.del || t.revealed || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
+  for (const t of objs.texts) body += await svgTextEl(t, top);
+  for (const t of objs.tapes) {
     body += `<rect x="${t.x}" y="${t.y - top}" width="${t.w}" height="${t.h}" fill="${t.color || "#FFD682"}"/>\n`;
   }
-
   // Every cell's maths resolved before any of it is laid out: tableSvgBody centres a cell on its
   // total width, and a formula has no width until its span has rendered.
-  const pageTables = doc.tables.filter(tb => !tb.del && tb.y >= top && tb.y < bot && isLayerVisible(tb.layer));
-  await Promise.all(pageTables.map(tableWarmMath));
+  await Promise.all(objs.tables.map(tableWarmMath));
   // The same markup the dialog previews and the canvas draw from — cell by cell, still vector.
-  for (const tb of pageTables) body += tableSvgBody(tb, 0, top);
-
+  for (const tb of objs.tables) body += tableSvgBody(tb, 0, top);
+  return body;
+}
+async function buildPageSvg(srcP) {
+  const dims = pageDims(srcP);
+  const top = srcP * stride(), bot = top + dims.h;
+  const vis = o => !o.del && isLayerVisible(o.layer);
+  const inPage = y => y >= top && y < bot;
+  const objs = {
+    images: doc.images.filter(im => vis(im) && pageIndexForObject(im) === srcP),
+    strokes: doc.strokes.filter(s => vis(s) && inPage(s.pts[0].y)),
+    texts: doc.texts.filter(t => vis(t) && inPage(t.y)),
+    tapes: doc.tapes.filter(t => vis(t) && !t.revealed && inPage(t.y)),
+    tables: doc.tables.filter(tb => vis(tb) && inPage(tb.y)),
+  };
+  const body = `<rect x="0" y="0" width="${dims.w}" height="${dims.h}" fill="#fff"/>\n`
+    + await buildSvgBody(objs, top);
   return `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
     `width="${dims.w}" height="${dims.h}" viewBox="0 0 ${dims.w} ${dims.h}">\n${body}</svg>`;
 }
-async function exportSvg(pages) {
+
+/* ---------------- exporting just what's selected ----------------
+   Crops to the selection's own bounds rather than the page's, so the result drops straight into a
+   slide without a margin of empty paper round it. */
+const SEL_EXPORT_MARGIN = 6;
+async function buildSelectionSvg(items, { white = false } = {}) {
+  const b = itemsBounds(items);
+  if (!b) return null;
+  const m = SEL_EXPORT_MARGIN;
+  const x0 = b.x0 - m, y0 = b.y0 - m;
+  const w = Math.max(1, Math.round(b.x1 - b.x0 + m * 2));
+  const h = Math.max(1, Math.round(b.y1 - b.y0 + m * 2));
+  const pick = kind => items.filter(it => it.kind === kind).map(it => it.ref);
+  const objs = {
+    images: pick("image"), strokes: pick("stroke"), texts: pick("text"),
+    // A revealed tape is invisible on the canvas; exporting it would put the cover back on.
+    tapes: pick("tape").filter(t => !t.revealed), tables: pick("table"),
+  };
+  // buildSvgBody shifts y by `top` but takes x straight from the objects, since a page never needs
+  // an x offset. A crop does, so the whole body rides in a translated <g> rather than every
+  // emitter growing a second parameter it would otherwise always be passed 0 for.
+  const body = await buildSvgBody(objs, y0);
+  const bg = white ? `<rect x="0" y="0" width="${w}" height="${h}" fill="#fff"/>\n` : "";
+  return `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+    `width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">\n${bg}<g transform="translate(${-x0} 0)">\n${body}</g>\n</svg>`;
+}
+/* Rasterizes an SVG string by letting the browser draw it — the one renderer guaranteed to agree
+   with what the SVG export itself produces, rather than a second drawing path that could drift
+   from it. Every asset inside is already a data: URL (svgImageEl inflates a shape's fonts into
+   its href), so nothing here reaches the network and the canvas stays untainted. */
+function svgToPngBlob(svgText, w, h, scale) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml;charset=utf-8" }));
+    const img = new Image();
+    const done = fn => { URL.revokeObjectURL(url); fn(); };
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(w * scale));
+      c.height = Math.max(1, Math.round(h * scale));
+      const cx = c.getContext("2d");
+      cx.drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(blob => done(() => blob ? resolve(blob) : reject(new Error("PNG encoding failed"))), "image/png");
+    };
+    img.onerror = () => done(() => reject(new Error("The drawing could not be rasterized")));
+    img.src = url;
+  });
+}
+function saveBlob(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+// Reads an SVG string's own declared size, so the PNG path never has to be told separately how big
+// the thing it is rasterizing is (and never has to agree with a caller about it).
+function svgPixelSize(svgText) {
+  const w = /\swidth="([\d.]+)"/.exec(svgText), h = /\sheight="([\d.]+)"/.exec(svgText);
+  return { w: w ? parseFloat(w[1]) : 0, h: h ? parseFloat(h[1]) : 0 };
+}
+async function exportSelectionAs(items, { type, scale, white }) {
+  const svg = await buildSelectionSvg(items, { white });
+  if (!svg) return;
+  const stem = `${notebookFileStem()} selection`;
+  if (type === "svg") { saveBlob(new Blob([svg], { type: "image/svg+xml" }), `${stem}.svg`); return; }
+  const { w, h } = svgPixelSize(svg);
+  saveBlob(await svgToPngBlob(svg, w, h, scale), `${stem}.png`);
+}
+function exportSelectionDialog() {
+  if (!sel.items.length) return;
+  // Captured now: the dialog takes focus, and a stray click behind it could change the selection
+  // out from under the export.
+  const items = sel.items.slice();
+  const b = itemsBounds(items);
+  const dlg = $("exportSelDlg");
+  const scaleSel = $("exportSelScale");
+  const typeOf = () => dlg.querySelector('input[name=exportSelType]:checked').value;
+  const paint = () => {
+    const png = typeOf() === "png";
+    $("exportSelScaleField").style.display = png ? "" : "none";
+    const w = Math.round(b.x1 - b.x0 + SEL_EXPORT_MARGIN * 2), h = Math.round(b.y1 - b.y0 + SEL_EXPORT_MARGIN * 2);
+    const k = png ? +scaleSel.value : 1;
+    $("exportSelSize").textContent = `${items.length} object${items.length === 1 ? "" : "s"} · ${w * k} × ${h * k}px`;
+  };
+  dlg.querySelectorAll('input[name=exportSelType]').forEach(r => { r.onchange = paint; });
+  scaleSel.onchange = paint;
+  paint();
+  $("exportSelCancel").onclick = () => dlg.close();
+  $("exportSelForm").onsubmit = async e => {
+    e.preventDefault();
+    dlg.close();
+    try {
+      await exportSelectionAs(items, { type: typeOf(), scale: +scaleSel.value, white: $("exportSelWhite").checked });
+    } catch (err) {
+      notifyDialog("Export failed", String(err && err.message || err));
+    }
+  };
+  dlg.showModal();
+}
+/* One file per page for both of the single-page formats. Neither SVG nor PNG has a multi-page
+   container, so several selected pages come out as several files -- staggered slightly so Chrome's
+   multi-download permission prompt (which only appears once) doesn't drop any of them. */
+async function exportPerPage(pages, ext, make) {
   pages = (pages && pages.length) ? pages : Array.from({ length: S.pages }, (_, i) => i);
-  // SVG has no native multi-page container, so multiple selected pages come out as one file per
-  // page instead of one combined document -- staggered slightly so Chrome's multi-download
-  // permission prompt (which only appears once) doesn't drop any of them.
   const stem = notebookFileStem();
   for (let i = 0; i < pages.length; i++) {
-    const blob = new Blob([await buildPageSvg(pages[i])], { type: "image/svg+xml" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = pages.length > 1 ? `${stem} page${pages[i] + 1}.svg` : `${stem}.svg`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const blob = await make(pages[i]);
+    saveBlob(blob, pages.length > 1 ? `${stem} page${pages[i] + 1}.${ext}` : `${stem}.${ext}`);
     if (i < pages.length - 1) await new Promise(res => setTimeout(res, 150));
   }
+}
+async function exportSvg(pages) {
+  await exportPerPage(pages, "svg", async p =>
+    new Blob([await buildPageSvg(p)], { type: "image/svg+xml" }));
+}
+async function exportPng(pages, scale) {
+  await exportPerPage(pages, "png", async p => {
+    const svg = await buildPageSvg(p);
+    const { w, h } = svgPixelSize(svg);
+    return svgToPngBlob(svg, w, h, scale);
+  });
 }
 
 /* ============================================================================

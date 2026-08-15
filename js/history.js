@@ -14,6 +14,13 @@ function applyEntry(e, dir) { // dir: -1 undo, +1 redo
       tableRestore(e.ref, undoing ? e.before : e.after);
       break;
     }
+    case "group": {
+      e.items.forEach(it => {
+        const id = undoing ? it.before : it.after;
+        if (id) it.ref.grp = id; else delete it.ref.grp;
+      });
+      break;
+    }
     case "replaceShape": {
       const snap = undoing ? e.before : e.after;
       e.ref.data = snap.data; e.ref.img = snap.img; e.ref.shapeGen = snap.shapeGen;

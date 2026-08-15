@@ -366,6 +366,68 @@ const doc = {
   // its cells are typed into on the canvas after it's made. See js/table-obj.js.
   tables: [],   // {x,y,w,h, cells[][], colW[], rowH[], headRows, headCols, spans, fontSize, ...}
 };
+/* Every object array, paired with the selection `kind` that names it. Several things need to walk
+   the whole document without caring what's in it — grouping, most of all — and each of them
+   growing its own list of the six arrays is how one of them ends up quietly missing tables. */
+const DOC_ARRAYS = [
+  ["stroke", "strokes"], ["tape", "tapes"], ["text", "texts"],
+  ["image", "images"], ["timer", "timers"], ["table", "tables"],
+];
+function forEachDocObject(fn) {
+  for (const [kind, key] of DOC_ARRAYS) for (const ref of doc[key]) fn(ref, kind);
+}
+
+/* ---------------- groups ----------------
+   A group is a tag, not a container: every member carries the same `grp` string and the objects
+   stay exactly where they were in their own arrays. That's what keeps grouping from touching
+   drawing, hit-testing, export, layers or z-order at all — the only thing that changes is how a
+   click turns into a selection.
+
+   Groups are flat. Grouping a selection that already contains groups retags all of it into one new
+   group rather than nesting, and ungrouping is a single step back to loose objects. Nesting would
+   mean a click had to decide WHICH level you meant, which needs an enter/exit-group mode to answer
+   — a lot of interface for a whiteboard. */
+let groupSeq = 0;
+// Random suffix, not just a counter: ids have to stay distinct across a paste from another
+// notebook, where the other document's counter started at 1 as well.
+const newGroupId = () => `g${(++groupSeq).toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+/* Pulls in the rest of whatever group each picked item belongs to. Runs on the way OUT of every
+   selection gesture rather than inside them, so click, ctrl+click and lasso all get it without
+   each one reimplementing it. Order and identity are preserved: an item already in the list is
+   never added twice, so selection-order-sensitive things (the ink toolbar reads items[0]) are
+   unaffected for selections that contain no groups at all. */
+function expandToGroups(items) {
+  const seen = new Set(items.map(it => it.ref));
+  const out = items.slice();
+  const ids = new Set(items.map(it => it.ref.grp).filter(Boolean));
+  if (!ids.size) return out;
+  forEachDocObject((ref, kind) => {
+    if (ref.del || seen.has(ref) || !ids.has(ref.grp)) return;
+    if (!isLayerVisible(ref.layer)) return; // a hidden layer's objects aren't selectable on their own either
+    seen.add(ref); out.push({ kind, ref });
+  });
+  return out;
+}
+/* Copies form their OWN group rather than joining the original's. Pasting a grouped diagram twice
+   must give two groups you can move independently — reusing the id would silently weld every copy
+   to the original, and clicking any of them would select the lot. Ids are remapped as a set, so a
+   selection spanning two groups still comes out as two. */
+function remapGroupIds(refs) {
+  const fresh = new Map();
+  for (const ref of refs) {
+    if (!ref || !ref.grp) continue;
+    if (!fresh.has(ref.grp)) fresh.set(ref.grp, newGroupId());
+    ref.grp = fresh.get(ref.grp);
+  }
+}
+// The selection is "a whole group" when every item carries the same non-empty id. That's the test
+// for offering Ungroup, and it's deliberately stricter than "contains a group": a selection of one
+// group plus a stray stroke is a candidate for Group, not Ungroup.
+function selGroupId() {
+  if (sel.items.length < 2) return null;
+  const id = sel.items[0].ref.grp;
+  return id && sel.items.every(it => it.ref.grp === id) ? id : null;
+}
 function timerObjElapsedMs(t) { return t.running ? t.baseMs + (performance.now() - t.startWall) : t.baseMs; }
 function timerObjRemainingMs(t) { return Math.max(0, t.durationMs - timerObjElapsedMs(t)); }
 let undoStack = [], redoStack = [];

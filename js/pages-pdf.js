@@ -381,7 +381,21 @@ async function openExportDialog() {
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
       <input type="radio" name="exportType" value="svg"> Vector SVG (.svg)</label>
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
-      <input type="radio" name="exportType" value="inkpad"> Editable file (.inkpad)</label>`;
+      <input type="radio" name="exportType" value="png"> PNG image (.png)</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+      <input type="radio" name="exportType" value="inkpad"> Editable file (.inkpad)</label>
+    <label id="exportPngScaleWrap" style="display:none;align-items:center;gap:5px">
+      Resolution
+      <select id="exportPngScale">
+        <option value="1">1×</option>
+        <option value="2" selected>2×</option>
+        <option value="4">4×</option>
+      </select></label>`;
+  // Resolution only means anything for the raster format, so it only appears for it.
+  const scaleWrap = typeWrap.querySelector("#exportPngScaleWrap");
+  typeWrap.querySelectorAll('input[name=exportType]').forEach(r => {
+    r.onchange = () => { scaleWrap.style.display = r.value === "png" && r.checked ? "flex" : "none"; };
+  });
   const chosen = await showPagePicker({
     title: "Export document",
     items,
@@ -391,9 +405,15 @@ async function openExportDialog() {
   if (!chosen) return;
   const type = typeWrap.querySelector('input[name=exportType]:checked').value;
   const fullDoc = chosen.length === S.pages;
-  if (type === "pdf") await exportPdf(fullDoc ? null : chosen);
-  else if (type === "svg") await exportSvg(fullDoc ? null : chosen);
-  else saveFile(fullDoc ? null : chosen);
+  const pages = fullDoc ? null : chosen;
+  try {
+    if (type === "pdf") await exportPdf(pages);
+    else if (type === "svg") await exportSvg(pages);
+    else if (type === "png") await exportPng(pages, +typeWrap.querySelector("#exportPngScale").value);
+    else saveFile(pages);
+  } catch (err) {
+    notifyDialog("Export failed", String(err && err.message || err));
+  }
 }
 
 function buildFilteredDoc(pages) {
@@ -463,12 +483,12 @@ async function serialize(pages) {
   return JSON.stringify({
     v: 1, settings: { ...S, pages: src.pageCount },
     strokes: src.strokes.map(s => ({
-      tool: s.tool, color: s.color, w: s.w, t: filtered ? null : s.t, layer: s.layer,
+      tool: s.tool, color: s.color, w: s.w, t: filtered ? null : s.t, layer: s.layer, ...(s.grp ? { grp: s.grp } : {}),
       pts: s.pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round((p.p ?? .5) * 100) / 100]),
     })),
-    tapes: src.tapes.map(({ x, y, w, h, color, revealed, layer }) => ({ x, y, w, h, color, revealed, layer })),
-    texts: src.texts.map(({ x, y, color, size, font, w, bg, lines, layer }) => ({ x, y, color, size, font, w, bg: bg ?? null, lines, layer })),
-    images: src.images.map(({ data, x, y, w, h, rot, flipX, flipY, pdfSrcId, pdfPageIndex, pdfBox, pdfWholePage, shapeGen, layer }) => {
+    tapes: src.tapes.map(({ x, y, w, h, color, revealed, layer, grp }) => ({ x, y, w, h, color, revealed, layer, ...(grp ? { grp } : {}) })),
+    texts: src.texts.map(({ x, y, color, size, font, w, bg, lines, layer, grp }) => ({ x, y, color, size, font, w, bg: bg ?? null, lines, layer, ...(grp ? { grp } : {}) })),
+    images: src.images.map(({ data, x, y, w, h, rot, flipX, flipY, pdfSrcId, pdfPageIndex, pdfBox, pdfWholePage, shapeGen, layer, grp }) => {
       const hasVectorSrc = pdfSrcId != null && pdfSourcesOut[pdfSrcId] != null;
       // A whole-page PDF import doesn't need its rendered raster preview saved too once the
       // original PDF bytes are being saved right alongside it — that preview gets regenerated
@@ -481,6 +501,7 @@ async function serialize(pages) {
         x, y, w, h, rot: rot || 0, flipX: !!flipX, flipY: !!flipY,
         ...(hasVectorSrc ? { pdfSrcId, pdfPageIndex, pdfBox, pdfWholePage: !!pdfWholePage } : {}),
         ...(shapeGen ? { shapeGen } : {}),
+        ...(grp ? { grp } : {}),
         layer,
       };
     }),
@@ -489,7 +510,7 @@ async function serialize(pages) {
     // startWall (a performance.now() anchor) is meaningless across a reload so it's dropped entirely.
     timers: src.timers.map(t => ({
       x: t.x, y: t.y, w: t.w, h: t.h, mode: t.mode, durationMs: t.durationMs,
-      baseMs: t.running ? timerObjElapsedMs(t) : t.baseMs, layer: t.layer,
+      baseMs: t.running ? timerObjElapsedMs(t) : t.baseMs, layer: t.layer, ...(t.grp ? { grp: t.grp } : {}),
     })),
     tables: src.tables.map(tableToJson),
     // The page pitch these coordinates were laid out against. Recorded because it is not derivable
@@ -520,7 +541,7 @@ function deserialize(json) {
   S.layers = null; S.activeLayer = null; // same — otherwise a save with no layers key would inherit whatever notebook was open before this one, instead of falling back to defaultLayers() below
   Object.assign(S, d.settings || {});
   doc.strokes = (d.strokes || []).map(s => {
-    const ns = { tool: s.tool, color: s.color, w: s.w, t: s.t ?? null, layer: s.layer, del: false, pts: s.pts.map(a => ({ x: a[0], y: a[1], p: a[2] ?? 0.5 })) };
+    const ns = { tool: s.tool, color: s.color, w: s.w, t: s.t ?? null, layer: s.layer, del: false, ...(s.grp ? { grp: s.grp } : {}), pts: s.pts.map(a => ({ x: a[0], y: a[1], p: a[2] ?? 0.5 })) };
     ns.bb = strokeBB(ns); return ns;
   });
   doc.tapes = (d.tapes || []).map(t => ({ ...t, del: false }));
@@ -556,6 +577,7 @@ function deserialize(json) {
     }
     const im = { img, data: data || null, x: i.x, y: i.y, w: i.w, h: i.h, rot: i.rot || 0, flipX: !!i.flipX, flipY: !!i.flipY, layer: i.layer, del: false };
     if (i.shapeGen) im.shapeGen = i.shapeGen;
+    if (i.grp) im.grp = i.grp;
     if (i.pdfSrcId != null && srcIdRemap[i.pdfSrcId] != null) {
       im.pdfSrcId = srcIdRemap[i.pdfSrcId];
       im.pdfPageIndex = i.pdfPageIndex;

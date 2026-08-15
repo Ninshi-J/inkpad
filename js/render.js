@@ -1,9 +1,12 @@
 "use strict";
 const sel = { items: [], box: null, shape: null }; // items: {kind, ref}; shape: last traced lasso/rect polygon (world coords), kept for Copy
 function clearSelection() { if (sel.items.length) { sel.items = []; sel.box = null; sel.shape = null; needsDraw = true; } }
-function selBounds() {
+function selBounds() { return itemsBounds(sel.items); }
+// The same box for any item list, not just the live selection — exporting a selection needs it for
+// a list captured before a dialog opened, and stamps already wanted it too.
+function itemsBounds(items) {
   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-  for (const { kind, ref } of sel.items) {
+  for (const { kind, ref } of items) {
     let b;
     if (kind === "stroke") b = ref.bb;
     else if (kind === "text") b = textBB(ref);
@@ -12,7 +15,7 @@ function selBounds() {
     x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0);
     x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1);
   }
-  return sel.items.length ? { x0, y0, x1, y1 } : null;
+  return items.length ? { x0, y0, x1, y1 } : null;
 }
 function textBB(t) {
   const lines = wrappedLines(t);
@@ -572,6 +575,17 @@ function buildSelToolbarContent(showItems, showShape, editableImage) {
     sepEl();
     mk("⧉", () => duplicateSelection(), "Duplicate (Ctrl+D)");
     mk("✕", () => deleteSelection(), "Delete");
+    // Group when there's more than one thing; Ungroup once the selection IS a group, which is
+    // also the only visible sign that it is one — the box round a group looks like any other.
+    if (selGroupId()) {
+      sepEl();
+      mk("⛶ Ungroup", () => ungroupSelection(), "Break this group up (Ctrl+Shift+G)");
+    } else if (sel.items.length > 1) {
+      sepEl();
+      mk("⛶ Group", () => groupSelection(), "Group these, so clicking one selects them all (Ctrl+G)");
+    }
+    sepEl();
+    mk("⤓ Export", () => exportSelectionDialog(), "Save just this selection as a PNG or SVG");
     if (editableImage) {
       sepEl();
       mk("✎ Edit", () => editGeneratedShape(editableImage), "Re-open this graph in the Math Shape Importer, same spot & size");
@@ -679,7 +693,10 @@ function positionSelToolbar() {
   // cell is focused are both part of what the toolbar currently says.
   const tb = selTable();
   const tbSig = tb ? `${tableRows(tb)}x${tableCols(tb)}|${JSON.stringify(tableFocusIn(tb) || null, ["r", "c"])}` : "";
-  const sig = `${showItems}|${showShape}|${!!editableImage}|${tbSig}|${inkSel.length}|${inkSel[0] ? inkSel[0].tool : ""}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
+  // Which of Group/Ungroup is offered is part of what the bar says, so it has to rebuild when the
+  // selection stops or starts being a group.
+  const grpSig = `${!!selGroupId()}|${sel.items.length > 1}`;
+  const sig = `${showItems}|${showShape}|${!!editableImage}|${tbSig}|${grpSig}|${inkSel.length}|${inkSel[0] ? inkSel[0].tool : ""}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
   if (sig !== selToolbarSig) { selToolbarSig = sig; buildSelToolbarContent(showItems, showShape, editableImage); }
   const b = selBounds() || shapeBounds(sel.shape);
   if (!b) { host.classList.remove("open"); return; }

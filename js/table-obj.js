@@ -681,7 +681,11 @@ function insertTableFromDialog() {
    dialog preview and for SVG export, so what the preview shows is what the file contains — the
    preview used to be a separate generator and the two could drift. */
 function tableSvgBody(t, originX, originY) {
-  const fam = FONT_STACKS[DEFAULT_FONT_KEY].css;
+  // Single quotes inside the stack, because this goes into a double-quoted XML attribute and the
+  // stack names a font that needs quoting ("Segoe UI"). Left as-is it closes the attribute early
+  // and the whole file stops being parseable XML — which for an SVG means it does not open at all.
+  // svgTextEl does the same to fontCss() for exactly this reason.
+  const fam = FONT_STACKS[DEFAULT_FONT_KEY].css.replace(/"/g, "'");
   let out = "";
   for (let r = 0; r < tableRows(t); r++) {
     for (let c = 0; c < tableCols(t); c++) {
@@ -877,6 +881,7 @@ function tableToJson(t) {
     spans: t.spans, hidden: t.hidden, fontSize: t.fontSize, colW: t.colW, rowH: t.rowH,
     headFill: t.headFill, stripeFill: t.stripeFill, gridColour: t.gridColour,
     textColour: t.textColour, layer: t.layer,
+    ...(t.grp ? { grp: t.grp } : {}),
   };
 }
 function tableFromJson(j) {
@@ -886,5 +891,7 @@ function tableFromJson(j) {
     fontSize: j.fontSize, colW: j.colW, rowH: j.rowH, headFill: j.headFill,
     stripeFill: j.stripeFill, gridColour: j.gridColour, textColour: j.textColour, layer: j.layer,
   });
+  // Not a makeTable option: grouping is about how a table is selected, not how one is built.
+  if (j.grp) t.grp = j.grp;
   return t;
 }

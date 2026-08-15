@@ -368,11 +368,15 @@ function endPointer(e) {
         // failure. Matched by pointerdown's own ctrl handling so the click isn't consumed there.
         if (drag.additive) {
           if (picked) {
-            const i = sel.items.findIndex(it => it.ref === picked.ref);
-            if (i >= 0) sel.items.splice(i, 1); else sel.items.push(picked);
+            // A group toggles as one thing: ctrl+clicking a member of an already-selected group
+            // takes the whole group back out, rather than leaving the rest of it behind.
+            const mates = expandToGroups([picked]);
+            const already = sel.items.some(it => it.ref === picked.ref);
+            if (already) sel.items = sel.items.filter(it => !mates.some(m => m.ref === it.ref));
+            else for (const m of mates) if (!sel.items.some(it => it.ref === m.ref)) sel.items.push(m);
           }
         } else {
-          sel.items = picked ? [picked] : [];
+          sel.items = picked ? expandToGroups([picked]) : [];
         }
         sel.shape = null;
         // A click inside a table marks the cell the toolbar's row/column buttons act on, without
@@ -806,6 +810,10 @@ function finishLassoSplit(poly) {
     for (const r of insideRuns) {
       if (r.length < 2 || pathLen(r) < 2.5) continue;
       const ns = { ...s, del: false, pts: r.map(pt => ({ ...pt })), t: null };
+      // The piece being lifted out leaves the group behind. The outside runs below keep it: they
+      // are the remainder, still sitting where the grouped object was, so the group survives the
+      // cut minus the bit that was taken out of it.
+      delete ns.grp;
       ns.bb = strokeBB(ns);
       doc.strokes.push(ns);
       pushUndo({ op: "add", items: [{ kind: "stroke", ref: ns }] });
@@ -853,6 +861,11 @@ function finishLasso(partial) {
     if (!t.del && isLayerVisible(t.layer) && pointInPoly(t.x + t.w / 2, t.y + t.h / 2, poly)) sel.items.push({ kind: "timer", ref: t });
   for (const t of doc.tables)
     if (!t.del && isLayerVisible(t.layer) && pointInPoly(t.x + t.w / 2, t.y + t.h / 2, poly)) sel.items.push({ kind: "table", ref: t });
+  // A lasso that catches part of a group takes all of it. Anything else would let a lasso quietly
+  // tear a group in half — and the very next drag would move the caught half away from the rest,
+  // which is the one thing grouping exists to prevent. The split lasso's own fragments have
+  // already been untagged (see finishLassoSplit), so they don't drag the original group back in.
+  sel.items = expandToGroups(sel.items);
 }
 
 function pickObjectAt(x, y) {
@@ -882,5 +895,36 @@ function deleteSelection() {
   sel.items.forEach(it => it.ref.del = true);
   pushUndo({ op: "del", items: sel.items.slice() });
   clearSelection(); markDirty();
+}
+/* ---------------- grouping ----------------
+   Both directions are the same operation — write a `grp` onto every selected object — so they
+   share one undo entry shape recording what each item's tag was before. */
+function applyGroupTags(items, id) {
+  items.forEach(it => { if (id) it.ref.grp = id; else delete it.ref.grp; });
+}
+function commitGroupChange(items, before, id) {
+  pushUndo({ op: "group", items: items.map((it, i) => ({ ref: it.ref, before: before[i], after: id || undefined })) });
+  markDirty(); needsDraw = true;
+}
+function groupSelection() {
+  if (sel.items.length < 2) return;
+  const items = sel.items.slice();
+  const before = items.map(it => it.ref.grp);
+  const id = newGroupId();
+  applyGroupTags(items, id);
+  commitGroupChange(items, before, id);
+}
+function ungroupSelection() {
+  // Anything tagged at all, not just a clean whole group — ungrouping a mixed selection should
+  // free the parts of it that were grouped rather than doing nothing at all.
+  const items = sel.items.filter(it => it.ref.grp);
+  if (!items.length) return;
+  const before = items.map(it => it.ref.grp);
+  applyGroupTags(items, null);
+  commitGroupChange(items, before, null);
+}
+// One key for both, the way Ctrl+G / Ctrl+Shift+G work everywhere else that has grouping.
+function toggleGroupSelection() {
+  if (selGroupId()) ungroupSelection(); else groupSelection();
 }
 /* ---------------- Copy / Paste ---------------- */
