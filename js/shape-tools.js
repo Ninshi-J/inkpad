@@ -125,6 +125,17 @@ const SHAPE_GEN_FIELD_CONTAINERS = {
 };
 const SHAPE_GEN_FN_LIST_IDS = { planeMath: "pmFnList", planeQ1: "q1FnList" };
 let editingShapeTarget = null; // the doc.images ref currently being re-edited, or null for a fresh insert
+/* Every placed shape gets its OWN generating params, never a reference to another's.
+
+   Nothing mutates shapeGen in place today — replaceGeneratedShape and refitStretchedGraph both
+   build a fresh object and assign it — so sharing one was harmless. But it is precisely the trap
+   that produced "edit the copy and the original changes": one object reachable from several
+   places, where the damage only appears once somebody writes through it. Cheap to close, and it
+   stops the next in-place edit from being a bug in three pasted copies at once.
+
+   JSON rather than structuredClone to match how spans are already deep-copied nearby, and because
+   these are plain data by construction (see captureShapeGenParams). */
+const cloneShapeGen = g => (g ? JSON.parse(JSON.stringify(g)) : g);
 // Snapshots every field inside the current graph type's own fields container (plus its dynamic
 // function-list rows, for planeMath/planeQ1) so the dialog can be reopened pre-filled later.
 // Returns null for any non-graph shape type — those aren't re-editable (see comment above).

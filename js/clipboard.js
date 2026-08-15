@@ -210,7 +210,7 @@ function insertClipboardWithOffset(dx, dy) {
         img: it.img, data: it.data, x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, rot: it.rot, flipX: it.flipX, flipY: it.flipY, del: false, _pdfBusy: false, layer,
         pdfPage: it.pdfPage, pdfFit: it.pdfFit, renderPxPerUnit: it.renderPxPerUnit,
         pdfSrcId: it.pdfSrcId, pdfPageIndex: it.pdfPageIndex, pdfBox: it.pdfBox, pdfWholePage: it.pdfWholePage,
-        ...(it.shapeGen ? { shapeGen: it.shapeGen } : {}),
+        ...(it.shapeGen ? { shapeGen: cloneShapeGen(it.shapeGen) } : {}),
         ...(it.grp ? { grp: it.grp } : {}),
       };
       doc.images.push(copy);
@@ -275,7 +275,11 @@ function duplicateSelection() {
     else if (kind === "text") { copy = { ...ref, x: ref.x + 20, y: ref.y + 20, lines: ref.lines.slice() }; doc.texts.push(copy); }
     else if (kind === "timer") { copy = { ...ref, x: ref.x + 20, y: ref.y + 20, running: false, baseMs: 0, startWall: null }; doc.timers.push(copy); }
     else if (kind === "table") { copy = tableFromJson({ ...tableToJson(ref), x: ref.x + 20, y: ref.y + 20 }); doc.tables.push(copy); }
-    else { copy = { ...ref, x: ref.x + 20, y: ref.y + 20, _pdfBusy: false }; doc.images.push(copy); }
+    else {
+      copy = { ...ref, x: ref.x + 20, y: ref.y + 20, _pdfBusy: false };
+      if (copy.shapeGen) copy.shapeGen = cloneShapeGen(copy.shapeGen);
+      doc.images.push(copy);
+    }
     added.push({ kind, ref: copy });
   }
   pushUndo({ op: "add", items: added });
@@ -419,7 +423,7 @@ function instantiateStampItems(items, dx, dy) {
       img.onload = () => { needsDraw = true; mmCache.clear(); };
       setShapeImgSrc(img, it.data);
       copy = { img, data: it.data, x: it.x + dx, y: it.y + dy, w: it.w, h: it.h, rot: it.rot || 0, flipX: !!it.flipX, flipY: !!it.flipY, del: false, _pdfBusy: false, layer };
-      if (it.shapeGen) copy.shapeGen = it.shapeGen;
+      if (it.shapeGen) copy.shapeGen = cloneShapeGen(it.shapeGen);
       if (it.grp) copy.grp = it.grp;
       doc.images.push(copy);
     }

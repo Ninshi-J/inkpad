@@ -114,6 +114,19 @@ textEdit.addEventListener("keydown", e => {
     e.stopPropagation();
     return;
   }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && INLINE_FORMAT_KEYS[e.key.toLowerCase()]) {
+    // A textarea gives Ctrl+B/I/U no behaviour of its own, but the BROWSER does (Ctrl+U is view
+    // source), so these have to be taken before it sees them.
+    e.preventDefault();
+    toggleInlineFormat(INLINE_FORMAT_KEYS[e.key.toLowerCase()]);
+    e.stopPropagation();
+    return;
+  }
+  // Shift is expected here (these are all shifted keys on most layouts); Ctrl/Alt are not, and a
+  // chord that happens to end in "(" shouldn't be read as typing one.
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && wrapSelectionWith(e.key)) {
+    e.preventDefault(); e.stopPropagation(); return;
+  }
   if (e.key === "Tab") {
     // Textareas give Tab to the browser (moves focus away) by default — inserting spaces instead
     // keeps it a useful in-box indent key, and plain spaces (not a literal tab char) render
@@ -242,6 +255,33 @@ function toggleInlineFormat(tag) {
   ta.dispatchEvent(new Event("input"));
   ta.focus();
 }
+const INLINE_FORMAT_KEYS = { b: "b", i: "i", u: "u" };
+/* Type an opening bracket with text selected and the selection is enclosed rather than replaced —
+   the one place where "replace the selection with what I typed" is reliably not what was meant.
+   "$" is the same gesture for maths: select x^2, press $, and it becomes a formula.
+
+   Only these three. "[" is deliberately absent: square brackets are how bold/italic/underline are
+   stored in the line ("[b]...[/b]"), so silently wrapping a selection in them would look like
+   formatting and parse like it too. Closing brackets are left alone — typing ")" means ")".
+
+   With nothing selected every one of these types normally, so the key never stops being itself. */
+const WRAP_PAIRS = { "(": ["(", ")"], "{": ["{", "}"], "$": ["$", "$"] };
+function wrapSelectionWith(key) {
+  const pair = WRAP_PAIRS[key];
+  if (!pair || !editingText) return false;
+  const ta = textEdit;
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  if (s === e) return false; // no selection: let the character type itself
+  const [open, close] = pair;
+  const selected = ta.value.slice(s, e);
+  ta.value = ta.value.slice(0, s) + open + selected + close + ta.value.slice(e);
+  // The text stays selected, inside its new brackets, so wrapping again (or bolding it next)
+  // works without reselecting — and so it is obvious what was enclosed.
+  ta.selectionStart = s + open.length;
+  ta.selectionEnd = s + open.length + selected.length;
+  ta.dispatchEvent(new Event("input"));
+  return true;
+}
 function buildTextFmtBar() {
   const bar = $("textFmtBar");
   bar.innerHTML = "";
@@ -325,7 +365,7 @@ function buildTextFmtBar() {
   [["b", "B", "Bold"], ["i", "I", "Italic"], ["u", "U", "Underline"]].forEach(([tag, label, title]) => {
     const b = document.createElement("button");
     b.type = "button"; b.className = `tfb-fmt-${tag}`; b.textContent = label;
-    b.title = `${title} — applies to the selection, or to whatever you type next if nothing's selected`;
+    b.title = `${title} (Ctrl+${label}) — applies to the selection, or to whatever you type next if nothing's selected`;
     b.onclick = () => toggleInlineFormat(tag);
     fmtWrap.appendChild(b);
   });
