@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m http.server 18793 --bind 127.0.0.1)",
+      "Bash(python -m http.server 18793 --bind 127.0.0.1 *)",
+      "Bash(curl -sI http://127.0.0.1:18793/*)",
+      "Bash(curl -s -o /dev/null -w * http://127.0.0.1:18793/*)",
+      "Bash(netstat -ano*)"
+    ]
+  }
+}

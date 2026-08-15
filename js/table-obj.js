@@ -564,11 +564,20 @@ function buildTableFromDialog() {
   const colHead = totals ? cols.concat("Total") : cols.slice();
   const rowHead = totals ? rows.concat("Total") : rows.slice();
   const body = String($("tbBody").value || "").split("\n").map(line => probList(line, []));
-  const cells = [[$("tbCorner").value.trim()].concat(colHead)];
+  const corner = $("tbCorner").value.trim();
+  const cells = [[corner].concat(colHead)];
   rowHead.forEach((h, r) => {
     cells.push([h].concat(colHead.map((_, c) => (body[r] && body[r][c] != null) ? body[r][c] : "")));
   });
-  return makeTable({ rows: cells.length, cols: cells[0].length, cells, headRows: 1, headCols: 1, ...style });
+  return makeTable({
+    rows: cells.length, cols: cells[0].length, cells, headRows: 1, headCols: 1,
+    // The corner belongs to neither axis, so a two-way table normally has nothing there at all —
+    // blank page, not a bordered empty cell, which reads as something left unfilled. Same
+    // reasoning as the sample space's 2x2 corner block below. Typing a label in the field (some
+    // tables do carry one) brings the cell back, since tableContentSig watches that field.
+    ...(corner ? {} : { hidden: { "0,0": true } }),
+    ...style,
+  });
 }
 /* The layout in the textbook: two heading rows and two heading columns, where the outer one of
    each is a single cell spanning the rest and naming the whole axis. */
