@@ -575,6 +575,10 @@ function buildSelToolbarContent(showItems, showShape, editableImage) {
     sepEl();
     mk("⧉", () => duplicateSelection(), "Duplicate (Ctrl+D)");
     mk("✕", () => deleteSelection(), "Delete");
+    sepEl();
+    // Shift goes all the way rather than one step, the usual pairing for this.
+    mk("▲", e => restackSelection(+1, e.shiftKey), "Bring forward — Shift for all the way to the front (Ctrl+])");
+    mk("▼", e => restackSelection(-1, e.shiftKey), "Send back — Shift for all the way to the back (Ctrl+[)");
     // Group when there's more than one thing; Ungroup once the selection IS a group, which is
     // also the only visible sign that it is one — the box round a group looks like any other.
     if (selGroupId()) {

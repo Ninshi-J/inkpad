@@ -306,6 +306,8 @@ addEventListener("keydown", e => {
   // Shift picks the direction explicitly, but plain Ctrl+G ungroups too when what's selected is
   // already a group — so the one key is enough without having to remember the pair.
   if (C && k === "g") { e.shiftKey ? ungroupSelection() : toggleGroupSelection(); return handled(); }
+  // Stacking order, the bracket pair every drawing app uses. Shift sends it all the way.
+  if (C && (k === "]" || k === "[")) { restackSelection(k === "]" ? +1 : -1, e.shiftKey); return handled(); }
   if (C && k === "c") { copySelectionToClipboard(); return handled(); }
   // Ctrl+V is deliberately absent here. Calling preventDefault() on the keydown suppresses the
   // browser's own `paste` event, and that event is the only way to see what is actually on the

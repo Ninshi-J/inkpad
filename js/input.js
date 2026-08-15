@@ -896,6 +896,73 @@ function deleteSelection() {
   pushUndo({ op: "del", items: sel.items.slice() });
   clearSelection(); markDirty();
 }
+/* ---------------- stacking order ----------------
+   Objects are drawn kind by kind — images, highlighter, pen, text, tape, timers, tables — and
+   within each kind in array order (see render()). So this reorders an object among others OF ITS
+   OWN KIND, which is exactly what overlapping pasted pictures need.
+
+   It deliberately cannot lift an image above ink. That ordering is fixed and worth keeping: writing
+   on top of an imported page is the main thing images are here for, and a document where some ink
+   had silently fallen behind a picture would be much harder to explain than this limit. Use layers
+   when you need something to sit above a whole class of objects.
+
+   A selection spanning several kinds is restacked within each of them independently. */
+const KIND_ARRAY = { stroke: "strokes", tape: "tapes", text: "texts", image: "images", timer: "timers", table: "tables" };
+/* dir: +1 towards the front (later in the array is drawn on top), -1 towards the back.
+   toEnd: all the way rather than one step. */
+function reorderWithin(arr, chosen, dir, toEnd) {
+  // Deleted objects still occupy their slot but draw nothing, so they're lifted out of the
+  // reckoning and put straight back — otherwise a step "forward" could be spent swapping past an
+  // erased stroke, and the button would look broken.
+  const slots = [], order = [];
+  arr.forEach((o, i) => { if (!o.del) { slots.push(i); order.push(o); } });
+  const was = order.slice();
+  if (toEnd) {
+    const rest = order.filter(o => !chosen.has(o));
+    const move = order.filter(o => chosen.has(o));
+    const next = dir > 0 ? rest.concat(move) : move.concat(rest);
+    if (next.every((o, i) => o === was[i])) return false;
+    next.forEach((o, i) => { arr[slots[i]] = o; });
+    return true;
+  }
+  // One step, as a block: a run of selected objects keeps its own internal order and hops the
+  // single unselected neighbour beyond it.
+  let moved = false;
+  if (dir > 0) {
+    for (let i = order.length - 2; i >= 0; i--) {
+      if (chosen.has(order[i]) && !chosen.has(order[i + 1])) {
+        [order[i], order[i + 1]] = [order[i + 1], order[i]]; moved = true;
+      }
+    }
+  } else {
+    for (let i = 1; i < order.length; i++) {
+      if (chosen.has(order[i]) && !chosen.has(order[i - 1])) {
+        [order[i], order[i - 1]] = [order[i - 1], order[i]]; moved = true;
+      }
+    }
+  }
+  if (moved) order.forEach((o, i) => { arr[slots[i]] = o; });
+  return moved;
+}
+function restackSelection(dir, toEnd) {
+  if (!sel.items.length) return;
+  const byKind = new Map();
+  for (const it of sel.items) {
+    const key = KIND_ARRAY[it.kind];
+    if (!key) continue;
+    if (!byKind.has(key)) byKind.set(key, new Set());
+    byKind.get(key).add(it.ref);
+  }
+  const changes = [];
+  for (const [key, chosen] of byKind) {
+    const arr = doc[key];
+    const before = arr.slice();
+    if (reorderWithin(arr, chosen, dir, toEnd)) changes.push({ key, before, after: arr.slice() });
+  }
+  if (!changes.length) return; // already as far as it goes — no undo entry for a no-op
+  pushUndo({ op: "reorder", changes });
+  markDirty(); needsDraw = true;
+}
 /* ---------------- grouping ----------------
    Both directions are the same operation — write a `grp` onto every selected object — so they
    share one undo entry shape recording what each item's tag was before. */

@@ -14,6 +14,17 @@ function applyEntry(e, dir) { // dir: -1 undo, +1 redo
       tableRestore(e.ref, undoing ? e.before : e.after);
       break;
     }
+    case "reorder": {
+      // Rewritten in place rather than reassigned: doc.images and friends are captured by
+      // reference in plenty of places, and swapping the array out from under them would leave
+      // those looking at the old order.
+      e.changes.forEach(c => {
+        const arr = doc[c.key], src = undoing ? c.before : c.after;
+        arr.length = 0;
+        for (const o of src) arr.push(o);
+      });
+      break;
+    }
     case "group": {
       e.items.forEach(it => {
         const id = undoing ? it.before : it.after;
