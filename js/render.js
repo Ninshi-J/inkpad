@@ -592,7 +592,12 @@ function buildSelToolbarContent(showItems, showShape, editableImage) {
     mk("⤓ Export", () => exportSelectionDialog(), "Save just this selection as a PNG or SVG");
     if (editableImage) {
       sepEl();
-      mk("✎ Edit", () => editGeneratedShape(editableImage), "Re-open this graph in the Math Shape Importer, same spot & size");
+      // Resolved at CLICK time, not closed over: this toolbar is cached between rebuilds, so a
+      // button holding the ref it was built with can outlive the selection that produced it — and
+      // then it edits whatever was selected before. The `editableImage` argument decides only
+      // whether the button is shown.
+      mk("✎ Edit", () => { const im = selEditableImage(); if (im) editGeneratedShape(im); },
+        "Re-open this graph in the Math Shape Importer, same spot & size");
     }
     const table = selTable();
     if (table) tableSelToolbarButtons(table, mk, sepEl);
@@ -623,16 +628,20 @@ function buildSelToolbarContent(showItems, showShape, editableImage) {
     paintDot();
     // Live preview while dragging, one undo entry when released -- dragging a slider shouldn't
     // leave a hundred separate steps in the undo stack.
-    let styleBefore = null;
+    // Same reason as the Edit and row/column buttons: what gets restyled is whatever is selected
+    // when the control is used, not what was selected when this toolbar was last built. The refs
+    // are pinned for the duration of one drag (a selection can't change mid-drag) so the before
+    // snapshot and the commit are guaranteed to describe the same strokes.
+    let styleBefore = null, styleRefs = null;
     rng.oninput = () => {
-      if (!styleBefore) styleBefore = snapshotSelectionStyle(inkSel);
-      applyStrokeStyle(inkSel, { w: sliderPosToWidth(+rng.value) });
+      if (!styleBefore) { styleRefs = selectedStrokes(); styleBefore = snapshotSelectionStyle(styleRefs); }
+      applyStrokeStyle(styleRefs, { w: sliderPosToWidth(+rng.value) });
       paintDot();
     };
     const commit = () => {
       if (!styleBefore) return;
-      commitStrokeStyle(inkSel, styleBefore);
-      styleBefore = null;
+      commitStrokeStyle(styleRefs, styleBefore);
+      styleBefore = null; styleRefs = null;
     };
     rng.onchange = commit;
     rng.onpointerup = commit;
@@ -643,9 +652,11 @@ function buildSelToolbarContent(showItems, showShape, editableImage) {
       s.style.background = c;
       s.title = `Recolor the selected ink`;
       s.onclick = () => {
-        const before = snapshotSelectionStyle(inkSel);
-        applyStrokeStyle(inkSel, { color: c });
-        commitStrokeStyle(inkSel, before);
+        const refs = selectedStrokes();
+        if (!refs.length) return;
+        const before = snapshotSelectionStyle(refs);
+        applyStrokeStyle(refs, { color: c });
+        commitStrokeStyle(refs, before);
         paintDot();
       };
       host.appendChild(s);
@@ -700,7 +711,14 @@ function positionSelToolbar() {
   // Which of Group/Ungroup is offered is part of what the bar says, so it has to rebuild when the
   // selection stops or starts being a group.
   const grpSig = `${!!selGroupId()}|${sel.items.length > 1}`;
-  const sig = `${showItems}|${showShape}|${!!editableImage}|${tbSig}|${grpSig}|${inkSel.length}|${inkSel[0] ? inkSel[0].tool : ""}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
+  /* WHICH objects are selected, not merely how many and of what sort. Everything above describes
+     the selection by value — "there is an editable image", "the table is 2x2", "one pen stroke" —
+     and two different objects can answer all of that identically. When they do, the bar isn't
+     rebuilt and it goes on displaying the previous object's colour, width and cell labels.
+     (Its buttons act on the live selection regardless; this is about what it SHOWS.)
+     First and last plus the count is O(1) per frame, which matters because this runs every one. */
+  const selSig = `${sel.items.length}|${objUid(sel.items[0] && sel.items[0].ref)}|${objUid(sel.items.length ? sel.items[sel.items.length - 1].ref : null)}`;
+  const sig = `${showItems}|${showShape}|${!!editableImage}|${selSig}|${tbSig}|${grpSig}|${inkSel.length}|${inkSel[0] ? inkSel[0].tool : ""}|${keyFor("flipH")}|${keyFor("flipV")}|${keyFor("rotate90")}`;
   if (sig !== selToolbarSig) { selToolbarSig = sig; buildSelToolbarContent(showItems, showShape, editableImage); }
   const b = selBounds() || shapeBounds(sel.shape);
   if (!b) { host.classList.remove("open"); return; }

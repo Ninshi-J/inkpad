@@ -377,6 +377,19 @@ function forEachDocObject(fn) {
   for (const [kind, key] of DOC_ARRAYS) for (const ref of doc[key]) fn(ref, kind);
 }
 
+/* A stable per-object id, handed out lazily and never persisted. Only for telling "is this the
+   same object as last time" in cache keys — a WeakMap so it costs an object nothing and holds
+   nothing alive. Identity is the thing UI signatures keep needing and cannot get from an object's
+   contents: two venn diagrams, or two 2x2 tables, are indistinguishable by value. */
+const objUids = new WeakMap();
+let objUidSeq = 0;
+function objUid(o) {
+  if (!o || typeof o !== "object") return "-";
+  let u = objUids.get(o);
+  if (!u) { u = "o" + (++objUidSeq).toString(36); objUids.set(o, u); }
+  return u;
+}
+
 /* ---------------- groups ----------------
    A group is a tag, not a container: every member carries the same `grp` string and the objects
    stay exactly where they were in their own arrays. That's what keeps grouping from touching

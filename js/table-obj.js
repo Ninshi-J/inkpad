@@ -471,13 +471,23 @@ function tableSelToolbarButtons(t, mk, sepEl) {
   sepEl();
   const f = tableFocusIn(t);
   const r = f ? f.r : tableRows(t) - 1, c = f ? f.c : tableCols(t) - 1;
-  mk("+Row", () => tableStructureEdit(t, tb => tableInsertRow(tb, r + 1)),
+  /* The table and the anchor cell are both resolved again when the button is pressed, never taken
+     from this closure: the toolbar is cached between rebuilds, so a button built for one table can
+     still be on screen once a DIFFERENT table is selected — two tables of the same size look
+     identical to the cache key — and it would then edit the one that is no longer selected.
+     `t` here decides only what the buttons are labelled. */
+  const act = fn => () => {
+    const tb = selTable(); if (!tb) return;
+    const cur = tableFocusIn(tb);
+    tableStructureEdit(tb, x => fn(x, cur ? cur.r : tableRows(tb) - 1, cur ? cur.c : tableCols(tb) - 1));
+  };
+  mk("+Row", act((tb, r2) => tableInsertRow(tb, r2 + 1)),
     f ? `Insert a row below row ${r + 1}` : "Add a row at the bottom");
-  mk("−Row", () => tableStructureEdit(t, tb => tableDeleteRow(tb, r)),
+  mk("−Row", act((tb, r2) => tableDeleteRow(tb, r2)),
     f ? `Delete row ${r + 1}` : "Delete the last row");
-  mk("+Col", () => tableStructureEdit(t, tb => tableInsertCol(tb, c + 1)),
+  mk("+Col", act((tb, r2, c2) => tableInsertCol(tb, c2 + 1)),
     f ? `Insert a column to the right of column ${c + 1}` : "Add a column on the right");
-  mk("−Col", () => tableStructureEdit(t, tb => tableDeleteCol(tb, c)),
+  mk("−Col", act((tb, r2, c2) => tableDeleteCol(tb, c2)),
     f ? `Delete column ${c + 1}` : "Delete the last column");
 }
 // Everything a table edit has to be able to put back: the text, and the geometry the text moved.
