@@ -38,7 +38,7 @@ $("stPage").addEventListener("click", async () => {
   const n = parseInt(input, 10);
   if (!Number.isFinite(n)) return;
   const target = Math.min(S.pages, Math.max(1, n));
-  V.scroll = (target - 1) * stride();
+  V.scroll = pageTop(target - 1);
   clampScroll();
   schedulePdfUpgrade();
   syncStatus();

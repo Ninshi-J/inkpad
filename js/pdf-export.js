@@ -249,7 +249,7 @@ async function exportPdf(pages) {
     const srcP = pages[i];
     const dims = pageDims(srcP);
     const phPt = dims.h * PT, pwPt = dims.w * PT;
-    const top = srcP * stride(), bot = top + dims.h;
+    const top = pageTop(srcP), bot = top + dims.h;
     const X = x => x * PT;
     const Y = y => phPt - (y - top) * PT;
     const page = pdfDoc.addPage([pwPt, phPt]);
@@ -575,7 +575,7 @@ async function buildSvgBody(objs, top) {
 }
 async function buildPageSvg(srcP) {
   const dims = pageDims(srcP);
-  const top = srcP * stride(), bot = top + dims.h;
+  const top = pageTop(srcP), bot = top + dims.h;
   const vis = o => !o.del && isLayerVisible(o.layer);
   const inPage = y => y >= top && y < bot;
   const objs = {

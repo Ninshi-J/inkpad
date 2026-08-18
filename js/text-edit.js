@@ -10,7 +10,7 @@ function autoTextEditWidthPx() {
 // edge — once free-flowing content would need more room than this, syncTextEditAutoWidth()
 // switches the box into wrapped mode at this width instead of letting it run off the page.
 function textEditMaxWidthWorld() {
-  const page = Math.max(0, Math.floor(editingText.y / stride()));
+  const page = pageAtY(editingText.y);
   const margin = 24;
   return Math.max(60, pageDims(page).w - editingText.x - margin);
 }

@@ -569,24 +569,78 @@ function pageExtremes() {
   return { w, h };
 }
 const widestPageW = () => pageExtremes().w;
-/* Every page reserves the same slot height, so page-index arithmetic (curPage, scroll, PDF
-   export, insert/delete-page shifting) stays a single division by a constant. That slot has to
-   fit the tallest page the document can contain — but only the tallest one it ACTUALLY contains.
-   Reserving portrait height unconditionally left a portrait-sized hole under every page of an
-   all-landscape document: widescreen 16:9 draws 720 tall, so each page sat in a 1308 slot with
-   588px of blank beneath it. Portrait is the taller orientation for every paper here, so any
-   portrait page anywhere (global or a per-page override) still takes the tall slot and nothing
-   can overlap. */
+
+/* ---------------- where each page sits ----------------
+   Page p starts at pageTop(p), stands pageDims(p).h tall, and the next page begins PAGE_GAP
+   below the bottom of it — whatever the two of them happen to measure. Page sizes are per page,
+   so the tops are a running total rather than a multiplication.
+
+   This used to be a single slot height for the whole document, sized to the tallest page in it.
+   That made 'which page is this?' one division, but it also left a hole under every page SHORTER
+   than the tallest: one landscape page in an A4 portrait notebook sat above 357px of blank
+   instead of 28, and a single portrait page in a landscape notebook did that under every other
+   page in the document. The hole is ordinary world space, so ink can be written in it, and that
+   ink is below the paper and silently missing from an export.
+
+   The running total is cached against a signature of everything it depends on, so no caller has
+   to remember to invalidate it — the same reason withPageGrid reads the layout rather than being
+   told what changed. The signature costs one pass over the OVERRIDES, not over the pages. */
+const pageSlotH = p => pageDims(p).h + PAGE_GAP;
+let _tops = null, _topsSig = "";
+function pageLayoutSig() {
+  let acc = S.pages + "|" + S.paper + "|" + (S.landscape ? 1 : 0);
+  const o = S.pageStyles;
+  if (o) for (const k in o) {
+    const v = o[k];
+    if (v) acc += "|" + k + (v.landscape === undefined ? "" : v.landscape ? "L" : "P") + (v.paper || "");
+  }
+  return acc;
+}
+// tops[p] is where page p starts; tops[S.pages] is the bottom of the document.
+function pageTops() {
+  const sig = pageLayoutSig();
+  if (_tops && _topsSig === sig) return _tops;
+  const n = Math.max(1, S.pages | 0);
+  const tops = new Float64Array(n + 1);
+  let y = 0;
+  for (let p = 0; p < n; p++) { tops[p] = y; y += pageSlotH(p); }
+  tops[n] = y;
+  _tops = tops; _topsSig = sig;
+  return tops;
+}
+/* Pages past the end of the document do not exist yet, so they are answered at the document
+   default — which is what bumpPages and a scroll past the last page are actually asking. */
+function pageTop(p) {
+  if (!(p > 0)) return 0;
+  const tops = pageTops(), n = tops.length - 1;
+  return p <= n ? tops[p] : tops[n] + (p - n) * (pageH() + PAGE_GAP);
+}
+const docHeight = () => pageTop(Math.max(1, S.pages));
+// Which page's slot contains this y, clamped to the document at both ends.
+function pageAtY(y) {
+  if (!(y > 0)) return 0;
+  const tops = pageTops();
+  let lo = 0, hi = Math.min(Math.max(0, S.pages - 1), tops.length - 2);
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (tops[mid] <= y) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+/* A copy of the layout, for the two places that have to hold one against another: a page setting
+   changing under existing content, and a file written against a layout that is not this one. */
+const topsSnapshot = () => Array.from(pageTops());
+function uniformTops(st, pages) {
+  const n = Math.max(1, pages | 0), out = new Array(n + 1);
+  for (let p = 0; p <= n; p++) out[p] = p * st;
+  return out;
+}
 function documentIsAllLandscape() {
   if (!S.landscape) return false;
   const o = S.pageStyles;
   if (o) for (const k in o) if (o[k] && o[k].landscape === false) return false;
   return true;
 }
-// Every page reserves the same slot, sized to the tallest page in the document — which is now a
-// question about paper size as well as orientation, since a page can override either. With no
-// overrides at all this is exactly what it always was: the document's own page height.
-const stride = () => pageExtremes().h + PAGE_GAP;
+/* The pitch the old uniform layout used. Kept only so a notebook written by that build can be
+   read back: its coordinates were laid out against this number and nothing else records it. */
+const legacyUniformStride = () => pageExtremes().h + PAGE_GAP;
 
 /* Which page a box belongs to — by how much of it is on each page, not by where its top edge is.
 
@@ -595,19 +649,25 @@ const stride = () => pageExtremes().h + PAGE_GAP;
    to that page's top, a whole stride further down than the paper is tall, so it lands entirely off
    the bottom of a page it was never on and is missing from the page it was: an imported PDF that
    renders on page 1 and nowhere after it. A pixel of slop should not be able to do that. */
-function pageIndexForBox(y, h) { return pageIndexAtStride(y, h, stride()); }
-/* The same question against a GIVEN page pitch, which is what the reflow needs: it has to know
-   which page something was on under the OLD grid, before the new one existed. */
-function pageIndexAtStride(y, h, st) {
-  const last = Math.max(0, S.pages - 1);
-  const first = Math.max(0, Math.min(last, Math.floor(y / st)));
+function pageIndexForBox(y, h) { return pageIndexAtTops(y, h, pageTops()); }
+/* The same question against a GIVEN layout, which is what the reflow needs: it has to know which
+   page something was on under the OLD one, before the new one existed. */
+function pageIndexAtTops(y, h, tops) {
+  const last = Math.max(0, Math.min(S.pages - 1, tops.length - 2));
+  const at = ty => {
+    let lo = 0, hi = last;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (tops[mid] <= ty) lo = mid; else hi = mid - 1; }
+    return lo;
+  };
+  const first = (y > 0) ? at(y) : 0;
   if (!(h > 0)) return first;
   let best = first, bestOverlap = -Infinity;
   for (let p = first; p <= last; p++) {
-    const top = p * st;
+    const top = tops[p];
     if (top > y + h) break;
-    // Page height capped to the slot: under a hypothetical pitch the real pageDims may not apply.
-    const overlap = Math.min(y + h, top + Math.min(pageDims(p).h, st)) - Math.max(y, top);
+    // Height capped to its slot: under a hypothetical layout the real pageDims may not apply.
+    const slot = tops[p + 1] - top;
+    const overlap = Math.min(y + h, top + Math.min(pageDims(p).h, slot)) - Math.max(y, top);
     if (overlap > bestOverlap) { bestOverlap = overlap; best = p; }
   }
   return best;
@@ -623,15 +683,15 @@ function objectSpan(o, kind) {
   if (kind === "text") { const b = textBB(o); return { y: b.y0, h: b.y1 - b.y0 }; }
   return { y: o.y, h: o.h || 0 };
 }
-// Which page an object belongs to under a given pitch — by how much of it is on each page.
-function objectPageAtStride(o, kind, st) {
+// Which page an object belongs to under a given layout — by how much of it is on each page.
+function objectPageAtTops(o, kind, tops) {
   const sp = objectSpan(o, kind);
-  return pageIndexAtStride(sp.y, sp.h, st);
+  return pageIndexAtTops(sp.y, sp.h, tops);
 }
 
 /* ---------------- keeping content on its page when the page grid changes ----------------
    Object positions are absolute world y; which page something is ON is derived from that by
-   dividing by stride(). So anything that changes stride — the paper size, the orientation, a
+   asking the layout. So anything that changes the layout — the paper size, the orientation, a
    per-page orientation override — moves the page boundaries out from under content that doesn't
    move with them. Page 1 starts at 0 either way and looks fine, which is why the symptom is always
    "everything after the first page is wrong": at each page boundary the drift grows by another
@@ -641,8 +701,13 @@ function objectPageAtStride(o, kind, st) {
    The offset is deliberately NOT rescaled — a shorter page means content can now hang past the
    bottom, but that is the honest consequence of choosing a smaller page, whereas squashing the
    spacing would silently move ink relative to the ink beside it. */
-function reflowPagesForStride(was, now) {
-  if (!Number.isFinite(was) || !Number.isFinite(now) || Math.abs(was - now) < 0.5) return false;
+function reflowPages(wasTops, nowTops) {
+  if (!wasTops || !nowTops) return false;
+  const n = Math.min(wasTops.length, nowTops.length);
+  let differs = wasTops.length !== nowTops.length;
+  for (let p = 0; !differs && p < n; p++) if (Math.abs(wasTops[p] - nowTops[p]) >= 0.5) differs = true;
+  if (!differs) return false;
+  const topAt = (tops, p) => tops[Math.max(0, Math.min(p, tops.length - 1))];
   /* Which page each object was on is decided by where MOST of it was, not by where its top edge
      was. Attributing by the top edge alone moves anything overhanging its own page top — a
      centred PDF page a shade taller than the paper, a heading nudged up over the boundary — onto
@@ -652,8 +717,9 @@ function reflowPagesForStride(was, now) {
      The SHIFT is still applied to the object's own position, so its offset down its page is
      preserved exactly; only the choice of page is box-aware. */
   const shift = (o, kind) => {
-    const p = objectPageAtStride(o, kind, was);
-    shiftObject(o, kind, 0, p * now - p * was);
+    const p = objectPageAtTops(o, kind, wasTops);
+    const dy = topAt(nowTops, p) - topAt(wasTops, p);
+    if (dy) shiftObject(o, kind, 0, dy);
   };
   for (const s of doc.strokes) shift(s, "stroke");
   for (const t of doc.texts) shift(t, "text");
@@ -674,7 +740,7 @@ const PAGE_SNAP_PX = 7;
 function pageSnapOffset(box) {
   const tol = PAGE_SNAP_PX / Math.max(0.05, V.zoom);
   const p = pageIndexForBox(box.y0, box.y1 - box.y0);
-  const dims = pageDims(p), top = p * stride();
+  const dims = pageDims(p), top = pageTop(p);
   // Each pair is "this guide line" against "the edge of the selection that would meet it".
   const pick = pairs => {
     let best = 0, bestD = tol;
@@ -689,13 +755,13 @@ function pageSnapOffset(box) {
     dy: pick([[top, box.y0], [top + dims.h, box.y1], [top + dims.h / 2, (box.y0 + box.y1) / 2]]),
   };
 }
-// Wraps any change that can alter the page pitch, so the content follows it. Reads stride() before
+// Wraps any change that can alter the page layout, so the content follows it. Reads the layout before
 // and after rather than being told what changed, which means a new kind of page setting can never
 // forget to opt in.
 function withPageGrid(fn) {
-  const was = stride();
+  const was = topsSnapshot();
   fn();
-  if (reflowPagesForStride(was, stride())) { bumpPages(contentBottom()); needsDraw = true; }
+  if (reflowPages(was, pageTops())) { bumpPages(contentBottom()); needsDraw = true; }
 }
 // How far down the document anything actually reaches — used after a reflow to make sure the page
 // count still covers the content, which a change of pitch can push past the last page.
@@ -720,7 +786,7 @@ const viewX = () => {
   if (pxW <= CW) return Math.max(14, (CW - pxW) / 2);
   return -V.scrollX * V.zoom;
 };
-const maxScroll = () => Math.max(0, S.pages * stride() - CH / V.zoom + 30);
+const maxScroll = () => Math.max(0, docHeight() - CH / V.zoom + 30);
 const maxScrollX = () => Math.max(0, widestPageW() - CW / V.zoom);
 
 const sx = wx => wx * V.zoom + viewX();
@@ -740,7 +806,7 @@ const wy = py => py / V.zoom + V.scroll;
 let teachPage = 0;
 let teachScrollWas = 0; // where the view sat after the previous clamp — see the note below
 function setTeachPage(p) { teachPage = Math.max(0, Math.min(S.pages - 1, p)); }
-const teachPageTop = () => teachPage * stride();
+const teachPageTop = () => pageTop(teachPage);
 const teachPageBottom = () => teachPageTop() + Math.max(0, pageDims(teachPage).h - CH / V.zoom);
 function teachScrollTo(p, toBottom) {
   setTeachPage(p);
@@ -755,7 +821,7 @@ function clampScrollTeaching(gesture) {
      the rule below; deciding by how far the scroll moved instead would make a firm flick
      indistinguishable from "go to the next page". */
   if (!gesture) {
-    setTeachPage(Math.floor((V.scroll + (CH / V.zoom) / 2) / stride()));
+    setTeachPage(pageAtY(V.scroll + (CH / V.zoom) / 2));
     V.scroll = Math.max(teachPageTop(), Math.min(V.scroll, teachPageBottom()));
     teachScrollWas = V.scroll;
     return;
@@ -786,7 +852,12 @@ function clampScrollX() { V.scrollX = Math.max(0, Math.min(V.scrollX, maxScrollX
 // Pages appear only when content lands on the last page (keeping one blank
 // trailing page), when added manually, or when a PDF import needs them.
 function bumpPages(y) {
-  const needed = Math.floor(Math.max(0, y) / stride()) + 2;
+  /* Which page this y lands on, extended past the end of the document at the default page
+     size, since the pages it would need are the ones about to be created. */
+  const tops = pageTops(), n = tops.length - 1, bottom = tops[n];
+  y = Math.max(0, y);
+  const idx = y < bottom ? pageAtY(y) : n + Math.floor((y - bottom) / (pageH() + PAGE_GAP));
+  const needed = idx + 2;
   // Growing the page count isn't itself undo-tracked (whatever triggered it, e.g. a stroke, is --
   // undoing THAT doesn't shrink S.pages back down), so undoing the triggering action alone would
   // otherwise leave the doc looking "clean" while the page count stays permanently grown.
@@ -794,7 +865,7 @@ function bumpPages(y) {
 }
 function curPage() {
   const mid = V.scroll + CH / V.zoom / 2;
-  return Math.min(S.pages - 1, Math.max(0, Math.floor(mid / stride())));
+  return Math.min(S.pages - 1, Math.max(0, pageAtY(mid)));
 }
 function setZoom(nz, cx = CW / 2, cy = CH / 2) {
   nz = Math.max(0.3, Math.min(4, nz));

@@ -91,11 +91,11 @@ function drawTeachingMask() {
 
 function pageScreenRect(p) {
   const d = pageDims(p);
-  return { x: viewX(), y: sy(p * stride()), w: d.w * V.zoom, h: d.h * V.zoom };
+  return { x: viewX(), y: sy(pageTop(p)), w: d.w * V.zoom, h: d.h * V.zoom };
 }
 function visiblePages() {
-  const first = Math.max(0, Math.floor(V.scroll / stride()));
-  const last = Math.min(S.pages - 1, Math.floor((V.scroll + CH / V.zoom) / stride()));
+  const first = Math.max(0, pageAtY(V.scroll));
+  const last = Math.min(S.pages - 1, pageAtY(V.scroll + CH / V.zoom));
   return [first, last];
 }
 
@@ -740,7 +740,7 @@ function scheduleMinimapRegen() {
   mmRegenTimer = setTimeout(() => { mmRegenTimer = null; mmCache.clear(); needsDraw = true; }, 400);
 }
 function minimapScale() {
-  const totalH = Math.max(1, S.pages * stride());
+  const totalH = Math.max(1, docHeight());
   const baseW = pageW(); // this document's actual page width — landscape-override pages may slightly overflow the rail, which is fine (clipped)
   return Math.max(1e-6, Math.min(MMH / totalH, (MMW - 6) / baseW));
 }
@@ -751,7 +751,7 @@ function drawMinimap() {
   const scale = minimapScale();
   for (let p = 0; p < S.pages; p++) {
     const dims = pageDims(p);
-    const slotY = p * stride() * scale;
+    const slotY = pageTop(p) * scale;
     const w = dims.w * scale, h = dims.h * scale;
     const x = (MMW - w) / 2;
     if (slotY > MMH) break;
@@ -827,14 +827,14 @@ function updateScrollbars() {
     const trackH = vScrollTrack.clientHeight;
     const thumbH = Math.max(SCROLLBAR_MIN_THUMB, Math.min(trackH, trackH * (CH / pagePxH)));
     const mx = pageScrollMax(p);
-    const within = Math.max(0, Math.min(mx, V.scroll - p * stride()));
+    const within = Math.max(0, Math.min(mx, V.scroll - pageTop(p)));
     const frac = mx > 0 ? within / mx : 0;
     vScrollThumb.style.height = Math.round(thumbH) + "px";
     vScrollThumb.style.top = Math.round(frac * (trackH - thumbH)) + "px";
   }
 }
 // Max scroll offset within a single page's own content (world units) — the top of page `p` sits
-// at world y = p*stride(), so this is how far past that the viewport can go while staying on it.
+// at world y = pageTop(p), so this is how far past that the viewport can go while staying on it.
 function pageScrollMax(p) { return Math.max(0, pageDims(p).h - CH / V.zoom); }
 // Shared drag (thumb) + click-to-jump (track) wiring for both scrollbars — `axis` picks the
 // client coordinate / element dimension to read, `get`/`set`/`max` bind it to either
@@ -894,7 +894,7 @@ function wireScrollbar(track, thumb, axis, set, max, clampFn) {
 }
 wireScrollbar(hScrollTrack, hScrollThumb, "x", v => { V.scrollX = v; }, maxScrollX, clampScrollX);
 wireScrollbar(vScrollTrack, vScrollThumb, "y",
-  v => { V.scroll = curPage() * stride() + v; },
+  v => { V.scroll = pageTop(curPage()) + v; },
   () => pageScrollMax(curPage()),
   clampScroll);
 

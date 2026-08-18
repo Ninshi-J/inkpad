@@ -128,7 +128,7 @@ function schedulePdfUpgrade() {
 // Same "does this page have anything on it" check clearCurrentPage (js/sidebar.js) does inline —
 // factored out here since importPdfFiles below is a second, genuinely reusable caller.
 function isPageBlank(p) {
-  const top = p * stride(), bot = top + pageDims(p).h;
+  const top = pageTop(p), bot = top + pageDims(p).h;
   const inPage = y => y >= top && y < bot;
   return !doc.strokes.some(s => !s.del && inPage(s.pts[0].y))
     && !doc.tapes.some(t => !t.del && inPage(t.y))
@@ -205,7 +205,7 @@ ${err.message}`); }
     const dims = pageDims(atPage);
     const im = {
       img, data: c.dataURL, pdf: true,
-      x: (dims.w - c.w) / 2, y: atPage * stride() + (dims.h - c.h) / 2,
+      x: (dims.w - c.w) / 2, y: pageTop(atPage) + (dims.h - c.h) / 2,
       w: c.w, h: c.h, del: false,
       pdfPage: c.page, pdfFit: c.fit, renderPxPerUnit: 2,
       pdfSrcId: c.pdfSrcId, pdfPageIndex: c.pdfPageIndex, pdfBox: c.pdfBox, pdfWholePage: true,
@@ -219,7 +219,7 @@ ${err.message}`); }
   // later on the same page layers on top of them, instead of potentially covering them.
   doc.images.unshift(...newImages);
   pushUndo({ op: "add", items: added });
-  V.scroll = Math.max(0, firstNewPage * stride() - 40);
+  V.scroll = Math.max(0, pageTop(firstNewPage) - 40);
   clampScroll(); markDirty(); syncUI();
   schedulePdfUpgrade();
 }
@@ -242,16 +242,16 @@ function remapPageStyles(atIndex, delta, dropAt) {
 
 function deleteCurrentPage() {
   if (S.pages <= 1) { clearCurrentPage(); return; }
-  const p = curPage(), st = stride();
-  const removed = [], shifted = [];
+  const p = curPage(), wasTops = topsSnapshot();
+  const removed = [], shifted = [], survivors = [];
   // By which page each object is mostly ON, not by where its top edge falls — see objectSpan.
   // On the top-edge test, anything overhanging this page's top survived the delete and then sat
   // over the page that moved up into its place.
   const visit = (arr, kind) => arr.forEach(o => {
     if (o.del) return;
-    const at = objectPageAtStride(o, kind, st);
+    const at = objectPageAtTops(o, kind, wasTops);
     if (at === p) { o.del = true; removed.push({ kind, ref: o }); }
-    else if (at > p) { shiftObject(o, kind, 0, -st); shifted.push({ kind, ref: o }); }
+    else if (at > p) survivors.push({ kind, ref: o, at });
   });
   visit(doc.strokes, "stroke");
   visit(doc.tapes, "tape");
@@ -263,7 +263,16 @@ function deleteCurrentPage() {
   const pageStylesBefore = S.pageStyles || {};
   const pageStylesAfter = remapPageStyles(p, -1, true);
   S.pageStyles = pageStylesAfter;
-  pushUndo({ op: "pageDel", removed, shifted, d: stride(), pageStylesBefore, pageStylesAfter });
+  /* Each surviving page moves up by however much was actually taken out in front of it, which is
+     the deleted page's own slot rather than a fixed pitch — pages are not all the same height. */
+  const nowTops = pageTops();
+  const topAt = (tops, i) => tops[Math.max(0, Math.min(i, tops.length - 1))];
+  for (const m of survivors) {
+    const dy = topAt(nowTops, m.at - 1) - topAt(wasTops, m.at);
+    if (dy) shiftObject(m.ref, m.kind, 0, dy);
+    shifted.push({ kind: m.kind, ref: m.ref, dy });
+  }
+  pushUndo({ op: "pageDel", removed, shifted, pageStylesBefore, pageStylesAfter });
   clampScroll(); clearSelection(); markDirty(); syncUI();
 }
 
@@ -272,14 +281,14 @@ function deleteCurrentPage() {
 function insertPageAt(atIndex, count = 1) {
   count = Math.max(1, Math.min(count, MAX_PAGES - S.pages));
   if (count <= 0) return;
-  const st = stride();
-  const dy = st * count;
-  const shifted = [];
+  const wasTops = topsSnapshot();
+  const shifted = [], movers = [];
   // Same rule as deleteCurrentPage: page membership by overlap, not by the top edge. An object
   // overhanging the boundary was left behind while its own page moved down without it.
   const visit = (arr, kind) => arr.forEach(o => {
     if (o.del) return;
-    if (objectPageAtStride(o, kind, st) >= atIndex) { shiftObject(o, kind, 0, dy); shifted.push({ kind, ref: o }); }
+    const at = objectPageAtTops(o, kind, wasTops);
+    if (at >= atIndex) movers.push({ kind, ref: o, at });
   });
   visit(doc.strokes, "stroke");
   visit(doc.tapes, "tape");
@@ -291,13 +300,22 @@ function insertPageAt(atIndex, count = 1) {
   const pageStylesBefore = S.pageStyles || {};
   const pageStylesAfter = remapPageStyles(atIndex, count, false);
   S.pageStyles = pageStylesAfter;
-  pushUndo({ op: "pageIns", shifted, d: dy, count, pageStylesBefore, pageStylesAfter });
+  // How far down each page went is the height of the blank pages that appeared in front of it,
+  // read off the new layout rather than assumed to be one pitch per page.
+  const nowTops = pageTops();
+  const topAt = (tops, i) => tops[Math.max(0, Math.min(i, tops.length - 1))];
+  for (const m of movers) {
+    const dy = topAt(nowTops, m.at + count) - topAt(wasTops, m.at);
+    if (dy) shiftObject(m.ref, m.kind, 0, dy);
+    shifted.push({ kind: m.kind, ref: m.ref, dy });
+  }
+  pushUndo({ op: "pageIns", shifted, count, pageStylesBefore, pageStylesAfter });
   clampScroll(); clearSelection(); markDirty(); syncUI();
 }
 
 /* ---------------- Page Content Verification ---------------- */
 function pageHasContent(p) {
-  const top = p * stride(), bot = top + stride();
+  const top = pageTop(p), bot = pageTop(p + 1);
   const inP = y => y >= top && y < bot;
   return doc.strokes.some(s => !s.del && inP(s.pts[0].y)) ||
     doc.tapes.some(t => !t.del && inP(t.y)) ||
@@ -314,7 +332,7 @@ function renderPageThumbnail(p, thumbW, asCanvas) {
   c.width = thumbW; c.height = thumbH;
   const thumbCtx = c.getContext("2d");
   thumbCtx.fillStyle = "#fff"; thumbCtx.fillRect(0, 0, thumbW, thumbH);
-  const top = p * stride(), bot = top + stride();
+  const top = pageTop(p), bot = pageTop(p + 1);
 
   for (const im of doc.images) {
     if (im.del || im.y + im.h < top || im.y > bot || !isLayerVisible(im.layer)) continue;
@@ -422,11 +440,12 @@ async function openExportDialog() {
 }
 
 function buildFilteredDoc(pages) {
-  const st = stride();
   const out = { strokes: [], tapes: [], texts: [], images: [], timers: [], tables: [] };
   pages.forEach((srcP, i) => {
-    const top = srcP * st, bot = top + st;
-    const shift = i * st - top;
+    // Packed against the layout the reader will build from the settings this file carries, which
+    // is the same one we are reading the source page out of.
+    const top = pageTop(srcP), bot = pageTop(srcP + 1);
+    const shift = pageTop(i) - top;
     const inP = y => y >= top && y < bot;
     doc.strokes.forEach(s => { if (!s.del && inP(s.pts[0].y)) out.strokes.push({ ...s, pts: s.pts.map(p => ({ ...p, y: p.y + shift })) }); });
     doc.tapes.forEach(t => { if (!t.del && inP(t.y)) out.tapes.push({ ...t, y: t.y + shift }); });
@@ -518,11 +537,14 @@ async function serialize(pages) {
       baseMs: t.running ? timerObjElapsedMs(t) : t.baseMs, layer: t.layer, ...(t.grp ? { grp: t.grp } : {}),
     })),
     tables: src.tables.map(tableToJson),
-    // The page pitch these coordinates were laid out against. Recorded because it is not derivable
-    // from the settings alone across versions: an all-landscape document used to reserve PORTRAIT
-    // height per page, so a file written by that build puts page 2 onwards where this build no
-    // longer looks. deserialize migrates when they disagree.
-    pageStride: stride(),
+    /* The page layout these coordinates were laid out against. Recorded because it is not
+       derivable from the settings alone across versions: pages used to share one slot height,
+       sized to the tallest of them, so a file written by that build puts page 2 onwards where
+       this build no longer looks. deserialize migrates when they disagree.
+       pageStride is that older single number, still written so a build from before per-page
+       heights can go on reading files this one writes. */
+    pageTops: Array.from(pageTops()).slice(0, (src.pageCount | 0) + 1),
+    pageStride: legacyUniformStride(),
     audio: segs,
     ...(Object.keys(pdfSourcesOut).length ? { pdfSources: pdfSourcesOut } : {}),
     // One shared copy of the KaTeX faces this notebook's shapes need, rather than ~82KB inside
@@ -614,12 +636,16 @@ function deserialize(json) {
     audio.segments.push({ blob, url: URL.createObjectURL(blob), startMs: a.startMs, durMs: a.durMs });
     audio.totalMs = Math.max(audio.totalMs, a.startMs + a.durMs);
   }
-  /* Files written before pageStride existed carry no pitch. Only an all-landscape document can be
-     wrong — portrait's pitch never changed — so that is the only case where a missing marker is
-     read as "the old value"; anything else is left exactly where it is rather than guessed at. */
-  const savedStride = d.pageStride != null ? d.pageStride
-    : (documentIsAllLandscape() ? PAPERS[S.paper][1] + PAGE_GAP : stride());
-  if (reflowPagesForStride(savedStride, stride())) bumpPages(contentBottom());
+  /* Files written before per-page heights carry a single pitch, and ones written before that
+     carry nothing. Only an all-landscape document can be wrong when there is nothing — portrait's
+     pitch never changed — so that is the only case where a missing marker is read as "the old
+     value"; anything else is left exactly where it is rather than guessed at. */
+  const wasTops = Array.isArray(d.pageTops) && d.pageTops.length >= 2
+    ? d.pageTops
+    : uniformTops(d.pageStride != null ? d.pageStride
+        : (documentIsAllLandscape() ? PAPERS[S.paper][1] + PAGE_GAP : legacyUniformStride()),
+      S.pages);
+  if (reflowPages(wasTops, pageTops())) bumpPages(contentBottom());
 
   undoStack = []; redoStack = []; clearSelection();
   V.scroll = 0; dirty = false;

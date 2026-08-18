@@ -89,7 +89,7 @@ function rebuildSidebar() {
   // these is still unsaved (see its comment in state.js).
   // withPageGrid: paper and orientation both change how much height each page reserves, and every
   // object's position is an absolute world y — so without moving the content with the grid, page 2
-  // onwards slides off the page it was on (see reflowPagesForStride in js/state.js).
+  // onwards slides off the page it was on (see reflowPages in js/state.js).
   $("setPaper").onchange = e => { withPageGrid(() => { S.paper = e.target.value; }); clampScroll(); markDirty(); invalidateCleanMarker(); };
   $("setOrient").onchange = e => { withPageGrid(() => { S.landscape = e.target.value === "l"; }); clampScroll(); markDirty(); invalidateCleanMarker(); };
   $("setTmpl").onchange = e => { S.template = e.target.value; markDirty(); invalidateCleanMarker(); };
@@ -121,7 +121,7 @@ function rebuildSidebar() {
   refreshPageSetupControls();
 
   $("addPageBtn").onclick = () => { if (S.pages < MAX_PAGES) { S.pages++; V.scroll = maxScroll(); markDirty(); invalidateCleanMarker(); syncUI(); } };
-  $("insertPageBtn").onclick = () => { const at = curPage() + 1; insertPageAt(at); V.scroll = at * stride(); clampScroll(); };
+  $("insertPageBtn").onclick = () => { const at = curPage() + 1; insertPageAt(at); V.scroll = pageTop(at); clampScroll(); };
   $("clearPageBtn").onclick = clearCurrentPage;
   $("delPageBtn").onclick = () => confirmDialog(
     `Delete page ${curPage() + 1}?`,
@@ -470,7 +470,7 @@ function refreshHelp() {
 }
 
 function clearCurrentPage() {
-  const p = curPage(), top = p * stride(), bot = top + pageDims(p).h;
+  const p = curPage(), top = pageTop(p), bot = top + pageDims(p).h;
   const killed = [];
   const inPage = y => y >= top && y < bot;
   doc.strokes.forEach(s => { if (!s.del && inPage(s.pts[0].y)) { s.del = true; killed.push({ kind: "stroke", ref: s }); } });

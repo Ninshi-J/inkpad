@@ -61,11 +61,11 @@ function beginShapePlacement(svgString, labelSpecs, srcBox, genParams, shapeType
 function clampObjToPage(x, y, w, h) {
   const pageIdx = pageIndexForBox(y, h);
   const dims = pageDims(pageIdx);
-  const pageTop = pageIdx * stride();
+  const top = pageTop(pageIdx);
   const margin = 8;
   return {
     x: Math.max(margin, Math.min(x, dims.w - w - margin)),
-    y: Math.max(pageTop + margin, Math.min(y, pageTop + dims.h - h - margin)),
+    y: Math.max(top + margin, Math.min(y, top + dims.h - h - margin)),
   };
 }
 function finalizePendingPlacement(x, y) {

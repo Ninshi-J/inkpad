@@ -45,15 +45,19 @@ function applyEntry(e, dir) { // dir: -1 undo, +1 redo
       e.delItems.forEach(it => it.ref.del = !undoing);
       break;
     }
+    /* Each entry carries the distance IT moved rather than one distance for all of them: pages
+       are not all the same height, so deleting a landscape page moves the pages after it up by
+       less than deleting a portrait one, and an object either side of a size change moves by a
+       different amount again. */
     case "pageDel": {
       if (undoing) {
         e.removed.forEach(it => it.ref.del = false);
-        e.shifted.forEach(it => shiftObject(it.ref, it.kind, 0, e.d));
+        e.shifted.forEach(it => shiftObject(it.ref, it.kind, 0, -it.dy));
         S.pages = Math.min(MAX_PAGES, S.pages + 1);
         S.pageStyles = e.pageStylesBefore;
       } else {
         e.removed.forEach(it => it.ref.del = true);
-        e.shifted.forEach(it => shiftObject(it.ref, it.kind, 0, -e.d));
+        e.shifted.forEach(it => shiftObject(it.ref, it.kind, 0, it.dy));
         S.pages = Math.max(1, S.pages - 1);
         S.pageStyles = e.pageStylesAfter;
       }
@@ -62,11 +66,11 @@ function applyEntry(e, dir) { // dir: -1 undo, +1 redo
     }
     case "pageIns": {
       if (undoing) {
-        e.shifted.forEach(it => shiftObject(it.ref, it.kind, 0, -e.d));
+        e.shifted.forEach(it => shiftObject(it.ref, it.kind, 0, -it.dy));
         S.pages = Math.max(1, S.pages - e.count);
         S.pageStyles = e.pageStylesBefore;
       } else {
-        e.shifted.forEach(it => shiftObject(it.ref, it.kind, 0, e.d));
+        e.shifted.forEach(it => shiftObject(it.ref, it.kind, 0, it.dy));
         S.pages = Math.min(MAX_PAGES, S.pages + e.count);
         S.pageStyles = e.pageStylesAfter;
       }

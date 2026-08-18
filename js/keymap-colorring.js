@@ -325,8 +325,8 @@ addEventListener("keydown", e => {
       if (pal[+k - 1]) setColor(pal[+k - 1]);
       return handled();
     }
-    case "pageup": V.scroll -= stride(); clampScroll(); schedulePdfUpgrade(); return handled();
-    case "pagedown": V.scroll += stride(); clampScroll(); schedulePdfUpgrade(); return handled();
+    case "pageup": V.scroll -= pageSlotH(curPage()); clampScroll(); schedulePdfUpgrade(); return handled();
+    case "pagedown": V.scroll += pageSlotH(curPage()); clampScroll(); schedulePdfUpgrade(); return handled();
     case "home": V.scroll = 0; clampScroll(); schedulePdfUpgrade(); return handled();
     case "end": V.scroll = maxScroll(); clampScroll(); schedulePdfUpgrade(); return handled();
     case "f5": toggleRecord(); return handled();
