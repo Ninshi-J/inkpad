@@ -595,8 +595,10 @@ const stride = () => pageExtremes().h + PAGE_GAP;
    to that page's top, a whole stride further down than the paper is tall, so it lands entirely off
    the bottom of a page it was never on and is missing from the page it was: an imported PDF that
    renders on page 1 and nowhere after it. A pixel of slop should not be able to do that. */
-function pageIndexForBox(y, h) {
-  const st = stride();
+function pageIndexForBox(y, h) { return pageIndexAtStride(y, h, stride()); }
+/* The same question against a GIVEN page pitch, which is what the reflow needs: it has to know
+   which page something was on under the OLD grid, before the new one existed. */
+function pageIndexAtStride(y, h, st) {
   const last = Math.max(0, S.pages - 1);
   const first = Math.max(0, Math.min(last, Math.floor(y / st)));
   if (!(h > 0)) return first;
@@ -604,12 +606,28 @@ function pageIndexForBox(y, h) {
   for (let p = first; p <= last; p++) {
     const top = p * st;
     if (top > y + h) break;
-    const overlap = Math.min(y + h, top + pageDims(p).h) - Math.max(y, top);
+    // Page height capped to the slot: under a hypothetical pitch the real pageDims may not apply.
+    const overlap = Math.min(y + h, top + Math.min(pageDims(p).h, st)) - Math.max(y, top);
     if (overlap > bestOverlap) { bestOverlap = overlap; best = p; }
   }
   return best;
 }
 const pageIndexForObject = o => pageIndexForBox(o.y, o.h || 0);
+/* The vertical extent an object actually covers, which is not always what it is positioned by.
+   A stroke is positioned by its first point but occupies its whole bounding box; a text box has
+   no stored height at all. Anything deciding WHICH PAGE something is on has to use the extent —
+   deciding on the position alone hands a page-tall PDF image that overhangs its own page top by a
+   few pixels to the page above, and then moves it there. */
+function objectSpan(o, kind) {
+  if (kind === "stroke") { const b = o.bb || strokeBB(o); return { y: b.y0, h: b.y1 - b.y0 }; }
+  if (kind === "text") { const b = textBB(o); return { y: b.y0, h: b.y1 - b.y0 }; }
+  return { y: o.y, h: o.h || 0 };
+}
+// Which page an object belongs to under a given pitch — by how much of it is on each page.
+function objectPageAtStride(o, kind, st) {
+  const sp = objectSpan(o, kind);
+  return pageIndexAtStride(sp.y, sp.h, st);
+}
 
 /* ---------------- keeping content on its page when the page grid changes ----------------
    Object positions are absolute world y; which page something is ON is derived from that by
@@ -625,16 +643,21 @@ const pageIndexForObject = o => pageIndexForBox(o.y, o.h || 0);
    spacing would silently move ink relative to the ink beside it. */
 function reflowPagesForStride(was, now) {
   if (!Number.isFinite(was) || !Number.isFinite(now) || Math.abs(was - now) < 0.5) return false;
-  const moveY = y => {
-    const p = Math.max(0, Math.floor(y / was));
-    return y - p * was + p * now;
-  };
+  /* Which page each object was on is decided by where MOST of it was, not by where its top edge
+     was. Attributing by the top edge alone moves anything overhanging its own page top — a
+     centred PDF page a shade taller than the paper, a heading nudged up over the boundary — onto
+     the page above, a whole slot away from where it belongs, and the error compounds down the
+     document. Rotating a page while such an object exists silently rearranged the notebook.
+
+     The SHIFT is still applied to the object's own position, so its offset down its page is
+     preserved exactly; only the choice of page is box-aware. */
   const shift = (o, kind) => {
-    const y = kind === "stroke" ? o.pts[0].y : o.y;
-    shiftObject(o, kind, 0, moveY(y) - y);
+    const p = objectPageAtStride(o, kind, was);
+    shiftObject(o, kind, 0, p * now - p * was);
   };
   for (const s of doc.strokes) shift(s, "stroke");
-  for (const arr of [doc.tapes, doc.texts, doc.images, doc.timers, doc.tables]) {
+  for (const t of doc.texts) shift(t, "text");
+  for (const arr of [doc.tapes, doc.images, doc.timers, doc.tables]) {
     for (const o of arr) shift(o, "");
   }
   return true;

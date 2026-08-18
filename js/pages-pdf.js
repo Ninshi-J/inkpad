@@ -242,20 +242,23 @@ function remapPageStyles(atIndex, delta, dropAt) {
 
 function deleteCurrentPage() {
   if (S.pages <= 1) { clearCurrentPage(); return; }
-  const p = curPage(), top = p * stride(), bot = top + stride();
+  const p = curPage(), st = stride();
   const removed = [], shifted = [];
-  const visit = (arr, kind, yOf) => arr.forEach(o => {
+  // By which page each object is mostly ON, not by where its top edge falls — see objectSpan.
+  // On the top-edge test, anything overhanging this page's top survived the delete and then sat
+  // over the page that moved up into its place.
+  const visit = (arr, kind) => arr.forEach(o => {
     if (o.del) return;
-    const y = yOf(o);
-    if (y >= top && y < bot) { o.del = true; removed.push({ kind, ref: o }); }
-    else if (y >= bot) { shiftObject(o, kind, 0, -stride()); shifted.push({ kind, ref: o }); }
+    const at = objectPageAtStride(o, kind, st);
+    if (at === p) { o.del = true; removed.push({ kind, ref: o }); }
+    else if (at > p) { shiftObject(o, kind, 0, -st); shifted.push({ kind, ref: o }); }
   });
-  visit(doc.strokes, "stroke", o => o.pts[0].y);
-  visit(doc.tapes, "tape", o => o.y);
-  visit(doc.texts, "text", o => o.y);
-  visit(doc.images, "image", o => o.y);
-  visit(doc.timers, "timer", o => o.y);
-  visit(doc.tables, "table", o => o.y);
+  visit(doc.strokes, "stroke");
+  visit(doc.tapes, "tape");
+  visit(doc.texts, "text");
+  visit(doc.images, "image");
+  visit(doc.timers, "timer");
+  visit(doc.tables, "table");
   S.pages--;
   const pageStylesBefore = S.pageStyles || {};
   const pageStylesAfter = remapPageStyles(p, -1, true);
@@ -269,19 +272,21 @@ function deleteCurrentPage() {
 function insertPageAt(atIndex, count = 1) {
   count = Math.max(1, Math.min(count, MAX_PAGES - S.pages));
   if (count <= 0) return;
-  const top = atIndex * stride();
-  const dy = stride() * count;
+  const st = stride();
+  const dy = st * count;
   const shifted = [];
-  const visit = (arr, kind, yOf) => arr.forEach(o => {
+  // Same rule as deleteCurrentPage: page membership by overlap, not by the top edge. An object
+  // overhanging the boundary was left behind while its own page moved down without it.
+  const visit = (arr, kind) => arr.forEach(o => {
     if (o.del) return;
-    if (yOf(o) >= top) { shiftObject(o, kind, 0, dy); shifted.push({ kind, ref: o }); }
+    if (objectPageAtStride(o, kind, st) >= atIndex) { shiftObject(o, kind, 0, dy); shifted.push({ kind, ref: o }); }
   });
-  visit(doc.strokes, "stroke", o => o.pts[0].y);
-  visit(doc.tapes, "tape", o => o.y);
-  visit(doc.texts, "text", o => o.y);
-  visit(doc.images, "image", o => o.y);
-  visit(doc.timers, "timer", o => o.y);
-  visit(doc.tables, "table", o => o.y);
+  visit(doc.strokes, "stroke");
+  visit(doc.tapes, "tape");
+  visit(doc.texts, "text");
+  visit(doc.images, "image");
+  visit(doc.timers, "timer");
+  visit(doc.tables, "table");
   S.pages += count;
   const pageStylesBefore = S.pageStyles || {};
   const pageStylesAfter = remapPageStyles(atIndex, count, false);
