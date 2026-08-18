@@ -777,3 +777,13 @@ kbd.listening { background: var(--accent-soft); border-color: var(--accent); }
   color: var(--ink-soft); padding: 2px 4px; line-height: 1; border-radius: 4px;
 }
 .stamp-thumb .stamp-actions button:hover { background: #fff; color: var(--ink); }
+
+/* Working-folder banner at the top of the library tree — present only while scoped, and the
+   only way back to the whole library, so it is deliberately hard to miss. */
+.lib-scope {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding: 4px 6px;
+  background: var(--chrome-2); border: 1px solid var(--line); border-radius: 7px;
+  font-size: 11.5px;
+}
+.lib-scope-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.lib-scope-clear { font: inherit; padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; flex: none; }

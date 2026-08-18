@@ -368,6 +368,48 @@ let libFolders = [];       // [{id, name, parentId, order, createdAt, docDefault
                            // partial {paper, landscape, template, ruleSp, gridSp, outline} override,
                            // see resolveDocDefaultsForFolder above
 let libNotebooks = [];     // [{id, name, folderId, order, createdAt, updatedAt}]
+
+/* ---------------- working folder ----------------
+   "I only teach Year 9 on this iPad." A working folder narrows the library to one folder and stops
+   notebooks OUTSIDE it being downloaded to this device in the first place.
+
+   Deliberately a device-level setting (localStorage, never synced): it describes what this
+   particular machine is being used for, not anything about the notebooks themselves. Two devices
+   signed into the same account can sensibly be scoped to different folders.
+
+   What it does NOT do is stop anything already on this device from being backed up. Everything
+   local keeps syncing in both directions whether it is in scope or not — narrowing the view must
+   never quietly stop saving work, which is the one failure this could otherwise introduce. Scope
+   only decides what is SHOWN and what is newly PULLED. */
+const LIB_SCOPE_KEY = "inkpad.workingFolder";
+let libScopeId = null;
+function loadLibScope() {
+  try { libScopeId = localStorage.getItem(LIB_SCOPE_KEY) || null; } catch (_) { libScopeId = null; }
+}
+function setLibScope(id) {
+  libScopeId = id || null;
+  try {
+    if (libScopeId) localStorage.setItem(LIB_SCOPE_KEY, libScopeId);
+    else localStorage.removeItem(LIB_SCOPE_KEY);
+  } catch (_) {}
+  renderLibTree();
+}
+// Resolved against the folders that actually exist: a scope pointing at a folder deleted on
+// another device falls back to showing everything rather than an empty library with no way out.
+function libScopeFolder() {
+  return libScopeId ? (libFolders.find(f => f.id === libScopeId) || null) : null;
+}
+// Is this folder the working folder, or inside it? Notebooks are asked about via their folderId.
+// With no scope set everything is in scope, including the unfiled top level (folderId null).
+function libInScope(folderId) {
+  if (!libScopeFolder()) return true;
+  const seen = new Set(); // a parent cycle from a bad merge must not spin here
+  for (let id = folderId; id && !seen.has(id); id = (libFolders.find(f => f.id === id) || {}).parentId) {
+    seen.add(id);
+    if (id === libScopeId) return true;
+  }
+  return false;
+}
 let libTombstones = [];    // [{id: notebookId, deletedAt}] — see js/drive-sync.js
 let activeNotebookId = null;
 let libExpanded = new Set(); // folder ids currently expanded in the sidebar tree
@@ -446,6 +488,7 @@ function computeOrderBetween(prevOrder, nextOrder) {
 }
 
 async function initLibrary() {
+  loadLibScope();
   try {
     libFolders = await idbGetAll("folders");
     libNotebooks = await idbGetAll("notebooks");

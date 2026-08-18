@@ -776,6 +776,9 @@ async function runRestoreWithNewerLocalGuard(runFn) {
 // pulls anything genuinely new or safely newer in Drive, and never touches (let alone deletes)
 // anything with unsynced local work or an unresolved conflict — those are just reported afterward,
 // same as driveBackupNow already does for its own "incoming"/"conflicted" lists.
+// How many notebooks the last restore left on Drive because they sit outside the working folder
+// — reported back so a narrowed library never looks like a failed or partial restore.
+let driveSkippedOutOfScope = 0;
 async function driveRestoreNow() {
   const snapshot = await driveFetchLibrarySnapshot();
   if (!snapshot || !snapshot.folderId || (!snapshot.folders.length && !snapshot.notebooks.length)) {
@@ -796,9 +799,21 @@ async function driveRestoreNow() {
   // -- there's nothing to actually change, so re-writing it would just be a no-op fetch, and it
   // shouldn't get reported as "pulled" when nothing about it changed. Never "push" (local has
   // unsynced work) or "conflict" (both sides changed) -- those are left alone, not overwritten.
+  /* A working folder narrows what this device DOWNLOADS, not what it backs up. Only notebooks
+     brand new to this device are filtered: anything already here keeps syncing both ways
+     whether it is in scope or not, because hiding a notebook must never quietly stop saving
+     it. Clearing the scope, or focusing a different folder, pulls the rest in on the next
+     restore — nothing is lost by narrowing, only deferred. */
+  const outOfScope = [];
   const toPull = snapshot.notebooks
-    .filter(remoteNb => { const st = states.get(remoteNb.id); return st === undefined || st === "pull"; })
+    .filter(remoteNb => {
+      const st = states.get(remoteNb.id);
+      if (st !== undefined && st !== "pull") return false;
+      if (st === undefined && !libInScope(remoteNb.folderId || null)) { outOfScope.push(remoteNb); return false; }
+      return true;
+    })
     .map(n => n.id);
+  driveSkippedOutOfScope = outOfScope.length;
 
   for (const fo of snapshot.folders) await storePut("folders", fo);
   for (const st of snapshot.stamps) await storePut("stamps", st);
@@ -858,6 +873,8 @@ async function driveRestoreNow() {
     keptUnsynced: keptUnsynced.map(nb => nb.name),
     conflicted: conflicted.map(nb => nb.name),
     keptDeleted: driveKeptDeleted.map(k => k.name),
+    skippedOutOfScope: driveSkippedOutOfScope,
+    scopeName: (libScopeFolder() || {}).name || null,
   };
 }
 
@@ -1616,6 +1633,9 @@ function wireDriveMenu() {
       parts.push(res.pulled.length ? `Pulled in: ${res.pulled.map(n => `"${n}"`).join(", ")}.` : "Nothing new to pull in.");
       if (res.keptUnsynced.length) parts.push(`Left alone (you have unsynced changes): ${res.keptUnsynced.map(n => `"${n}"`).join(", ")}.`);
       if (res.conflicted.length) parts.push(`Changed in both places, left alone: ${res.conflicted.map(n => `"${n}"`).join(", ")} — use "Back up to Drive" to resolve.`);
+      // Stated plainly rather than left silent: "nothing new to pull in" while a folder scope is
+      // quietly holding notebooks back would look exactly like a broken restore.
+      if (res.skippedOutOfScope) parts.push(`Left on Drive because you're working in "${res.scopeName}" only: ${res.skippedOutOfScope} notebook${res.skippedOutOfScope === 1 ? "" : "s"} — press "Show all" in the library to bring ${res.skippedOutOfScope === 1 ? "it" : "them"} in.`);
       if (res.keptDeleted.length) parts.push(`Deleted on another device but kept here because you've edited ${res.keptDeleted.length > 1 ? "them" : "it"} since: ${res.keptDeleted.map(n => `"${n}"`).join(", ")} — ${res.keptDeleted.length > 1 ? "they stay" : "it stays"} on this device only until you delete or duplicate ${res.keptDeleted.length > 1 ? "them" : "it"}.`);
       // The picker stays open: the tree behind this dialog now shows what the merge did and what it
       // deliberately left alone, with a "Take Drive's"/"Keep mine" button on each row it skipped —

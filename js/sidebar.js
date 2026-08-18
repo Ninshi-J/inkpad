@@ -202,9 +202,24 @@ function renderLibTree() {
   const root = $("libTree");
   if (!root) return; // sidebar not built yet (initLibrary() can resolve before first rebuildSidebar() call lands)
   root.innerHTML = "";
-  const children = libChildren(null);
+  /* Scoped to one folder, that folder's contents ARE the library: its children render at the
+     top level with a banner naming what you are inside, rather than the whole tree with
+     everything else greyed out. The banner is the only way back out, so it is always shown. */
+  const scope = libScopeFolder();
+  if (scope) {
+    const bar = document.createElement("div");
+    bar.className = "lib-scope";
+    bar.innerHTML = `<span class="lib-scope-name" title="Working in this folder only">\u{1F4C2} ${escapeXml(scope.name)}</span>`
+      + `<button type="button" class="lib-scope-clear" title="Show the whole library again">Show all</button>`;
+    bar.querySelector(".lib-scope-clear").onclick = () => setLibScope(null);
+    root.appendChild(bar);
+  }
+  const children = libChildren(scope ? scope.id : null);
   if (!children.length) {
-    root.innerHTML = `<div class="lib-empty">No notebooks yet</div>`;
+    const empty = document.createElement("div");
+    empty.className = "lib-empty";
+    empty.textContent = scope ? "Nothing in this folder yet" : "No notebooks yet";
+    root.appendChild(empty);
   } else {
     for (const c of children) root.appendChild(buildLibChild(c, 0));
   }
@@ -242,6 +257,7 @@ function buildFolderRow(f, depth) {
     <span class="lib-actions">
       <button type="button" data-act="newnb" title="New notebook here">➕\u{1F4C4}</button>
       <button type="button" data-act="newfolder" title="New folder here">➕\u{1F4C1}</button>
+      <button type="button" data-act="focus" title="Work in this folder only - hides the rest, and stops notebooks outside it downloading to this device">\u{1F3AF}</button>
       <button type="button" data-act="props" title="Folder properties — default template for new notebooks here">⚙️</button>
       ${showRosterBtn ? `<button type="button" data-act="roster" title="${hasOwnRoster ? "This folder's class roster" : "Create a class roster for this folder"}">🎓</button>` : ""}
       <button type="button" data-act="rename" title="Rename">✎</button>
@@ -265,6 +281,7 @@ function buildFolderRow(f, depth) {
   nameEl.ondblclick = e => { e.stopPropagation(); startInlineRename(nameEl, "folder", f.id); };
   row.querySelector('[data-act=newnb]').onclick = e => { e.stopPropagation(); createNotebook(f.id); };
   row.querySelector('[data-act=newfolder]').onclick = e => { e.stopPropagation(); createFolder(f.id); };
+  row.querySelector('[data-act=focus]').onclick = e => { e.stopPropagation(); setLibScope(f.id); };
   row.querySelector('[data-act=props]').onclick = e => { e.stopPropagation(); openFolderProps(f); };
   const rosterBtn = row.querySelector('[data-act=roster]');
   if (rosterBtn) rosterBtn.onclick = e => { e.stopPropagation(); manageFolderRoster(f); };
