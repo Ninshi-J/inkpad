@@ -399,6 +399,10 @@ function setLibScope(id) {
 function libScopeFolder() {
   return libScopeId ? (libFolders.find(f => f.id === libScopeId) || null) : null;
 }
+// The tree top level, which while a working folder is set IS that folder: its contents are the
+// whole library then, so anything created or un-nested there has to land in it rather than in the
+// real root, where it would fall outside the scope and vanish from view the moment it was made.
+function libRootId() { return (libScopeFolder() || {}).id || null; }
 // Is this folder the working folder, or inside it? Notebooks are asked about via their folderId.
 // With no scope set everything is in scope, including the unfiled top level (folderId null).
 function libInScope(folderId) {

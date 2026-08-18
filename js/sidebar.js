@@ -137,8 +137,10 @@ function rebuildSidebar() {
   renderKeymapRows($("sideKeys")); // shared with the settings dialog — see js/keymap-colorring.js
   $("resetKeysBtn").onclick = () => { defaultKeymap(); saveKeymap(); refreshKeymapUI(); };
 
-  $("libNewNotebookBtn").onclick = () => createNotebook(null);
-  $("libNewFolderBtn").onclick = () => createFolder(null);
+  // Into the working folder when there is one: while scoped, the tree top level is that folder,
+  // so a new notebook filed at the real root would be created straight out of sight.
+  $("libNewNotebookBtn").onclick = () => createNotebook(libRootId());
+  $("libNewFolderBtn").onclick = () => createFolder(libRootId());
   renderLibTree();
 }
 
@@ -206,6 +208,11 @@ function renderLibTree() {
      top level with a banner naming what you are inside, rather than the whole tree with
      everything else greyed out. The banner is the only way back out, so it is always shown. */
   const scope = libScopeFolder();
+  // Say where the toolbar buttons will file things, so "+ Notebook" does not keep reading as
+  // "at the top of the library" once the top of the library is a folder.
+  const nbBtn = $("libNewNotebookBtn"), foBtn = $("libNewFolderBtn");
+  if (nbBtn) nbBtn.title = scope ? `New notebook in ${scope.name}` : "New notebook";
+  if (foBtn) foBtn.title = scope ? `New folder in ${scope.name}` : "New folder";
   if (scope) {
     const bar = document.createElement("div");
     bar.className = "lib-scope";
@@ -229,7 +236,7 @@ function renderLibTree() {
   root.ondragleave = e => { if (e.target === root) root.classList.remove("dragover"); };
   root.ondrop = e => {
     e.preventDefault(); root.classList.remove("dragover");
-    if (libDrag) moveItem(libDrag.kind, libDrag.id, null);
+    if (libDrag) moveItem(libDrag.kind, libDrag.id, libRootId());
   };
 }
 let libDrag = null; // { kind: "folder"|"notebook", id } of the row currently being dragged
