@@ -74,7 +74,7 @@ function defaultLayers() { return [{ id: "base", name: "Layer 1", visible: true 
 const S = { // document settings (saved)
   paper: "a4", landscape: false, template: "blank",
   ruleSp: 34, gridSp: 28, outline: true, pages: 1,
-  pageStyles: {}, // page index -> { template, ruleSp, gridSp, outline, landscape } overrides; each falls back to the document default when unset
+  pageStyles: {}, // page index -> { template, ruleSp, gridSp, outline, landscape, paper } overrides; each falls back to the document default when unset
   shapePrefs: {}, // checkbox id -> checked, for the math-shape dialog (e.g. "show side labels") — per notebook, so a Y9 and a Y7 notebook can keep different defaults
   layers: defaultLayers(), // [{id, name, visible}] — every stroke/text/image/tape/timer carries a `layer` id pointing into this list
   activeLayer: "base", // which layer new objects get created on
@@ -107,6 +107,10 @@ function pageStyle(p) {
     gridSp: (o && o.gridSp) || S.gridSp,
     outline: (o && o.outline != null) ? o.outline : S.outline,
     landscape: (o && o.landscape != null) ? o.landscape : S.landscape,
+    // Guarded against an unknown key rather than trusted: a paper name reaching this from a file
+    // written by a later build (or a hand-edited one) would otherwise index PAPERS with undefined
+    // and take every page's geometry down with it.
+    paper: (o && o.paper && PAPERS[o.paper]) ? o.paper : S.paper,
   };
 }
 
@@ -540,9 +544,31 @@ const pageW = () => PAPERS[S.paper][S.landscape ? 1 : 0];
 const pageH = () => PAPERS[S.paper][S.landscape ? 0 : 1];
 // Effective width/height for a SPECIFIC page, honoring a per-page orientation override.
 function pageDims(p) {
-  const landscape = pageStyle(p).landscape;
-  return { w: PAPERS[S.paper][landscape ? 1 : 0], h: PAPERS[S.paper][landscape ? 0 : 1], landscape };
+  const { landscape, paper } = pageStyle(p);
+  return { w: PAPERS[paper][landscape ? 1 : 0], h: PAPERS[paper][landscape ? 0 : 1], landscape, paper };
 }
+// The two extremes across the pages this document actually has. Both walk the OVERRIDES rather
+// than the pages: a page with no override is exactly the document default, which is already the
+// starting value, so this stays proportional to how many pages have been customised rather than
+// how many there are — and these are called on every frame and every hit test.
+//
+// The document default is the floor for both, even when no page currently uses it, because the
+// next page added will. Without that, adding one page to a document whose every page had been
+// overridden would change the pitch underneath all the existing content.
+function pageExtremes() {
+  const dflt = PAPERS[S.paper];
+  let w = dflt[S.landscape ? 1 : 0], h = dflt[S.landscape ? 0 : 1];
+  const o = S.pageStyles;
+  if (o) for (const k in o) {
+    const p = +k;
+    if (!(p >= 0 && p < S.pages)) continue;   // a stale entry left by a deleted page
+    const d = pageDims(p);
+    if (d.w > w) w = d.w;
+    if (d.h > h) h = d.h;
+  }
+  return { w, h };
+}
+const widestPageW = () => pageExtremes().w;
 /* Every page reserves the same slot height, so page-index arithmetic (curPage, scroll, PDF
    export, insert/delete-page shifting) stays a single division by a constant. That slot has to
    fit the tallest page the document can contain — but only the tallest one it ACTUALLY contains.
@@ -557,7 +583,10 @@ function documentIsAllLandscape() {
   if (o) for (const k in o) if (o[k] && o[k].landscape === false) return false;
   return true;
 }
-const stride = () => PAPERS[S.paper][documentIsAllLandscape() ? 0 : 1] + PAGE_GAP;
+// Every page reserves the same slot, sized to the tallest page in the document — which is now a
+// question about paper size as well as orientation, since a page can override either. With no
+// overrides at all this is exactly what it always was: the document's own page height.
+const stride = () => pageExtremes().h + PAGE_GAP;
 
 /* Which page a box belongs to — by how much of it is on each page, not by where its top edge is.
 
@@ -658,13 +687,18 @@ function contentBottom() {
 // While the page fits within the viewport, it stays centered (ignoring scrollX) exactly like
 // before — horizontal panning only kicks in once zoomed in far enough that it doesn't fit, the
 // same way a native scroll container only shows a scrollbar when content overflows.
+/* Pages of different widths all share this one left edge. They have to: object positions are a
+   single absolute world space spanning the whole document, so world x=0 can only map to one screen
+   x — centring each page on its own would move an object sideways purely by which page it sat on.
+   The rail is sized to the widest page so nothing is ever unreachable, and narrower pages sit
+   left-aligned within it. */
 const viewX = () => {
-  const pxW = pageW() * V.zoom;
+  const pxW = widestPageW() * V.zoom;
   if (pxW <= CW) return Math.max(14, (CW - pxW) / 2);
   return -V.scrollX * V.zoom;
 };
 const maxScroll = () => Math.max(0, S.pages * stride() - CH / V.zoom + 30);
-const maxScrollX = () => Math.max(0, pageW() - CW / V.zoom);
+const maxScrollX = () => Math.max(0, widestPageW() - CW / V.zoom);
 
 const sx = wx => wx * V.zoom + viewX();
 const sy = wy => (wy - V.scroll) * V.zoom;

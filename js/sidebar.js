@@ -35,6 +35,12 @@ function rebuildSidebar() {
     </details>
     <details class="side-section" id="secPageSetup" ${sidebarSectionOpen("pageSetup") ? "open" : ""}>
       <summary>Page setup <span style="text-transform:none; letter-spacing:normal; font-weight:normal;">(this page)</span></summary>
+      <div class="side-row"><label>Paper</label>
+        <select id="setPagePaper">
+          <option value="">(document default)</option>
+          <option value="a4">A4</option><option value="letter">Letter</option><option value="a5">A5</option>
+          <option value="widescreen">Widescreen (16:9)</option>
+        </select></div>
       <div class="side-row"><label>Orientation</label>
         <select id="setPageOrient">
           <option value="">(document default)</option>
@@ -102,12 +108,16 @@ function rebuildSidebar() {
   $("setPageRule").onchange = e => setPageOverride("ruleSp", e.target.value ? Math.max(12, +e.target.value) : null);
   $("setPageGrid").onchange = e => setPageOverride("gridSp", e.target.value ? Math.max(10, +e.target.value) : null);
   $("setPageOutline").onchange = e => setPageOverride("outline", e.target.value === "" ? null : e.target.value === "1");
-  // One page turned back to portrait makes the whole document reserve portrait height again
-  // (documentIsAllLandscape), so this changes the pitch for every page too.
-  $("setPageOrient").onchange = e => {
-    withPageGrid(() => setPageOverride("landscape", e.target.value === "" ? null : e.target.value === "l"));
+  /* Both of these change how tall the tallest page in the document is, and every page reserves
+     that same height — so changing one page's paper moves the page boundaries for all of them.
+     withPageGrid puts the content back on its own page afterwards; without it everything below
+     page 1 slides by a whole slot per boundary. */
+  const setPageSizeOverride = (field, value) => {
+    withPageGrid(() => setPageOverride(field, value));
     clampScroll();
   };
+  $("setPagePaper").onchange = e => setPageSizeOverride("paper", e.target.value || null);
+  $("setPageOrient").onchange = e => setPageSizeOverride("landscape", e.target.value === "" ? null : e.target.value === "l");
   refreshPageSetupControls();
 
   $("addPageBtn").onclick = () => { if (S.pages < MAX_PAGES) { S.pages++; V.scroll = maxScroll(); markDirty(); invalidateCleanMarker(); syncUI(); } };
@@ -409,6 +419,7 @@ function refreshPageSetupControls() {
   document.getElementById("setPageGrid").value = o.gridSp || "";
   document.getElementById("setPageOutline").value = o.outline == null ? "" : (o.outline ? "1" : "0");
   document.getElementById("setPageOrient").value = o.landscape == null ? "" : (o.landscape ? "l" : "p");
+  document.getElementById("setPagePaper").value = o.paper || "";
 }
 function refreshHelp() {
   const dyn = ACTIONS.map(a => [keyFor(a.id), a.label]);
