@@ -266,6 +266,55 @@ async function exportPdf(pages) {
       drawXObject(page, embedded, im, top, phPt, isForm);
     }
 
+    // Tables are drawn cell by cell rather than as one image: they're vector everywhere else, and
+    // a worksheet's whole point is the empty cells staying crisp at print size. Laid down before
+    // the ink, matching the canvas: a cell's fill is opaque, so anything written across the table
+    // has to go on top of it rather than under.
+    for (const tb of doc.tables) {
+      if (tb.del || tb.y < top || tb.y >= bot || !isLayerVisible(tb.layer)) continue;
+      const [gr, gg, gb] = hexToRgb01(tb.gridColour);
+      const [hr, hg, hb] = hexToRgb01(tb.headFill);
+      const [sr2, sg2, sb2] = hexToRgb01(tb.stripeFill || "#FFFFFF");
+      const [xr, xg, xb] = hexToRgb01(tb.textColour);
+      for (let r = 0; r < tableRows(tb); r++) {
+        for (let c = 0; c < tableCols(tb); c++) {
+          if (tableSkip(tb, r, c)) continue;
+          const q = tableCellRect(tb, r, c);
+          const head = tableIsHead(tb, r, c);
+          const striped = !head && tb.stripeFill && (r - tb.headRows) % 2 === 1;
+          page.drawRectangle({
+            x: X(q.x), y: Y(q.y + q.h), width: q.w * PT, height: q.h * PT,
+            color: head ? rgb(hr, hg, hb) : (striped ? rgb(sr2, sg2, sb2) : rgb(1, 1, 1)),
+            borderColor: rgb(gr, gg, gb), borderWidth: 1,
+          });
+          // Tables always draw in the default sans face, matching drawOneTable on the canvas.
+          const f = pdfFontFor({ font: DEFAULT_FONT_KEY }, head, false);
+          // Measured with the PDF font's own metrics so the centring matches what actually lands on
+          // the page; maths comes back as the same raster span the canvas and the SVG both place.
+          const lay = tableCellLayout(tb, r, c, s => {
+            try { return f.widthOfTextAtSize(sanitizeForWinAnsi(s), tb.fontSize); } catch (_) { return 0; }
+          });
+          if (!lay.pieces.length) continue;
+          const baseline = q.y + q.h / 2 + tb.fontSize * 0.35;
+          const left = q.x + q.w / 2 - lay.width / 2;
+          for (const p of lay.pieces) {
+            if (p.span) {
+              const pngImg = await getMathPdfImage(p.span);
+              page.drawImage(pngImg, {
+                x: X(left + p.x), y: Y(baseline + p.span.baselineOffset + p.span.h),
+                width: p.w * PT, height: p.span.h * PT,
+              });
+              continue;
+            }
+            page.drawText(sanitizeForWinAnsi(p.text), {
+              x: X(left + p.x), y: Y(baseline),
+              size: tb.fontSize * PT, font: f, color: head ? rgb(gr, gg, gb) : rgb(xr, xg, xb),
+            });
+          }
+        }
+      }
+    }
+
     for (const pass of ["hl", "pen"]) {
       for (const s of doc.strokes) {
         if (s.del || s.tool !== pass || s.pts.length < 2 || !isLayerVisible(s.layer)) continue;
@@ -366,53 +415,6 @@ async function exportPdf(pages) {
       if (t.del || t.revealed || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
       const [tr, tg, tb] = hexToRgb01(t.color || "#FFD682");
       page.drawRectangle({ x: X(t.x), y: Y(t.y + t.h), width: t.w * PT, height: t.h * PT, color: rgb(tr, tg, tb) });
-    }
-
-    // Tables are drawn cell by cell rather than as one image: they're vector everywhere else, and
-    // a worksheet's whole point is the empty cells staying crisp at print size.
-    for (const tb of doc.tables) {
-      if (tb.del || tb.y < top || tb.y >= bot || !isLayerVisible(tb.layer)) continue;
-      const [gr, gg, gb] = hexToRgb01(tb.gridColour);
-      const [hr, hg, hb] = hexToRgb01(tb.headFill);
-      const [sr2, sg2, sb2] = hexToRgb01(tb.stripeFill || "#FFFFFF");
-      const [xr, xg, xb] = hexToRgb01(tb.textColour);
-      for (let r = 0; r < tableRows(tb); r++) {
-        for (let c = 0; c < tableCols(tb); c++) {
-          if (tableSkip(tb, r, c)) continue;
-          const q = tableCellRect(tb, r, c);
-          const head = tableIsHead(tb, r, c);
-          const striped = !head && tb.stripeFill && (r - tb.headRows) % 2 === 1;
-          page.drawRectangle({
-            x: X(q.x), y: Y(q.y + q.h), width: q.w * PT, height: q.h * PT,
-            color: head ? rgb(hr, hg, hb) : (striped ? rgb(sr2, sg2, sb2) : rgb(1, 1, 1)),
-            borderColor: rgb(gr, gg, gb), borderWidth: 1,
-          });
-          // Tables always draw in the default sans face, matching drawOneTable on the canvas.
-          const f = pdfFontFor({ font: DEFAULT_FONT_KEY }, head, false);
-          // Measured with the PDF font's own metrics so the centring matches what actually lands on
-          // the page; maths comes back as the same raster span the canvas and the SVG both place.
-          const lay = tableCellLayout(tb, r, c, s => {
-            try { return f.widthOfTextAtSize(sanitizeForWinAnsi(s), tb.fontSize); } catch (_) { return 0; }
-          });
-          if (!lay.pieces.length) continue;
-          const baseline = q.y + q.h / 2 + tb.fontSize * 0.35;
-          const left = q.x + q.w / 2 - lay.width / 2;
-          for (const p of lay.pieces) {
-            if (p.span) {
-              const pngImg = await getMathPdfImage(p.span);
-              page.drawImage(pngImg, {
-                x: X(left + p.x), y: Y(baseline + p.span.baselineOffset + p.span.h),
-                width: p.w * PT, height: p.span.h * PT,
-              });
-              continue;
-            }
-            page.drawText(sanitizeForWinAnsi(p.text), {
-              x: X(left + p.x), y: Y(baseline),
-              size: tb.fontSize * PT, font: f, color: head ? rgb(gr, gg, gb) : rgb(xr, xg, xb),
-            });
-          }
-        }
-      }
     }
   }
 
@@ -551,11 +553,17 @@ async function svgTextEl(t, top) {
 }
 /* The drawing itself, given the objects to draw and the y to treat as the top edge. Split out of
    buildPageSvg so exporting a SELECTION goes through the same emitters in the same order — the
-   z-order below (images, highlighter, pen, text, tape, tables) is the export's rendering contract,
+   z-order below (images, tables, highlighter, pen, text, tape) is the export's rendering contract,
    and a second copy of it would be a second thing to keep in step with the canvas. */
 async function buildSvgBody(objs, top) {
   let body = "";
   for (const im of objs.images) body += svgImageEl(im, top);
+  // Every cell's maths resolved before any of it is laid out: tableSvgBody centres a cell on its
+  // total width, and a formula has no width until its span has rendered.
+  await Promise.all(objs.tables.map(tableWarmMath));
+  // The same markup the dialog previews and the canvas draw from — cell by cell, still vector,
+  // and under the ink for the same reason the canvas puts it there: the cell fills are opaque.
+  for (const tb of objs.tables) body += tableSvgBody(tb, 0, top);
   for (const pass of ["hl", "pen"]) {
     for (const s of objs.strokes) {
       if (s.tool !== pass || s.pts.length < 2) continue;
@@ -566,11 +574,6 @@ async function buildSvgBody(objs, top) {
   for (const t of objs.tapes) {
     body += `<rect x="${t.x}" y="${t.y - top}" width="${t.w}" height="${t.h}" fill="${t.color || "#FFD682"}"/>\n`;
   }
-  // Every cell's maths resolved before any of it is laid out: tableSvgBody centres a cell on its
-  // total width, and a formula has no width until its span has rendered.
-  await Promise.all(objs.tables.map(tableWarmMath));
-  // The same markup the dialog previews and the canvas draw from — cell by cell, still vector.
-  for (const tb of objs.tables) body += tableSvgBody(tb, 0, top);
   return body;
 }
 async function buildPageSvg(srcP) {

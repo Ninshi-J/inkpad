@@ -85,18 +85,19 @@ function currentLayerId() {
   if (S.layers && S.layers.some(l => l.id === S.activeLayer)) return S.activeLayer;
   return (S.layers && S.layers[0] && S.layers[0].id) || "base";
 }
+/* Every array whose objects carry a `layer`. There were three copies of this list — the count
+   behind the delete-layer confirmation, the reassignment that moves a deleted layer's objects to
+   another one, and the load-time repair for an object pointing at a layer that no longer exists —
+   and when tables arrived as a new kind they were missed by all three, so deleting a layer left
+   its tables pointing at an id that was gone and the one piece of code meant to fix that skipped
+   them. A function rather than a constant because resetDocState replaces the arrays themselves. */
+const layeredArrays = () => [doc.strokes, doc.tapes, doc.texts, doc.images, doc.timers, doc.tables];
 // An object whose layer isn't found at all (shouldn't normally happen once migration has run,
 // see deserialize()) defaults to visible rather than disappearing outright.
 function isLayerVisible(layerId) {
   if (!S.layers || !S.layers.length) return true;
   const l = S.layers.find(x => x.id === layerId);
   return !l || l.visible !== false;
-}
-// Used by paste/duplicate-into-stamp paths: keeps a copied object on its original layer when
-// that layer still exists here, falling back to the active layer when it doesn't — e.g. a stamp
-// or clipboard item created in a different notebook, whose layer ids mean nothing in this one.
-function resolveLayerId(id) {
-  return (id && S.layers.some(l => l.id === id)) ? id : currentLayerId();
 }
 // Resolves the effective ruling for a given page, honoring any per-page overrides.
 function pageStyle(p) {

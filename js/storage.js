@@ -500,6 +500,9 @@ async function initLibrary() {
   } catch (_) { libFolders = []; libNotebooks = []; libTombstones = []; }
   await loadStamps();
   await loadRosters();
+  // What another window (or the last session) left on the clipboard, so a paste is available
+  // before this window has copied anything of its own.
+  await adoptNewerClipboard();
 
   if (libNotebooks.length === 0) {
     // First launch of this version — migrate whatever single document existed (IndexedDB v1

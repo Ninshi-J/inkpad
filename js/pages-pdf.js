@@ -134,7 +134,8 @@ function isPageBlank(p) {
     && !doc.tapes.some(t => !t.del && inPage(t.y))
     && !doc.texts.some(t => !t.del && inPage(t.y))
     && !doc.images.some(i => !i.del && inPage(i.y))
-    && !doc.timers.some(t => !t.del && inPage(t.y));
+    && !doc.timers.some(t => !t.del && inPage(t.y))
+    && !doc.tables.some(t => !t.del && inPage(t.y));
 }
 
 async function importPdfFiles(files) {
@@ -321,7 +322,8 @@ function pageHasContent(p) {
     doc.tapes.some(t => !t.del && inP(t.y)) ||
     doc.texts.some(t => !t.del && inP(t.y)) ||
     doc.images.some(im => !im.del && inP(im.y)) ||
-    doc.timers.some(t => !t.del && inP(t.y));
+    doc.timers.some(t => !t.del && inP(t.y)) ||
+    doc.tables.some(t => !t.del && inP(t.y));
 }
 
 function renderPageThumbnail(p, thumbW, asCanvas) {
@@ -346,6 +348,11 @@ function renderPageThumbnail(p, thumbW, asCanvas) {
     } else {
       thumbCtx.drawImage(im.img, im.x * scale, (im.y - top) * scale, im.w * scale, im.h * scale);
     }
+  }
+  // Under the ink, the same way the canvas and both exports order it.
+  for (const t of doc.tables) {
+    if (t.del || t.y < top || t.y >= bot || !isLayerVisible(t.layer)) continue;
+    drawTableTo(thumbCtx, t, X => X * scale, Y => (Y - top) * scale, scale, false);
   }
   for (const pass of ["hl", "pen"]) {
     for (const s of doc.strokes) {
@@ -622,7 +629,7 @@ function deserialize(json) {
   if (!S.activeLayer || !S.layers.some(l => l.id === S.activeLayer)) S.activeLayer = S.layers[0].id;
   const fallbackLayerId = S.layers[0].id;
   const validLayerIds = new Set(S.layers.map(l => l.id));
-  for (const arr of [doc.strokes, doc.tapes, doc.texts, doc.images, doc.timers]) {
+  for (const arr of layeredArrays()) {
     for (const o of arr) if (!validLayerIds.has(o.layer)) o.layer = fallbackLayerId;
   }
 

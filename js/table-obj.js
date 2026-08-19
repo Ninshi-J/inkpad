@@ -293,52 +293,58 @@ function drawTables() {
     drawOneTable(t);
   }
 }
-function drawOneTable(t) {
-  const z = V.zoom;
-  ctx.save();
-  ctx.lineWidth = Math.max(1, 1.6 * z);
-  ctx.strokeStyle = t.gridColour;
-  ctx.textBaseline = "alphabetic";
-  ctx.textAlign = "left";
+function drawOneTable(t) { drawTableTo(ctx, t, sx, sy, V.zoom, true); }
+/* The same table drawn into any context, given how to map world coordinates into it and the scale
+   that mapping applies. The page thumbnails need this at their own scale, and drawing it there a
+   second time is exactly how tables came to be left out of the thumbnails altogether — so there is
+   one drawing, called twice.
+
+   showFocus is the on-canvas editing ring, which a thumbnail has no business showing. */
+function drawTableTo(g, t, mapX, mapY, z, showFocus) {
+  g.save();
+  g.lineWidth = Math.max(1, 1.6 * z);
+  g.strokeStyle = t.gridColour;
+  g.textBaseline = "alphabetic";
+  g.textAlign = "left";
   for (let r = 0; r < tableRows(t); r++) {
     for (let c = 0; c < tableCols(t); c++) {
       if (tableSkip(t, r, c)) continue;
       const q = tableCellRect(t, r, c);
-      const X = sx(q.x), Y = sy(q.y), W = q.w * z, H = q.h * z;
+      const X = mapX(q.x), Y = mapY(q.y), W = q.w * z, H = q.h * z;
       const head = tableIsHead(t, r, c);
       const striped = !head && t.stripeFill && (r - t.headRows) % 2 === 1;
-      ctx.fillStyle = head ? t.headFill : (striped ? t.stripeFill : "#FFFFFF");
-      ctx.fillRect(X, Y, W, H);
-      ctx.strokeRect(X, Y, W, H);
+      g.fillStyle = head ? t.headFill : (striped ? t.stripeFill : "#FFFFFF");
+      g.fillRect(X, Y, W, H);
+      g.strokeRect(X, Y, W, H);
       const lay = tableCellLayout(t, r, c);
       if (!lay.pieces.length) continue;
-      ctx.fillStyle = tableInk(t, head);
-      ctx.font = `${head ? "bold " : ""}${t.fontSize * z}px ${FONT_STACKS[DEFAULT_FONT_KEY].css}`;
+      g.fillStyle = tableInk(t, head);
+      g.font = `${head ? "bold " : ""}${t.fontSize * z}px ${FONT_STACKS[DEFAULT_FONT_KEY].css}`;
       // A third of the font size below the cell's middle, the same figure the PDF and SVG paths
       // use, so a cell sits identically on screen, in print and in an exported drawing.
       const base = Y + H / 2 + t.fontSize * z * 0.35;
       const left = X + W / 2 - (lay.width * z) / 2;
       // Clipped to its own cell so an over-long entry can't bleed into its neighbour — the column
       // auto-fits when the cell is committed, but a scaled-down table can still overflow.
-      ctx.save();
-      ctx.beginPath(); ctx.rect(X + 1, Y + 1, W - 2, H - 2); ctx.clip();
+      g.save();
+      g.beginPath(); g.rect(X + 1, Y + 1, W - 2, H - 2); g.clip();
       for (const p of lay.pieces) {
-        if (p.span) ctx.drawImage(p.span.img, left + p.x * z, base + p.span.baselineOffset * z, p.w * z, p.span.h * z);
-        else ctx.fillText(p.text, left + p.x * z, base);
+        if (p.span) g.drawImage(p.span.img, left + p.x * z, base + p.span.baselineOffset * z, p.w * z, p.span.h * z);
+        else g.fillText(p.text, left + p.x * z, base);
       }
-      ctx.restore();
+      g.restore();
     }
   }
   // The cell a new row or column is inserted next to (see tableSelToolbarButtons). Without it the
   // toolbar's "insert below" has no visible "below what", and the answer moves as you type.
-  const f = tableFocusIn(t);
+  const f = showFocus ? tableFocusIn(t) : null;
   if (f && !editingTableCell) {
     const q = tableCellRect(t, f.r, f.c);
-    ctx.strokeStyle = "#0F766E";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(sx(q.x) + 1, sy(q.y) + 1, q.w * z - 2, q.h * z - 2);
+    g.strokeStyle = "#0F766E";
+    g.lineWidth = 2;
+    g.strokeRect(mapX(q.x) + 1, mapY(q.y) + 1, q.w * z - 2, q.h * z - 2);
   }
-  ctx.restore();
+  g.restore();
 }
 
 /* ---------------- editing a cell ----------------

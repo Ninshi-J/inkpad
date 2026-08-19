@@ -1,5 +1,55 @@
 "use strict";
-const clipboard = { items: [], crop: null, pasteCount: 0 };
+const clipboard = { items: [], crop: null, pasteCount: 0, stamp: 0 };
+
+/* ---------------- the clipboard outlives the window that filled it ----------------
+   Copy in one notebook and paste in another, copy in one window and paste in the one beside it,
+   or copy, close the app and paste tomorrow. The object above stays the fast path; the record
+   below is what lets a copy reach anywhere the object doesn't.
+
+   It goes to the "meta" store through idbPut and NOT storePut, deliberately: storePut follows the
+   connected-folder backend, and a clipboard is not notebook content — it has no business being
+   written into a teacher's notes folder every time they press Ctrl+C.
+
+   `stamp` settles which copy wins when two windows are open: the most recent one, whoever made it.
+   It's read at paste time rather than watched for, since IndexedDB has no change event and paste
+   is the only moment the answer matters — plus once at startup, so the press-and-hold paste
+   gesture (see input.js) knows there's something to offer before the first Ctrl+V. */
+const CLIP_STORE_KEY = "clipboard";
+// An <img> element can't be stored. The data URL it was built from can, and rebuilds it exactly.
+const clipWithoutImg = o => { const { img, ...rest } = o; return rest; };
+function persistClipboard() {
+  const rec = {
+    stamp: clipboard.stamp,
+    items: clipboard.items.map(clipWithoutImg),
+    crop: clipboard.crop ? clipWithoutImg(clipboard.crop) : null,
+  };
+  // Fire and forget: a clipboard that fails to persist still works in this window, which is the
+  // whole of what it could do before.
+  idbPut("meta", rec, CLIP_STORE_KEY).catch(() => {});
+}
+async function reviveClipImage(o) {
+  if (!o || !o.data) return null;
+  const img = new Image();
+  img.src = o.data;
+  try { await img.decode(); } catch (_) { return null; }
+  return { ...o, img };
+}
+async function adoptNewerClipboard() {
+  let rec = null;
+  try { rec = await idbGet("meta", CLIP_STORE_KEY); } catch (_) {}
+  if (!rec || !(rec.stamp > clipboard.stamp)) return; // ours is the same copy, or a later one
+  const items = [];
+  for (const it of rec.items || []) {
+    if (it.kind !== "image") { items.push(it); continue; }
+    // A picture whose data won't decode is dropped rather than pasted as an empty box.
+    const revived = await reviveClipImage(it);
+    if (revived) items.push(revived);
+  }
+  clipboard.items = items;
+  clipboard.crop = rec.crop ? await reviveClipImage(rec.crop) : null;
+  clipboard.stamp = rec.stamp;
+  clipboard.pasteCount = 0;
+}
 
 function cloneForClipboard(kind, ref) {
   if (kind === "stroke") return { kind, tool: ref.tool, color: ref.color, w: ref.w, layer: ref.layer, grp: ref.grp, pts: ref.pts.map(p => ({ ...p })) };
@@ -157,6 +207,7 @@ async function copySelectionToClipboard() {
   clipboard.items = items;
   clipboard.crop = null;
   clipboard.pasteCount = 0;
+  clipboard.stamp = Date.now();
   claimSystemClipboardForSelection(items); // may be superseded by the crop image write below
 
   if (sel.shape) {
@@ -178,14 +229,24 @@ async function copySelectionToClipboard() {
       await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
     } catch (_) {}
   }
+  // Last, so the crop above is part of what gets written rather than a second record after it.
+  persistClipboard();
 }
 
 function insertClipboardWithOffset(dx, dy) {
   if (!clipboard.items.length && !clipboard.crop) return;
   const added = [];
+  /* Everything pasted lands on the layer being worked on, the same as any other freshly placed
+     object and the same as the stamp library already does. It used to keep the layer id the copy
+     came from whenever that id still existed here, which meant copying on one layer and pasting
+     on another put the copy straight back on the layer you took it from — and since every notebook
+     starts with a layer whose id is literally "base", it did that across notebooks too.
+
+     Ctrl+D is the gesture for the other intent: it copies an object where it stands, so it keeps
+     that object's own layer (see duplicateSelection). */
+  const layer = currentLayerId();
   for (const it of clipboard.items) {
     let copy;
-    const layer = resolveLayerId(it.layer);
     if (it.kind === "stroke") {
       copy = { tool: it.tool, color: it.color, w: it.w, del: false, t: null, layer, ...(it.grp ? { grp: it.grp } : {}), pts: it.pts.map(p => ({ x: p.x + dx, y: p.y + dy, p: p.p })) };
       copy.bb = strokeBB(copy);
@@ -235,12 +296,13 @@ function insertClipboardWithOffset(dx, dy) {
   markDirty(); needsDraw = true;
 }
 
-function pasteFromClipboard() {
+async function pasteFromClipboard() {
+  await adoptNewerClipboard();
   if (!clipboard.items.length && !clipboard.crop) return;
   // Paste centered at the cursor (matching how inserted shapes land near the pointer) when the
   // mouse is actually over the canvas; otherwise fall back to the old stepped-offset behavior.
   if (hover.x >= 0 && hover.x <= CW && hover.y >= 0 && hover.y <= CH) {
-    pasteClipboardAt(wx(hover.x), wy(hover.y));
+    await pasteClipboardAt(wx(hover.x), wy(hover.y));
   } else {
     clipboard.pasteCount++;
     const off = clipboard.pasteCount * 18;
@@ -248,7 +310,8 @@ function pasteFromClipboard() {
   }
 }
 
-function pasteClipboardAt(x, y) {
+async function pasteClipboardAt(x, y) {
+  await adoptNewerClipboard();
   if (!clipboard.items.length && !clipboard.crop) return;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const grow = (a, b, c, d) => { x0 = Math.min(x0, a); y0 = Math.min(y0, b); x1 = Math.max(x1, c); y1 = Math.max(y1, d); };

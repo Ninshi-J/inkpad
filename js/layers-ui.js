@@ -10,7 +10,7 @@
 // whether deleting it needs a confirmation, and what that confirmation should say.
 function countObjectsOnLayer(id) {
   let n = 0;
-  for (const arr of [doc.strokes, doc.tapes, doc.texts, doc.images, doc.timers])
+  for (const arr of layeredArrays())
     for (const o of arr) if (!o.del && o.layer === id) n++;
   return n;
 }
@@ -124,7 +124,7 @@ function deleteLayer(id) {
   const fallback = S.layers.find(x => x.id !== id);
   const n = countObjectsOnLayer(id);
   const doDelete = () => {
-    for (const arr of [doc.strokes, doc.tapes, doc.texts, doc.images, doc.timers])
+    for (const arr of layeredArrays())
       for (const o of arr) if (o.layer === id) o.layer = fallback.id;
     S.layers = S.layers.filter(x => x.id !== id);
     if (S.activeLayer === id) { S.activeLayer = fallback.id; if (fallback.visible === false) fallback.visible = true; }

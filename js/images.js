@@ -159,7 +159,7 @@ function placePastedImage(file) {
     const data = rd.result;
     const img = new Image();
     img.onload = () => {
-      if (pastedImageIsOwnCrop(img.naturalWidth, img.naturalHeight)) { pasteFromClipboard(); syncUI(); return; }
+      if (pastedImageIsOwnCrop(img.naturalWidth, img.naturalHeight)) { pasteFromClipboard().then(syncUI); return; }
       let w = img.naturalWidth, h = img.naturalHeight;
       // Unlike a file import (width-capped only), a pasted screenshot is very often taller than
       // the page as well — cap both so it can't run off the bottom of the page it lands on.
@@ -211,7 +211,7 @@ async function pasteImageFromSystemClipboard() {
 function onSystemPaste(e) {
   if (uiOwnsKeyboard()) return; // a focused text field / open dialog gets an ordinary text paste
   const file = clipboardImageFile(e);
-  if (!file) { pasteFromClipboard(); syncUI(); return; }
+  if (!file) { pasteFromClipboard().then(syncUI); return; }
   // Claim the event synchronously — placePastedImage decides between the image and the in-app
   // clipboard asynchronously (it needs the decoded pixel size), but either way this paste is ours.
   e.preventDefault();

@@ -48,13 +48,18 @@ function render() {
   drawPages();
 
   ctx.save();
+  /* Tables sit down here with the images because they are paper, not a cover: every cell paints
+     an opaque fill, so drawing them after the ink hid whatever had been written across them --
+     which for a two-way table is the entire point of having one. Tape and a text box's background
+     stay above the ink deliberately (both exist to hide what's underneath), and a timer is a live
+     control rather than something you write on. Same order in the PDF and SVG exports. */
   drawImages();
+  drawTables();
   drawStrokes("hl");
   drawStrokes("pen");
   drawTexts();
   drawTapes();
   drawTimerObjs();
-  drawTables();
   ctx.restore();
 
   drawSelection();

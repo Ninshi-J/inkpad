@@ -897,7 +897,7 @@ function deleteSelection() {
   clearSelection(); markDirty();
 }
 /* ---------------- stacking order ----------------
-   Objects are drawn kind by kind — images, highlighter, pen, text, tape, timers, tables — and
+   Objects are drawn kind by kind — images, tables, highlighter, pen, text, tape, timers — and
    within each kind in array order (see render()). So this reorders an object among others OF ITS
    OWN KIND, which is exactly what overlapping pasted pictures need.
 
