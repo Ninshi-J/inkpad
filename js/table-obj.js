@@ -595,20 +595,78 @@ function buildTableFromDialog() {
     ...style,
   });
 }
+/* Which cells "without replacement" strikes out, as a set of "r,c" keys.
+
+   Matched by OCCURRENCE rather than by label. Without replacement means the same TILE cannot be
+   picked twice, not that the same letter cannot appear twice: choosing two letters from TREE, the
+   two Es are two different tiles, so taking one still leaves the other. The k-th E across pairs
+   with the k-th E down, and every other combination of them is a real outcome.
+
+   Crossing out every cell whose labels merely matched struck through both (E, E) outcomes as
+   well, leaving ten outcomes instead of twelve and making Pr(E, E) come out as zero — which is
+   exactly the answer the textbook example (Year 9, Example 7) exists to teach, 2/12.
+
+   Written as a set rather than a test applied per cell because the answer depends on how many of
+   that label came before, which a single cell cannot see. */
+function withoutReplacementCells(cols, rows) {
+  const rowsByLabel = new Map();
+  rows.forEach((rh, r) => {
+    if (!rowsByLabel.has(rh)) rowsByLabel.set(rh, []);
+    rowsByLabel.get(rh).push(r);
+  });
+  const seen = new Map(), out = new Set();
+  cols.forEach((ch, c) => {
+    const k = seen.get(ch) || 0;
+    seen.set(ch, k + 1);
+    // A label with no matching row (two different bags on the axes) crosses nothing: there is no
+    // shared tile to have used up.
+    const at = rowsByLabel.get(ch);
+    if (at && at[k] != null) out.add(at[k] + "," + c);
+  });
+  return out;
+}
+/* What one filled cell says.
+
+   The pair is the usual thing, but a two-step experiment is often recorded by its TOTAL instead
+   ("the total sum is recorded from rolling two four-sided dice"), and occasionally by the product.
+
+   A total or a product only means anything when both headings are numbers. When they are not —
+   letters from a word, H and T from a coin — the cell is left empty rather than filled with
+   something untrue, since the alternative is a grid full of NaN. */
+function sampleCellText(mode, ch, rh) {
+  if (mode !== "sum" && mode !== "product") return `(${ch}, ${rh})`;
+  if (ch === "" || rh === "") return "";
+  const a = Number(ch), b = Number(rh);
+  if (!isFinite(a) || !isFinite(b)) return "";
+  return String(mode === "product" ? a * b : a + b);
+}
 /* The layout in the textbook: two heading rows and two heading columns, where the outer one of
    each is a single cell spanning the rest and naming the whole axis. */
 function buildSampleSpaceTable(cols, rows, style) {
   const acrossName = $("tbAcrossName").value.trim() || "1st";
   const downName = $("tbDownName").value.trim() || "2nd";
   const without = $("tbNoRepeat").checked;
+  const mode = $("tbCellMode").value || "pair";
+  /* How much of it starts filled in. The textbook prints the same table twice: worked through in
+     the example, and as "copy and complete this table" in the exercise with the first row shown
+     so the student can see the pattern. Both come from here.
+
+     The crosses are NOT part of what gets filled in: they say which cells are impossible, which
+     is the frame of the question rather than its answer, so an empty table still carries them. */
+  const fill = $("tbFill").value || "all";
+  const filled = (r, c) => fill === "all"
+    || (fill === "firstRow" && r === 0)
+    || (fill === "firstCell" && r === 0 && c === 0);
   const nc = cols.length, nr = rows.length;
   const cells = [];
   // Row 0: two blanks, then the spanning name for the across axis.
   cells.push(["", ""].concat(cols.map((_, i) => (i === 0 ? acrossName : ""))));
   cells.push(["", ""].concat(cols));
+  const crossed = without ? withoutReplacementCells(cols, rows) : null;
   rows.forEach((rh, r) => {
     cells.push([r === 0 ? downName : "", rh].concat(cols.map((ch, c) =>
-      (without && ch === rh) ? "×" : `(${ch}, ${rh})`)));
+      (crossed && crossed.has(r + "," + c)) ? "×"
+        : filled(r, c) ? sampleCellText(mode, ch, rh) : "")));
   });
   return makeTable({
     rows: cells.length, cols: nc + 2, cells, headRows: 2, headCols: 2,
@@ -638,7 +696,8 @@ let tableDraftSig = null;
 function tableContentSig() {
   return JSON.stringify([$("tbPreset").value, $("tbCols").value, $("tbRows").value,
     $("tbBody").value, $("tbCorner").value, $("tbTotals").checked, $("tbNoRepeat").checked,
-    $("tbAcrossName").value, $("tbDownName").value]);
+    $("tbAcrossName").value, $("tbDownName").value,
+    $("tbCellMode").value, $("tbFill").value]);
 }
 function tableDraftForDialog() {
   const sig = tableContentSig();

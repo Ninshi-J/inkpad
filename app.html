@@ -897,6 +897,21 @@
       <div class="shape-field"><label>Name the down axis</label>
         <input type="text" id="tbDownName" value="2nd"></div>
     </div>
+    <div class="shape-form-grid table-sample-only" style="display:none;">
+      <div class="shape-field"><label for="tbCellMode">Cells show</label>
+        <select id="tbCellMode">
+          <option value="pair">The outcome pair</option>
+          <option value="sum">The total</option>
+          <option value="product">The product</option>
+        </select></div>
+      <div class="shape-field"><label for="tbFill">Filled in</label>
+        <select id="tbFill">
+          <option value="all">Every cell</option>
+          <option value="firstRow">The first row, as an example</option>
+          <option value="firstCell">The first cell only</option>
+          <option value="none">Nothing, an empty frame</option>
+        </select></div>
+    </div>
     <div class="shape-form-grid table-sample-only" style="display:none; grid-template-columns: 1fr;">
       <label style="display:flex; align-items:center; gap:6px; font-size:12px;"><input type="checkbox" id="tbNoRepeat"> Without replacement (cross out the repeats)</label>
     </div>
