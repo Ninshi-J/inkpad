@@ -648,15 +648,20 @@ function buildSampleSpaceTable(cols, rows, style) {
   const without = $("tbNoRepeat").checked;
   const mode = $("tbCellMode").value || "pair";
   /* How much of it starts filled in. The textbook prints the same table twice: worked through in
-     the example, and as "copy and complete this table" in the exercise with the first row shown
-     so the student can see the pattern. Both come from here.
+     the example, and as "copy and complete this table" in the exercise with a couple of cells
+     shown so the student can see the pattern. Both come from here.
+
+     Two cells is the textbook's own convention and the default worth reaching for — enough to
+     show the pattern AND which way round the pair goes, which one cell cannot. It uses a single
+     cell only where the second would be ambiguous anyway, and never fills a whole row.
 
      The crosses are NOT part of what gets filled in: they say which cells are impossible, which
      is the frame of the question rather than its answer, so an empty table still carries them. */
   const fill = $("tbFill").value || "all";
   const filled = (r, c) => fill === "all"
-    || (fill === "firstRow" && r === 0)
-    || (fill === "firstCell" && r === 0 && c === 0);
+    || (r === 0 && (fill === "firstRow"
+      || (fill === "firstTwo" && c < 2)
+      || (fill === "firstCell" && c === 0)));
   const nc = cols.length, nr = rows.length;
   const cells = [];
   // Row 0: two blanks, then the spanning name for the across axis.
