@@ -98,6 +98,51 @@ if (DEBUG_HUD) {
                   "| body =", getComputedStyle(document.body).touchAction);
   });
 
+  /* A stroke that logs NOTHING — not even on the raw capture listeners above — leaves two very
+     different explanations, and until now the log could not tell them apart:
+
+       1. The page was alive and simply never given the event.
+       2. The page was not running at all for that moment, so there was nobody to give it to.
+
+     The heartbeat settles it. It ticks once a second from a timer, independent of the app's
+     render loop, and prints what the app thinks it is holding. If heartbeats keep ticking through
+     the moment a stroke goes missing, the page was awake and the event never arrived — the
+     browser or the OS took it. If the heartbeats stop and then resume, the main thread was
+     blocked, which is a completely different bug with a completely different fix.
+
+     It also prints whether a pointer capture is still held. A capture that never gets released
+     (the previous stroke's pointerup never arriving) is one of the few ways this app could be
+     causing its own problem, and this is the only way to see it from outside. */
+  let beat = 0;
+  setInterval(() => {
+    let captured = "?";
+    try { captured = [...pointers.keys()].map(id => cv.hasPointerCapture(id)).join(",") || "none"; }
+    catch (_) {}
+    dbgLog("beat", ++beat,
+           "| tracked=" + (typeof pointers !== "undefined" ? pointers.size : "?"),
+           "| drag=" + (typeof drag !== "undefined" && drag ? drag.mode : "null"),
+           "| capture=" + captured,
+           "| visible=" + document.visibilityState);
+  }, 1000);
+
+  // Enough of the movement stream to show whether ANY fragment of a missing stroke arrived. Only
+  // the first move of each pointer is logged, and the total is reported when it ends, so this
+  // stays cheap: logging every move on a real device is itself enough work to become a confound.
+  const moveSeen = new Map();
+  addEventListener("pointermove", e => {
+    const n = (moveSeen.get(e.pointerId) || 0) + 1;
+    moveSeen.set(e.pointerId, n);
+    if (n === 1) dbgLog("RAW pointermove FIRST", e.pointerType, e.pointerId);
+  }, { capture: true, passive: true });
+  ["pointerup", "pointercancel"].forEach(type => addEventListener(type, e => {
+    const n = moveSeen.get(e.pointerId);
+    if (n) dbgLog("   moves in that stroke:", n, "(id " + e.pointerId + ")");
+    moveSeen.delete(e.pointerId);
+  }, { capture: true, passive: true }));
+  addEventListener("touchmove", () => {}, { capture: true, passive: true });
+  ["gotpointercapture", "lostpointercapture"].forEach(type => addEventListener(type, e =>
+    dbgLog("RAW", type, e.pointerId), { capture: true, passive: true }));
+
   // Independent jank detector: an iPad's main thread getting blocked for a stretch is a known way
   // for iOS to stop delivering pencil touch events for that window entirely — this would explain
   // a stroke that never even reaches pointerdown. Runs its own rAF loop (not tied to the app's
@@ -112,5 +157,5 @@ if (DEBUG_HUD) {
   }
   requestAnimationFrame(jankLoop);
 
-  dbgLog("debug hud active (v3: raw capture listeners, Safari gesture events, jank detector)");
+  dbgLog("debug hud active (v4: heartbeat + capture state, movement stream, gesture events, jank detector)");
 }
