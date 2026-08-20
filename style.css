@@ -24,8 +24,29 @@ body {
 /* ---------- layout ---------- */
 #app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
 #main { display: grid; grid-template-columns: auto auto 1fr auto; min-height: 0; position: relative; }
-#canvasWrap { grid-column: 3; position: relative; min-width: 0; overflow: hidden; }
-canvas#board { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+/* touch-action is set here as well as on <body>, and that repetition is the point.
+
+   It is not an inherited property. The spec says a touch may only trigger a browser behaviour if
+   the touch-action of the hit element AND of its ancestors allows it, so on Chrome the `none` on
+   <body> is already enough. WebKit has long-standing gaps in exactly that ancestor intersection,
+   and the canvas itself computes `auto` — which leaves Safari running its gesture recognisers over
+   the drawing surface, including the roughly 300ms double-tap-to-zoom window.
+
+   A second stroke starting inside that window is withheld while Safari decides whether it is the
+   second half of a double tap, and it is never dispatched to the page at all: no pointerdown, not
+   even on the debug HUD's raw capture listeners. Writing at speed, that is every other stroke.
+
+   The app does its own pinch and pan from pointer events (startPinch, startTouchPan), so there is
+   no native gesture here worth keeping. -webkit-touch-callout stops the long-press callout, which
+   is the same class of interruption from resting a finger. */
+#canvasWrap {
+  grid-column: 3; position: relative; min-width: 0; overflow: hidden;
+  touch-action: none; -webkit-touch-callout: none;
+}
+canvas#board {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair;
+  touch-action: none; -webkit-touch-callout: none;
+}
 
 /* ---------- toolbar ---------- */
 #toolbar {

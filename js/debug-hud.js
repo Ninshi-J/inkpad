@@ -79,7 +79,24 @@ if (DEBUG_HUD) {
     }, { capture: true, passive: true });
   });
   addEventListener("touchstart", e => dbgLog("RAW touchstart, touches=" + e.touches.length), { capture: true, passive: true });
+  addEventListener("touchend", e => dbgLog("RAW touchend, touches=" + e.touches.length), { capture: true, passive: true });
   addEventListener("touchcancel", e => dbgLog("RAW touchcancel, touches=" + e.touches.length), { capture: true, passive: true });
+  /* Safari's own gesture events, which no other engine fires. These are the direct evidence for
+     the case above: if a stroke goes missing and one of these appears in its place, WebKit took
+     the touch for a gesture instead of dispatching it, rather than the touch being lost. They
+     should never fire now that the canvas sets touch-action: none — if they do, the CSS is not
+     being honoured and that is worth knowing on its own. */
+  ["gesturestart", "gesturechange", "gestureend"].forEach(type => {
+    addEventListener(type, e => dbgLog("RAW", type, "scale=" + (e.scale != null ? e.scale.toFixed(2) : "?")),
+      { capture: true, passive: true });
+  });
+  // What the browser thinks it may do with a touch on the canvas, read at startup rather than
+  // assumed: "auto" here means gestures are still live over the drawing surface.
+  addEventListener("load", () => {
+    const b = document.getElementById("board");
+    if (b) dbgLog("canvas touch-action =", getComputedStyle(b).touchAction,
+                  "| body =", getComputedStyle(document.body).touchAction);
+  });
 
   // Independent jank detector: an iPad's main thread getting blocked for a stretch is a known way
   // for iOS to stop delivering pencil touch events for that window entirely — this would explain
@@ -95,5 +112,5 @@ if (DEBUG_HUD) {
   }
   requestAnimationFrame(jankLoop);
 
-  dbgLog("debug hud active (v2: raw capture listeners + jank detector)");
+  dbgLog("debug hud active (v3: raw capture listeners, Safari gesture events, jank detector)");
 }
