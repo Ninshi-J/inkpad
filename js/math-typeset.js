@@ -157,7 +157,9 @@ async function renderMathSpan(src, sizePx, color) {
   const inlinedCss = await loadInlinedKatexCss();
 
   let html;
-  try { html = katex.renderToString(src, { throwOnError: false, displayMode: false }); }
+  // Source is Typst-flavoured now (js/typst-math.js); a span holding a backslash is passed
+  // through as LaTeX untouched, which is what keeps every note written before this working.
+  try { html = katex.renderToString(typstToLatex(src), { throwOnError: false, displayMode: false }); }
   catch (err) { html = `<span style="color:#C0392B">[math error]</span>`; }
 
   // getMeasureHost() is one shared, reused DOM node -- renderMathSpan() is async with a real

@@ -198,6 +198,17 @@ function wireFileMenu() {
   pencilChk.checked = pencilOnly;
   pencilChk.onchange = () => { pencilOnly = pencilChk.checked; savePencilOnlyPref(); };
 
+  loadMathFlavourPref();
+  const flavourSel = $("fmMathFlavour");
+  flavourSel.value = mathFlavour;
+  flavourSel.onchange = () => {
+    mathFlavour = flavourSel.value === "latex" ? "latex" : "typst";
+    saveMathFlavourPref();
+    // The cheat sheet is built once and cached; every cell shows and inserts the flavour that
+    // was current when it was built, so it has to be thrown away and rebuilt from scratch.
+    mathHelpBuilt = false;
+  };
+
   loadPressurePref();
   const pressureChk = $("fmPressureEnabled");
   pressureChk.checked = pressureEnabled;

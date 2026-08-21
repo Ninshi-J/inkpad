@@ -545,7 +545,7 @@ function expandMathAbbrev() {
   const start = pos - m[0].length;
   ta.value = ta.value.slice(0, start) + ta.value.slice(pos);
   ta.selectionStart = ta.selectionEnd = start;
-  insertMathSnippet(tpl);
+  insertMathSnippet(mathSnippet(tpl));
   return true;
 }
 function toggleMathHelper(btnEl) {
@@ -571,7 +571,9 @@ function mathHelperOutside(e) {
 }
 $("mathHelperPanel").addEventListener("click", e => {
   const b = e.target.closest("button[data-tpl]");
-  if (b) insertMathSnippet(b.dataset.tpl);
+  // Buttons carry the Typst form; mathSnippet() hands back whichever flavour is set, using the
+  // data-latex override for the few fragments the translator can't derive on their own.
+  if (b) insertMathSnippet(mathSnippet({ i: b.dataset.tpl, l: b.dataset.latex }));
 });
 // Set while any control inside the toolbar (currently: the size slider/number box) is being
 // actively dragged or scrolled — see the frame() loop in render.js, which skips re-centering the
