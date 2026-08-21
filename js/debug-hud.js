@@ -115,8 +115,10 @@ if (DEBUG_HUD) {
      causing its own problem, and this is the only way to see it from outside. */
   let beat = 0;
   setInterval(() => {
+    // Read from the app's own record, which outlives the pointer entry. A capture still held
+    // while nothing is being tracked is the bug caught red-handed: tracked=0 with capture=7.
     let captured = "?";
-    try { captured = [...pointers.keys()].map(id => cv.hasPointerCapture(id)).join(",") || "none"; }
+    try { captured = capturedPointers.size ? [...capturedPointers].join(",") : "none"; }
     catch (_) {}
     dbgLog("beat", ++beat,
            "| tracked=" + (typeof pointers !== "undefined" ? pointers.size : "?"),

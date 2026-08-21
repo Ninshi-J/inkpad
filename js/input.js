@@ -12,6 +12,38 @@ function evtWorld(e) {
   return { x: wx(px), y: wy(py), p };
 }
 
+/* ---------------- pointer capture, tracked ----------------
+   Capture is taken on every pointerdown so a drag that leaves the canvas keeps being delivered
+   here. The spec says it is released implicitly on pointerup, and this code used to trust that.
+
+   Trusting it is what appears to have cost the iPad every other Pencil stroke. A finger gets a
+   fresh pointer id on each touch, so a capture left behind on an old id harms nothing. The Apple
+   Pencil reuses its id — so a capture that was never given back is still sitting on the id the
+   next stroke arrives with, and WebKit dispatches nothing at all for it: no pointerdown, not even
+   to a window-level capture listener. That is exactly the symptom, and it is pen-only, this-app-
+   only, which no gesture or hardware explanation accounted for.
+
+   So every capture this canvas takes is recorded, given back explicitly when the pointer ends,
+   and any that somehow survives is dropped before the next pen stroke starts. Correct hygiene
+   regardless of whether it turns out to be the whole story. */
+const capturedPointers = new Set();
+function grabPointer(id) {
+  try { cv.setPointerCapture(id); capturedPointers.add(id); }
+  catch (err) { dbgLog("  setPointerCapture THREW:", err.message); }
+}
+function dropPointer(id) {
+  if (!capturedPointers.has(id)) return;
+  capturedPointers.delete(id);
+  try { cv.releasePointerCapture(id); } catch (_) {}
+}
+function dropAllPointerCaptures(why) {
+  if (!capturedPointers.size) return;
+  dbgLog("  releasing stale capture(s)", [...capturedPointers].join(","), "(" + why + ")");
+  for (const id of [...capturedPointers]) dropPointer(id);
+}
+// The browser can also take a capture away on its own; keep the record honest when it does.
+cv.addEventListener("lostpointercapture", e => capturedPointers.delete(e.pointerId));
+
 cv.addEventListener("pointerdown", e => {
   dbgLog("DOWN", e.pointerType, e.pointerId, "pointers.size(before)=" + pointers.size, "drag=" + (drag ? drag.mode + "#" + drag.pointerId : "null"));
   if (e.pointerType === "pen") {
@@ -31,9 +63,12 @@ cv.addEventListener("pointerdown", e => {
     for (const id of [...pointers.keys()]) {
       if (id === e.pointerId) continue;
       dbgLog("  evicting stale pointer", id, pointers.get(id).pointerType);
-      try { cv.releasePointerCapture(id); } catch (_) {}
+      dropPointer(id);
       pointers.delete(id);
     }
+    // And anything still captured whose pointer entry is already gone — the case that cannot be
+    // reached by walking `pointers`, and the one that strands the Pencil's reused id.
+    dropAllPointerCaptures("pen down");
     if (drag && drag.pointerId !== e.pointerId) {
       dbgLog("  stale drag found, mode=" + drag.mode, "staleOwnerWasPen=" + staleOwnerWasPen, "pts=" + (curStroke ? curStroke.pts.length : "n/a"));
       if (staleOwnerWasPen && drag.mode === "draw") { commitStroke(); dbgLog("  -> finalized stale stroke, totalStrokes=" + doc.strokes.length); }
@@ -46,7 +81,7 @@ cv.addEventListener("pointerdown", e => {
     dbgLog("  -> touch rejected: pencil already down");
     return; // palm resting while the pencil is already down — ignore it entirely
   }
-  try { cv.setPointerCapture(e.pointerId); } catch (err) { dbgLog("  setPointerCapture THREW:", err.message); }
+  grabPointer(e.pointerId);
   pointers.set(e.pointerId, e);
   if (pointers.size === 2 && [...pointers.values()].every(p => p.pointerType === "touch")) { dbgLog("  -> PINCH START"); touchPan = null; startPinch(); return; }
   if (pointers.size >= 2) dbgLog("  ** pointers.size=" + pointers.size + " but not a touch pair:", [...pointers.values()].map(p => p.pointerType).join(","));
@@ -320,6 +355,8 @@ cv.addEventListener("pointermove", e => {
 
 function endPointer(e) {
   dbgLog("UP", e.type, e.pointerType, e.pointerId, "drag=" + (drag ? drag.mode + "#" + drag.pointerId : "null"), "pinch=" + !!pinch, "touchPan=" + !!touchPan);
+  // Given back explicitly rather than left to the implicit release. See the note above.
+  dropPointer(e.pointerId);
   pointers.delete(e.pointerId);
   if (touchPan && e.pointerId === touchPan.pointerId) { touchPan = null; return; }
   if (drag && e.pointerId !== drag.pointerId) { dbgLog("  -> IGNORED (drag owned by a different pointer)"); return; } // a different pointer lifting shouldn't end this drag
