@@ -16,6 +16,12 @@
 <body>
 <div id="app">
   <div id="toolbar"></div>
+  <div id="drivePreviewBanner" class="hidden">
+    <span>Previewing <b id="dpbName"></b> — restored from a Drive backup</span>
+    <span class="grow"></span>
+    <button type="button" id="dpbDeleteBtn">Delete</button>
+    <button type="button" id="dpbKeepBtn">Keep</button>
+  </div>
   <div id="main">
     <div id="sidebar"></div>
     <div id="mmRail" title="Document overview — click or drag to scroll"><canvas id="mmCanvas"></canvas></div>
@@ -1409,6 +1415,15 @@
       <button type="submit" id="exportSelOk">Export</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="folderPickDlg" style="max-width:340px;width:min(340px,92vw)">
+  <h2 id="folderPickTitle">File into</h2>
+  <select id="folderPickSelect" style="width:100%"></select>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+    <button type="button" id="folderPickCancelBtn">Cancel</button>
+    <button type="button" id="folderPickOkBtn" style="background:var(--accent-soft);border-color:var(--accent);color:#0B5A54">OK</button>
+  </div>
 </dialog>
 
 <dialog id="promptDlg" style="max-width:340px;width:min(340px,92vw)">

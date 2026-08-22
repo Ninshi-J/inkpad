@@ -97,6 +97,44 @@ function promptDialog(title, placeholder, defaultValue) {
   });
 }
 
+// Distinguishes "cancelled" from "chose Unfiled" (null is a legitimate folderId), since a plain
+// null/undefined return can't carry both meanings.
+const FOLDER_PICK_CANCELLED = Symbol("folderPickCancelled");
+// Lets the user file a notebook into an existing folder (or leave it Unfiled) before it's created
+// -- used by Drive's orphan restore/preview, which otherwise always dropped things at the library
+// root with no way to choose. Depth-indents folders the same way the sidebar tree does, walking
+// libFolders (this device's local folders, not anything from Drive).
+function folderPickOptionsHtml() {
+  let html = `<option value="">(Unfiled)</option>`;
+  (function walk(parentId, depth) {
+    for (const f of libFolders.filter(x => (x.parentId || null) === parentId).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name))) {
+      html += `<option value="${f.id}">${"  ".repeat(depth)}${escapeXml(f.name)}</option>`;
+      walk(f.id, depth + 1);
+    }
+  })(null, 0);
+  return html;
+}
+function promptFolderDialog(title, defaultFolderId) {
+  return new Promise(resolve => {
+    const dlg = $("folderPickDlg");
+    $("folderPickTitle").textContent = title;
+    const sel = $("folderPickSelect");
+    sel.innerHTML = folderPickOptionsHtml();
+    sel.value = defaultFolderId || "";
+    let result = FOLDER_PICK_CANCELLED; // Escape fires the dialog's native "close" without going through either button
+    let done = false;
+    const cleanup = () => {
+      $("folderPickCancelBtn").onclick = null; $("folderPickOkBtn").onclick = null;
+      dlg.removeEventListener("close", onClose);
+    };
+    const onClose = () => { if (done) return; done = true; cleanup(); resolve(result); };
+    dlg.addEventListener("close", onClose);
+    $("folderPickCancelBtn").onclick = () => { result = FOLDER_PICK_CANCELLED; dlg.close(); };
+    $("folderPickOkBtn").onclick = () => { result = sel.value || null; dlg.close(); };
+    dlg.showModal();
+  });
+}
+
 // Asks for a minute/second duration when placing a new embedded countdown timer on the page —
 // resolves the duration in ms, or null if cancelled. A stopwatch never calls this (nothing to
 // configure, it starts at 0:00 immediately). Same element-reuse/no-native-submit pattern as

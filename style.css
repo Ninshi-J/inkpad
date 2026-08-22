@@ -56,6 +56,23 @@ canvas#board {
   border-bottom: 1px solid var(--line);
 }
 #toolbar.popped { display: none; }
+
+/* ---------- preview banner (a Drive backup restored via "Preview", awaiting keep/delete) ---------- */
+#drivePreviewBanner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--accent);
+  color: #0B5A54;
+  font-size: 12.5px;
+}
+#drivePreviewBanner.hidden { display: none; }
+#drivePreviewBanner .grow { flex: 1; }
+#drivePreviewBanner button {
+  appearance: none; border: 1px solid var(--line); background: var(--chrome);
+  border-radius: 6px; padding: 4px 12px; font: inherit; font-size: 12.5px; cursor: pointer;
+}
+#drivePreviewBanner #dpbDeleteBtn { background: #FBEAEA; border-color: #E3A9A9; color: #7A2E2E; }
 .tb-group { display: flex; align-items: center; gap: 3px; }
 .tb-sep { width: 1px; align-self: stretch; margin: 3px 5px; background: var(--line); }
 button.tb {

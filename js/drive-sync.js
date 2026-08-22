@@ -1226,18 +1226,29 @@ async function driveFetchOrphanedNotebookFiles(folderId, knownIds) {
     .filter(f => !(f.properties && f.properties.notebookId && knownIds.has(f.properties.notebookId)))
     .map(f => ({ id: f.id, name: f.name.replace(/\.json$/, ""), notebookId: (f.properties && f.properties.notebookId) || null, modifiedTime: f.modifiedTime }));
 }
-async function driveRestoreOrphanedFile(file) {
+async function driveRestoreOrphanedFile(file, folderId) {
+  folderId = folderId || null;
   const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`);
   if (!res.ok) throw new Error(`Drive lookup failed: ${res.status}`);
   const parsed = JSON.parse(await res.text());
   const id = file.notebookId || parsed.notebookId || genId();
-  const nb = { id, name: file.name, folderId: null, order: nextOrderIn(null), createdAt: Date.now(), updatedAt: Date.now(), driveFileId: file.id, driveSyncedAt: Date.now(), driveSyncedName: file.name };
+  const nb = { id, name: file.name, folderId, order: nextOrderIn(folderId), createdAt: Date.now(), updatedAt: Date.now(), driveFileId: file.id, driveSyncedAt: Date.now(), driveSyncedName: file.name };
   await storePut("docdata", parsed.docdata, id);
   await storePut("notebooks", nb);
   libNotebooks = await storeGetAll("notebooks");
   await switchNotebook(id);
   renderLibTree();
   return nb;
+}
+// Shows the notebook restored by "Preview" for real, in the actual editor, with a dismissible
+// top banner so looking around doesn't quietly commit to keeping it -- Delete removes it (and its
+// Drive copy, via the normal deleteNotebook path) as easily as Keep just closes the banner.
+function showDrivePreviewBanner(id, name) {
+  const banner = $("drivePreviewBanner");
+  $("dpbName").textContent = `"${name}"`;
+  banner.classList.remove("hidden");
+  $("dpbKeepBtn").onclick = () => banner.classList.add("hidden");
+  $("dpbDeleteBtn").onclick = () => { banner.classList.add("hidden"); deleteNotebook(id); };
 }
 async function driveDeleteOrphanedFile(file) {
   await driveTrashFile(file.id);
@@ -1255,15 +1266,34 @@ function driveOrphanRow(file, onRestored) {
     <span class="lib-icon">\u{1F4C4}</span>
     <span class="lib-name">${escapeXml(file.name)}</span>
     <span class="lib-actions" style="display:flex;">
-      <button type="button" title="Restore this notebook">⟳</button>
-      <button type="button" title="Delete this from Drive">\u{1F5D1}</button>
+      <button type="button" data-act="preview" title="Open this in the editor to look it over, before deciding to keep or delete it">\u{1F441}</button>
+      <button type="button" data-act="restore" title="Restore this notebook">⟳</button>
+      <button type="button" data-act="delete" title="Delete this from Drive">\u{1F5D1}</button>
     </span>`;
-  const [restoreBtn, deleteBtn] = row.querySelectorAll("button");
+  const previewBtn = row.querySelector('[data-act=preview]');
+  const restoreBtn = row.querySelector('[data-act=restore]');
+  const deleteBtn = row.querySelector('[data-act=delete]');
+  previewBtn.onclick = async e => {
+    e.stopPropagation();
+    const folderId = await promptFolderDialog(`File "${file.name}" into`);
+    if (folderId === FOLDER_PICK_CANCELLED) return;
+    try {
+      const nb = await withDriveInteractive(() => driveRestoreOrphanedFile(file, folderId));
+      // Unlike a plain restore, previewing is pointless with the dialog still covering the canvas --
+      // close whichever one is open (restore picker or manage dialog) instead of calling onRestored,
+      // which for the manage dialog would just refresh it in place and leave it blocking the view.
+      if ($("driveRestoreDlg").open) $("driveRestoreDlg").close();
+      if ($("driveManageDlg").open) $("driveManageDlg").close();
+      showDrivePreviewBanner(nb.id, nb.name);
+    } catch (err) { notifyDialog("Preview failed", (err && err.message ? err.message : String(err))); }
+  };
   restoreBtn.onclick = async e => {
     e.stopPropagation();
     const ok = await confirmDialogAsync(`Restore "${file.name}"?`, "This wasn't in your current library index — it's a leftover file in Drive (often from a notebook deleted locally before that also cleaned up Drive). Restoring adds it back as a new notebook.", "Restore");
     if (!ok) return;
-    try { await withDriveInteractive(() => driveRestoreOrphanedFile(file)); notifyDialog("Restored from Drive", `"${file.name}" was restored from Google Drive.`); (onRestored || (() => $("driveRestoreDlg").close()))(); }
+    const folderId = await promptFolderDialog(`File "${file.name}" into`);
+    if (folderId === FOLDER_PICK_CANCELLED) return;
+    try { await withDriveInteractive(() => driveRestoreOrphanedFile(file, folderId)); notifyDialog("Restored from Drive", `"${file.name}" was restored from Google Drive.`); (onRestored || (() => $("driveRestoreDlg").close()))(); }
     catch (err) { notifyDialog("Restore failed", (err && err.message ? err.message : String(err))); }
   };
   deleteBtn.onclick = async e => {
